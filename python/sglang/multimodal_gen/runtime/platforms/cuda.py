@@ -410,6 +410,33 @@ class _SolAttnBackendResolver(_CudaAttentionBackendResolver):
             ) from e
 
 
+class _LiteAttentionBackendResolver(_CudaAttentionBackendResolver):
+    backend = AttentionBackendEnum.LITE_ATTENTION
+
+    @classmethod
+    def resolve(cls, platform) -> str:
+        if not platform.is_hopper():
+            raise ValueError(
+                "LiteAttention requires Hopper GPUs (H100/H200, SM90). "
+                "Use --attention-backend fa on other hardware."
+            )
+        try:
+            from lite_attention import LiteAttention  # noqa: F401
+
+            from sglang.multimodal_gen.runtime.layers.attention.backends.lite_attn import (  # noqa: F401
+                LiteAttentionBackend,
+            )
+
+            return "sglang.multimodal_gen.runtime.layers.attention.backends.lite_attn.LiteAttentionBackend"
+        except ImportError as e:
+            logger.error("Failed to import LiteAttention backend: %s", str(e))
+            raise ImportError(
+                "LiteAttention backend is not installed. Clone "
+                "https://github.com/moonmath-ai/LiteAttention and run "
+                "`cd hopper && pip install .` (requires CUDA >= 12.8)."
+            ) from e
+
+
 class _VMOBAAttentionBackendResolver(_CudaAttentionBackendResolver):
     backend = AttentionBackendEnum.VMOBA_ATTN
 
@@ -565,6 +592,7 @@ _CUDA_ATTENTION_BACKEND_RESOLVERS = {
         _CubeSparseAttentionBackendResolver,
         _SparseVideoGen2AttentionBackendResolver,
         _SolAttnBackendResolver,
+        _LiteAttentionBackendResolver,
         _VMOBAAttentionBackendResolver,
         _SubBlockSparseAttentionBackendResolver,
         _FlashAttention2BackendResolver,

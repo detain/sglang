@@ -50,6 +50,7 @@ class AttentionBackendEnum(enum.Enum):
     SOL_ATTN = enum.auto()
     SUBBLOCK_SPARSE_ATTN = enum.auto()
     CUBE_SPARSE_ATTN = enum.auto()
+    LITE_ATTENTION = enum.auto()
     FP8_FA_SM120 = enum.auto()
     NO_ATTENTION = enum.auto()
 
@@ -74,6 +75,7 @@ class AttentionBackendEnum(enum.Enum):
             AttentionBackendEnum.SOL_ATTN,
             AttentionBackendEnum.SUBBLOCK_SPARSE_ATTN,
             AttentionBackendEnum.CUBE_SPARSE_ATTN,
+            AttentionBackendEnum.LITE_ATTENTION,
         }
 
     @property
