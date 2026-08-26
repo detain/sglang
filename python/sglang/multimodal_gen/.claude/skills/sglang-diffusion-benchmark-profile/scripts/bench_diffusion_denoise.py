@@ -45,6 +45,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -116,7 +117,7 @@ def _sha256_file(path: Path) -> str:
 
 
 CATALOG_TABLE_WIDTH = 140
-RESULTS_TABLE_WIDTH = 124
+RESULTS_TABLE_WIDTH = 134
 MODEL_CACHE_MARKER = ".sglang-diffusion-benchmark-cache"
 MODEL_WEIGHT_SUFFIXES = {
     ".bin",
@@ -1724,6 +1725,7 @@ def build_sglang_cmd(
     seed: int = 42,
     save_output: bool = True,
     artifact_dir: Path | None = None,
+    iterations: int = 4,
 ) -> list[str]:
     """
     Build the `sglang generate` command for the given model.
@@ -1802,7 +1804,49 @@ def build_sglang_cmd(
     if perf_dump_path:
         cmd.extend(["--perf-dump-path", perf_dump_path])
 
+    if iterations > 1:
+        # One prompt line per request; the CLI runs them sequentially in one process.
+        prompt_root = (
+            Path(artifact_dir)
+            if artifact_dir is not None
+            else get_output_dir("benchmarks", REPO_ROOT)
+        )
+        prompt_path = (
+            ensure_dir(prompt_root / "generated_prompts")
+            / f"{model_key}_x{iterations}.txt"
+        )
+        prompt_path.write_text("\n".join([cfg["prompt"]] * iterations) + "\n")
+        cmd = [x for x in cmd if not x.startswith("--prompt=")]
+        cmd.append(f"--prompt-file-path={prompt_path}")
+
     return cmd
+
+
+def _iteration_latencies_s(lines: list[str]) -> tuple[list[float], list[float]]:
+    """Per-request denoise and e2e seconds; the perf dump only holds request 1."""
+    ansi = re.compile(r"\x1b\[[0-9;]*m")
+    stage_re = re.compile(
+        r"\[(\w*(?:Denoising|Refinement)Stage)\] finished in ([0-9.]+) seconds"
+    )
+    e2e_re = re.compile(r"generated successfully in ([0-9.]+) seconds")
+
+    denoise: list[float] = []
+    e2e: list[float] = []
+    current = 0.0
+    for raw_line in lines:
+        line = ansi.sub("", raw_line)
+        if "Running pipeline stages:" in line and current:
+            denoise.append(current)
+            current = 0.0
+        stage_match = stage_re.search(line)
+        if stage_match and "BeforeDenoisingStage" not in stage_match.group(1):
+            current += float(stage_match.group(2))
+        e2e_match = e2e_re.search(line)
+        if e2e_match:
+            e2e.append(float(e2e_match.group(1)))
+    if current:
+        denoise.append(current)
+    return denoise, e2e
 
 
 def _run_benchmark_once_impl(
@@ -1816,8 +1860,9 @@ def _run_benchmark_once_impl(
     bcg_text_buckets: list[int] | None = None,
     model_cache_dir: Path | None = None,
     cuda_visible_devices: str | None = None,
+    iterations: int = 4,
 ) -> dict:
-    """Run a single benchmark pass and return results dict."""
+    """Run `iterations` requests and return the fastest as the results dict."""
     perf_path = output_dir / f"{model_key}_{label}.json"
 
     cmd = build_sglang_cmd(
@@ -1829,6 +1874,7 @@ def _run_benchmark_once_impl(
         breakable_cuda_graph=breakable_cuda_graph,
         bcg_text_buckets=bcg_text_buckets,
         artifact_dir=output_dir,
+        iterations=iterations,
     )
     output_file_name = f"{model_key}-{label}"
     cmd.extend(
@@ -1887,11 +1933,13 @@ def _run_benchmark_once_impl(
     fallback_detected = False
     bcg_capture_detected = False
     bcg_invalid_signals: set[str] = set()
+    captured: list[str] = []
     assert process.stdout is not None
     try:
         for line in process.stdout:
             print(line, end="")
             lower_line = line.lower()
+            captured.append(line)
             if any(signal in lower_line for signal in DIFFUSERS_FALLBACK_SIGNALS):
                 fallback_detected = True
             if BCG_CAPTURE_SIGNAL in lower_line:
@@ -2042,6 +2090,25 @@ def _run_benchmark_once_impl(
         except (AttributeError, OSError, TypeError, ValueError) as e:
             print(f"  Warning: could not parse perf dump: {e}")
 
+    if iterations > 1:
+        denoise_s, e2e_s = _iteration_latencies_s(captured)
+        metrics["iterations"] = iterations
+        metrics["denoise_iterations_s"] = denoise_s
+        metrics["e2e_iterations_s"] = e2e_s
+        # Request 1 pays compile, so it loses the min without being dropped.
+        if denoise_s:
+            metrics["denoise_latency_s"] = min(denoise_s)
+        if e2e_s:
+            metrics["e2e_latency_s"] = min(e2e_s)
+        if len(denoise_s) != iterations or len(e2e_s) != iterations:
+            metrics["error"] = True
+            print(
+                f"  ERROR: parsed {len(denoise_s)} denoise and {len(e2e_s)} e2e "
+                f"times from stdout, expected {iterations} of each. The log "
+                "format the parser depends on has probably changed; the "
+                "reported latency would be request 1."
+            )
+
     return metrics
 
 
@@ -2092,6 +2159,7 @@ def run_benchmark_once(
     quality: str = "lossless",
     breakable_cuda_graph: bool = False,
     bcg_text_buckets: list[int] | None = None,
+    iterations: int = 4,
     model_cache_root: Path | None = None,
     seed_model_cache_roots: list[Path] | None = None,
     cleanup_model_cache: bool = False,
@@ -2118,6 +2186,7 @@ def run_benchmark_once(
             quality=quality,
             breakable_cuda_graph=breakable_cuda_graph,
             bcg_text_buckets=bcg_text_buckets,
+            iterations=iterations,
             model_cache_dir=cache_dir,
         )
         exit_reason = "error" if result.get("error") else "success"
@@ -2152,6 +2221,7 @@ def run_quality_bcg_matrix(
     output_dir: Path,
     warmup: bool = True,
     bcg_text_buckets: list[int] | None = None,
+    iterations: int = 4,
     model_cache_root: Path | None = None,
     seed_model_cache_roots: list[Path] | None = None,
     cleanup_model_cache: bool = False,
@@ -2189,6 +2259,7 @@ def run_quality_bcg_matrix(
                 quality=quality,
                 breakable_cuda_graph=breakable_cuda_graph,
                 bcg_text_buckets=(bcg_text_buckets if breakable_cuda_graph else None),
+                iterations=iterations,
                 model_cache_dir=cache_dir,
                 cuda_visible_devices=cuda_visible_devices,
             )
@@ -2231,7 +2302,7 @@ def print_results_table(results: list[dict]):
     print("=" * RESULTS_TABLE_WIDTH)
 
     print(
-        f"{'Model':<24} {'Nightly':<28} {'Label':<31} {'Denoise(s)':>12} {'E2E(s)':>10} {'Peak Mem(GB)':>14}"
+        f"{'Model':<24} {'Nightly':<28} {'Label':<31} {'Iters':>6} {'Denoise min(s)':>14} {'E2E min(s)':>10} {'Peak Mem(GB)':>14}"
     )
     print("-" * RESULTS_TABLE_WIDTH)
 
@@ -2243,13 +2314,17 @@ def print_results_table(results: list[dict]):
         e2e_text = f"{e2e_s:.2f}" if isinstance(e2e_s, float) else "n/a"
         mem_text = f"{peak_mem:.1f}" if isinstance(peak_mem, float) else "n/a"
         print(
-            f"{result['model']:<24} {model_nightly_case_id(result['model']):<28} {result['label']:<31} {denoise_text:>12} {e2e_text:>10} {mem_text:>14}"
+            f"{result['model']:<24} {model_nightly_case_id(result['model']):<28} {result['label']:<31} {result.get('iterations', 1):>6} {denoise_text:>14} {e2e_text:>10} {mem_text:>14}"
         )
 
     print("-" * RESULTS_TABLE_WIDTH)
     print()
     print(
         "★ Denoise latency = sum of stages ending with DenoisingStage plus any RefinementStage."
+    )
+    print(
+        "  min = fastest of the N requests; request 1 pays compile, so --iterations 1 "
+        "includes it.\n  Peak Mem is always request 1."
     )
     print(
         "  Compare two runs with python/sglang/multimodal_gen/benchmarks/compare_perf.py."
@@ -2332,6 +2407,17 @@ def main():
         help="Deprecated compatibility flag; eager is already the default.",
     )
     parser.add_argument(
+        "--iterations",
+        type=int,
+        default=4,
+        help=(
+            "Sequential requests per benchmark, in one process. Request 1 is "
+            "discarded, so torch.compile and first-shape specialization stay "
+            "out of the result. Pass 1 for a single-shot number that includes "
+            "them."
+        ),
+    )
+    parser.add_argument(
         "--model-cache-root",
         type=str,
         help=(
@@ -2409,6 +2495,7 @@ def main():
                     output_dir,
                     warmup=warmup,
                     bcg_text_buckets=args.bcg_text_buckets,
+                    iterations=args.iterations,
                     model_cache_root=model_cache_root,
                     seed_model_cache_roots=seed_model_cache_roots,
                     cleanup_model_cache=args.cleanup_model_cache,
@@ -2426,6 +2513,7 @@ def main():
                     quality=args.quality,
                     breakable_cuda_graph=args.breakable_cuda_graph,
                     bcg_text_buckets=args.bcg_text_buckets,
+                    iterations=args.iterations,
                     model_cache_root=model_cache_root,
                     seed_model_cache_roots=seed_model_cache_roots,
                     cleanup_model_cache=args.cleanup_model_cache,
@@ -2435,6 +2523,11 @@ def main():
 
     if results:
         print_results_table(results)
+        # The perf dumps cannot carry the per-request arrays; they hold request 1.
+        summary_path = output_dir / f"results_{args.label}.json"
+        with open(summary_path, "w") as f:
+            json.dump(results, f, indent=2, sort_keys=True)
+        print(f"Results JSON → {summary_path}")
 
     print(f"Perf dump JSONs → {output_dir}")
     print(
