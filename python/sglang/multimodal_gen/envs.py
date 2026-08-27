@@ -92,7 +92,9 @@ if TYPE_CHECKING:
     SGLANG_CACHE_DIT_SECONDARY_DMD_RANK: int = 0
     SGLANG_CACHE_DIT_SECONDARY_DMD_RIDGE: float = 1e-8
     SGLANG_CACHE_DIT_SECONDARY_DMD_SVD_PRECISION: str = "medium"
-    # model loading
+    # TeaCache coefficient calibration
+    SGLANG_TEACACHE_CALIBRATE: bool = False
+    SGLANG_TEACACHE_CALIBRATE_OUT: str = ""    # model loading
     SGLANG_USE_RUNAI_MODEL_STREAMER: bool = True
     SGLANG_LINGBOT_ENABLE_INTERACTIVE_KV_WINDOW: bool = False
     SGLANG_LINGBOT_LAZY_VAE_ENCODE_BLACK_FRAMES: int | None = None
@@ -428,6 +430,11 @@ environment_variables: dict[str, Callable[[], Any]] = {
     "SGLANG_CACHE_DIT_SCM_CACHE_BINS": _lazy_str("SGLANG_CACHE_DIT_SCM_CACHE_BINS"),
     # SCM policy: dynamic or static
     "SGLANG_CACHE_DIT_SCM_POLICY": _lazy_str("SGLANG_CACHE_DIT_SCM_POLICY", "dynamic"),
+    # ================== TeaCache calibration Env Vars ==================
+    # Record per-step deltas during generation to fit TeaCache coefficients.
+    "SGLANG_TEACACHE_CALIBRATE": _lazy_bool("SGLANG_TEACACHE_CALIBRATE"),
+    # File the worker writes accumulated calibration rows to (JSON).
+    "SGLANG_TEACACHE_CALIBRATE_OUT": _lazy_str("SGLANG_TEACACHE_CALIBRATE_OUT", ""),
     # model loading
     "SGLANG_USE_RUNAI_MODEL_STREAMER": _lazy_bool(
         "SGLANG_USE_RUNAI_MODEL_STREAMER", "true"

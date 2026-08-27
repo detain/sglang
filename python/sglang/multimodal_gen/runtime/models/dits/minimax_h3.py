@@ -47,6 +47,11 @@ from sglang.multimodal_gen.runtime.cache.spectrum import (
     local_target_hidden,
     target_audio_video_span,
 )
+from sglang.multimodal_gen.runtime.cache.teacache import TeaCacheMixin
+from sglang.multimodal_gen.runtime.cache.teacache_calibrate import (
+    SINGLE_EXPERT,
+    record_from_env,
+)
 from sglang.multimodal_gen.runtime.distributed import (
     get_tp_world_size,
     tensor_model_parallel_all_gather,
@@ -1710,7 +1715,9 @@ def _reject_adaln_lora(names: list[str]) -> None:
     )
 
 
-class MiniMaxH3DiTModel(SpectrumMixin, BaseDiT, LayerwiseOffloadableModuleMixin):
+class MiniMaxH3DiTModel(
+    SpectrumMixin, TeaCacheMixin, BaseDiT, LayerwiseOffloadableModuleMixin
+):
     _aliases = [
         "MiniMaxH3Transformer3DModel",
         "MiniMaxH3PrunedTransformer3DModel",
@@ -2120,6 +2127,67 @@ class MiniMaxH3DiTModel(SpectrumMixin, BaseDiT, LayerwiseOffloadableModuleMixin)
         self._init_spectrum_state()
         self._h3_spectrum_last_audio: torch.Tensor | None = None
         self._h3_spectrum_last_video: torch.Tensor | None = None
+
+        # Lossy TeaCache: reuse TeaCacheMixin's decision/reset logic. Fields set
+        # directly (not via _init_teacache_state, which needs self.prefix, here
+        # reserved for weight-name mapping); H3 has no CFG so no cfg-cache split.
+        self.cnt = 0
+        self.enable_teacache = False
+        self._supports_cfg_cache = False
+        self._teacache_expert_tag = SINGLE_EXPERT
+        self.previous_modulated_input: torch.Tensor | None = None
+        self.previous_residual: torch.Tensor | None = None
+        self.accumulated_rel_l1_distance = 0.0
+        self.is_cfg_negative = False
+        self._h3_tc_coeffs: list[float] | None = None
+        self._h3_tc_thresh = 0.0
+        self._h3_tc_start = 1
+        self._h3_tc_end = 0
+
+    def h3_teacache_configure(
+        self,
+        enabled: bool,
+        coefficients: list[float] | None,
+        thresh: float,
+        start_skipping: int,
+        end_skipping: int,
+    ) -> None:
+        """Arm/disarm lossy TeaCache for one generation and reset its state.
+
+        ``start_skipping``/``end_skipping`` are the resolved boundary steps from
+        ``TeaCacheParams.get_skip_boundaries`` (first/last steps always compute).
+        """
+        self.reset_teacache_state()
+        self.enable_teacache = bool(enabled)
+        self._h3_tc_coeffs = coefficients
+        self._h3_tc_thresh = float(thresh)
+        self._h3_tc_start = int(start_skipping)
+        self._h3_tc_end = int(end_skipping)
+
+    def maybe_cache_states(
+        self, hidden_states: torch.Tensor, original_hidden_states: torch.Tensor
+    ) -> None:
+        self.previous_residual = hidden_states - original_hidden_states
+
+    def retrieve_cached_states(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        return hidden_states + self.previous_residual
+
+    def should_skip_forward_for_cached_states(self, **kwargs: Any) -> bool:
+        """Reuse the shared polynomial/threshold decision on the adaLN input.
+
+        ``adaln_input`` derives from the global unique_timesteps (identical on
+        every SP/TP rank), so the decision is rank-consistent -- ranks never
+        disagree on entering the block collectives.
+        """
+        if not self.enable_teacache:
+            return False
+        adaln_input = kwargs["adaln_input"]
+        is_boundary = self.cnt < self._h3_tc_start or self.cnt >= self._h3_tc_end
+        self.is_cfg_negative = False
+        should_calc = self._compute_teacache_decision(
+            adaln_input, is_boundary, self._h3_tc_coeffs, self._h3_tc_thresh
+        )
+        return not should_calc
 
     def set_cache_dit_input_preservation(self, enabled: bool) -> None:
         """Stop the blocks from overwriting the input Cache-DiT holds by reference.
@@ -2750,10 +2818,25 @@ class MiniMaxH3DiTModel(SpectrumMixin, BaseDiT, LayerwiseOffloadableModuleMixin)
                 self._h3_spectrum_last_video = None
         block_adaln_params = None
         adaln_cache_plan_index = None
+        # Lossy TeaCache: skip the block stack and reuse the packed residual
+        # when the adaLN input barely changed; calibration records the diffs.
+        # Both are no-ops unless enabled, leaving the default path untouched.
+        _tc_calibrating = envs.SGLANG_TEACACHE_CALIBRATE
+        _tc_active = self.enable_teacache or _tc_calibrating
+        _tc_skip = self.should_skip_forward_for_cached_states(adaln_input=adaln_input)
+        # Clone: blocks rewrite their input in place (see
+        # set_cache_dit_input_preservation), else the residual reads as ~zero.
+        _tc_orig = (
+            hidden.clone()
+            if (_tc_active and not _tc_skip and run_transformer_blocks)
+            else None
+        )
         # Skip-step forecasts still run embed + final_layer. Do not touch
         # per-block AdaLN or the 50-layer stack — that is what lets Spectrum
         # coexist with DiT layerwise offload.
-        if run_transformer_blocks:
+        if _tc_skip:
+            hidden = self.retrieve_cached_states(hidden)
+        elif run_transformer_blocks:
             if self.adaln_cache is not None:
                 # prepare_adaln_plans resolved the slot on the host; the device
                 # lookup remains for callers that drive forward() directly.
@@ -2801,6 +2884,9 @@ class MiniMaxH3DiTModel(SpectrumMixin, BaseDiT, LayerwiseOffloadableModuleMixin)
                         else block_adaln_params[index]
                     ),
                 )
+            if self.enable_teacache:
+                self.maybe_cache_states(hidden, _tc_orig)
+            record_from_env(adaln_input, hidden, step_index=self.cnt)
             if spectrum_on:
                 self._h3_spectrum_record_targets(
                     hidden, audio_pos, infer_out_pos, row_start, row_stop
@@ -2809,6 +2895,8 @@ class MiniMaxH3DiTModel(SpectrumMixin, BaseDiT, LayerwiseOffloadableModuleMixin)
             hidden = self._h3_spectrum_predict_targets(
                 hidden, audio_pos, infer_out_pos, row_start, row_stop
             )
+        if _tc_active:
+            self.cnt += 1
         if self.adaln_cache is not None and adaln_cache_plan_index is None:
             adaln_cache_plan_index = kwargs.get("adaln_cache_slot")
             if adaln_cache_plan_index is None:
