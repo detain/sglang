@@ -70,7 +70,8 @@ from sglang.srt.models.qwen4_exp_ple_table import (
     make_ple_file_rss_trimmer,
 )
 from sglang.srt.runtime_context import get_parallel
-from sglang.srt.utils import is_sm120_supported, logger
+from sglang.srt.utils import is_sm120_supported, is_sm121, logger
+from sglang.srt.utils.numa_utils import allocate_interleaved_pinned_table
 
 # Decode/verify-sized batches only: at prefill sizes both chains are compute
 # bound and serializing them on one stream is faster than contending.
@@ -93,6 +94,10 @@ def _ple_table_is_fp8(
     if isinstance(quant_config, ModelOptMixedPrecisionConfig):
         return quant_config.resolve_quant_algo(prefix) == "FP8"
     return False
+
+
+def _should_interleave_ple_table() -> bool:
+    return is_sm120_supported() and not is_sm121()
 
 
 def _get_ple_forward_mode(forward_batch: ForwardBatch) -> ForwardMode:
@@ -820,17 +825,29 @@ class Qwen4ExpPinnedHostEmbedding(VocabParallelEmbedding):
         self.quant_method = None
 
         source_weight = embedding.weight
-        host_table = allocate_ple_host_table(
-            shape=source_weight.shape,
-            dtype=source_weight.dtype,
-            backend=backend,
-            table_dir=table_dir,
-            # Each TP rank holds a different vocabulary shard of the same shape.
-            tag=(
-                f"rows{self.shard_indices.org_vocab_start_index}"
-                f"-{self.shard_indices.org_vocab_end_index}"
-            ),
-        )
+        self._pinned_buffer = None
+        if backend == "pinned":
+            # The GPU reads this table over PCIe, so it does not need to sit on
+            # the NUMA node local to the GPU; spreading it keeps a multi-GiB
+            # shard from exhausting a single node (and falls back to the plain
+            # node-local pin_memory allocation when interleave is off).
+            host_table, self._pinned_buffer = allocate_interleaved_pinned_table(
+                tuple(source_weight.shape),
+                source_weight.dtype,
+                interleave=_should_interleave_ple_table(),
+            )
+        else:
+            host_table = allocate_ple_host_table(
+                shape=source_weight.shape,
+                dtype=source_weight.dtype,
+                backend=backend,
+                table_dir=table_dir,
+                # Each TP rank holds a different vocabulary shard of the same shape.
+                tag=(
+                    f"rows{self.shard_indices.org_vocab_start_index}"
+                    f"-{self.shard_indices.org_vocab_end_index}"
+                ),
+            )
         # Only the file backend has anything to prefetch (rows live on storage).
         self._file_prefetcher = make_ple_file_prefetcher(host_table)
         # ... and only it needs its resident set bounded: a fault maps a whole
