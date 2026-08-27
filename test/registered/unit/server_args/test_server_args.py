@@ -11,12 +11,14 @@ from unittest.mock import MagicMock, patch
 
 import msgspec
 import msgspec.structs
+import torch
 
 import sglang.srt.server_args as server_args_module
 from sglang.srt.arg_groups import parallel_hook, pd_disaggregation_hook, serving_hook
 from sglang.srt.arg_groups.attention_hook import (
     handle_attention_backend_compatibility,
     handle_deterministic_inference,
+    handle_linear_attn_backend,
 )
 from sglang.srt.arg_groups.cuda_graph_hook import (
     apply_cuda_graph_compatibility,
@@ -739,6 +741,122 @@ class TestMambaCacheStochasticRounding(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "requires SM100"):
             handle_mamba_backend(server_args)
+
+
+class TestSM120FlashInferGDNContract(unittest.TestCase):
+    def handle(self, server_args, capability=(12, 0)):
+        with (
+            override_platform(is_cuda=True, is_sm100=False),
+            patch.object(torch.cuda, "get_device_capability", return_value=capability),
+            patch.object(torch.version, "cuda", "13.2"),
+        ):
+            handle_linear_attn_backend(server_args)
+
+    def test_sm120_flashinfer_prefill_requires_fp32_state(self):
+        args = ServerArgs(
+            model_path="dummy",
+            linear_attn_prefill_backend="flashinfer",
+            mamba_ssm_dtype="bfloat16",
+        )
+        with self.assertRaisesRegex(ValueError, "SM120 requires unpooled fp32"):
+            self.handle(args)
+
+    def test_sm120_flashinfer_prefill_accepts_fp32_state(self):
+        args = ServerArgs(
+            model_path="dummy",
+            linear_attn_prefill_backend="flashinfer",
+            mamba_ssm_dtype="float32",
+        )
+        self.handle(args)
+
+    def test_sm120_flashinfer_prefill_accepts_default_fp32_state(self):
+        args = ServerArgs(
+            model_path="dummy",
+            linear_attn_prefill_backend="flashinfer",
+        )
+        self.handle(args)
+
+    def test_sm120_flashinfer_decode_uses_triton_verify_by_default(self):
+        args = ServerArgs(
+            model_path="dummy",
+            linear_attn_decode_backend="flashinfer",
+            mamba_ssm_dtype="float32",
+        )
+        self.handle(args)
+        self.assertEqual(args.linear_attn_verify_backend, "triton")
+
+    def test_sm120_flashinfer_decode_accepts_default_fp32_state(self):
+        args = ServerArgs(
+            model_path="dummy",
+            linear_attn_decode_backend="flashinfer",
+        )
+        self.handle(args)
+        self.assertEqual(args.linear_attn_verify_backend, "triton")
+
+    def test_sm120_rejects_explicit_flashinfer_verify(self):
+        args = ServerArgs(
+            model_path="dummy",
+            linear_attn_verify_backend="flashinfer",
+            mamba_ssm_dtype="float32",
+        )
+        with self.assertRaisesRegex(ValueError, "not supported on SM120"):
+            self.handle(args)
+
+    def test_sm100_flashinfer_decode_still_requires_bfloat16(self):
+        args = ServerArgs(
+            model_path="dummy",
+            linear_attn_decode_backend="flashinfer",
+            mamba_ssm_dtype="float32",
+        )
+        with self.assertRaisesRegex(ValueError, "pooled state requires"):
+            self.handle(args, capability=(10, 0))
+
+    def test_sm110_flashinfer_decode_accepts_bfloat16(self):
+        args = ServerArgs(
+            model_path="dummy",
+            linear_attn_decode_backend="flashinfer",
+            mamba_ssm_dtype="bfloat16",
+        )
+        self.handle(args, capability=(11, 0))
+
+    def test_sm110_flashinfer_decode_rejects_float32(self):
+        args = ServerArgs(
+            model_path="dummy",
+            linear_attn_decode_backend="flashinfer",
+            mamba_ssm_dtype="float32",
+        )
+        with self.assertRaisesRegex(ValueError, "pooled state requires"):
+            self.handle(args, capability=(11, 0))
+
+    def test_sm110_flashinfer_prefill_keeps_upstream_policy(self):
+        args = ServerArgs(
+            model_path="dummy",
+            linear_attn_prefill_backend="flashinfer",
+            mamba_ssm_dtype="bfloat16",
+        )
+        self.handle(args, capability=(11, 0))
+
+    def test_flashinfer_decode_state_contract_matches_kernel_policy(self):
+        cases = (
+            ((9, 0), False),
+            ((10, 0), True),
+            ((11, 0), True),
+            ((12, 0), False),
+            ((12, 1), True),
+            ((13, 0), True),
+        )
+        for capability, uses_pooled_state in cases:
+            with self.subTest(capability=capability):
+                args = ServerArgs(
+                    model_path="dummy",
+                    linear_attn_decode_backend="flashinfer",
+                    mamba_ssm_dtype="float32",
+                )
+                if uses_pooled_state:
+                    with self.assertRaisesRegex(ValueError, "requires.*bfloat16"):
+                        self.handle(args, capability=capability)
+                else:
+                    self.handle(args, capability=capability)
 
 
 class TestLoadBalanceMethod(unittest.TestCase):

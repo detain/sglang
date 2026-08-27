@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 from typing import Any
@@ -29,6 +30,7 @@ from sglang.srt.arg_groups.overrides import (
 )
 from sglang.srt.connector import ConnectorType
 from sglang.srt.environ import envs
+from sglang.srt.layers.attention.linear.utils import flashinfer_gdn_uses_state_pool
 from sglang.srt.model_executor.cuda_graph_config import Backend, Phase, with_phase
 from sglang.srt.runtime_context import get_platform
 from sglang.srt.utils.common import (
@@ -237,7 +239,8 @@ def handle_linear_attn_backend(server_args: Any):
             "defaulting --linear-attn-decode-backend to flashinfer."
         )
 
-    # SM100+ FlashInfer GDN decode requires bf16 state; SM90 uses float32.
+    # FlashInfer keeps pooled state on SM100+ except exact SM120, which uses
+    # the SM90-style unpooled fp32 state path.
     decode = cfg.linear_attn_decode_backend or cfg.linear_attn_backend
 
     # FlashKDA is a prefill-only KDA kernel (no decode kernel) but shares the
@@ -263,42 +266,104 @@ def handle_linear_attn_backend(server_args: Any):
             "(FlashKDA stays on prefill)."
         )
 
+    prefill = cfg.linear_attn_prefill_backend or cfg.linear_attn_backend
+    flashinfer_requested = (
+        decode == "flashinfer"
+        or prefill == "flashinfer"
+        or cfg.linear_attn_verify_backend == "flashinfer"
+    )
+    capability = (
+        torch.cuda.get_device_capability()
+        if flashinfer_requested and get_platform().is_cuda
+        else None
+    )
+    cc_major = capability[0] if capability is not None else None
+    uses_pooled_state = (
+        flashinfer_gdn_uses_state_pool(capability)
+        if capability is not None
+        else False
+    )
+    # Exact (12, 0) only: SM121 (DGX Spark) keeps the pooled state path.
+    is_sm120 = capability == (12, 0)
+
     if (
         decode == "flashinfer"
         and cfg.mamba_ssm_dtype != "bfloat16"
-        and get_platform().is_cuda
-        and torch.cuda.get_device_capability()[0] >= 10
+        and uses_pooled_state
     ):
         raise ValueError(
-            "--linear-attn-decode-backend flashinfer on SM100+ requires "
+            "--linear-attn-decode-backend flashinfer with pooled state requires "
             "--mamba-ssm-dtype bfloat16, "
             f"got {cfg.mamba_ssm_dtype!r}"
         )
+    if (
+        decode == "flashinfer"
+        and is_sm120
+        and cfg.mamba_ssm_dtype not in (None, "float32")
+    ):
+        raise ValueError(
+            "--linear-attn-decode-backend flashinfer on SM120 requires "
+            "unpooled fp32 state (--mamba-ssm-dtype float32); use "
+            "--linear-attn-decode-backend triton otherwise."
+        )
 
     verify = cfg.linear_attn_verify_backend
-    if verify is None and decode == "flashinfer":
+    if verify is None and decode == "flashinfer" and is_sm120:
+        # SM120's FlashInfer GDN kernels have no verify entry point; MTP
+        # target verify stays on Triton.
+        verify = "triton"
+        declare_resolution(
+            server_args,
+            "_handle_linear_attn_backend",
+            linear_attn_verify_backend=verify,
+        )
+        # Keep an unsealed fixture record in sync so direct field readers see
+        # the default; production resolution runs under the write seal and
+        # consumers read the declaration through the views/bags instead.
+        with contextlib.suppress(AttributeError):
+            server_args.linear_attn_verify_backend = verify
+        logger.info(
+            "SM120 FlashInfer GDN MTP verify is unsupported; defaulting "
+            "--linear-attn-verify-backend to triton."
+        )
+    elif verify is None and decode == "flashinfer":
         verify = "flashinfer"
+    if verify == "flashinfer" and is_sm120:
+        raise ValueError(
+            "--linear-attn-verify-backend flashinfer is not supported on "
+            "SM120; use --linear-attn-verify-backend triton."
+        )
     if (
         verify == "flashinfer"
         and cfg.mamba_ssm_dtype != "bfloat16"
-        and get_platform().is_cuda
-        and torch.cuda.get_device_capability()[0] >= 10
+        and uses_pooled_state
     ):
         raise ValueError(
-            "--linear-attn-verify-backend flashinfer on SM100+ requires "
+            "--linear-attn-verify-backend flashinfer with pooled state requires "
             "--mamba-ssm-dtype bfloat16, "
             f"got {cfg.mamba_ssm_dtype!r}"
         )
 
     # SM100+ FlashInfer GDN prefill requires CUDA 13+ (CuTe DSL kernel)
     # for correctness and best performance.
-    prefill = cfg.linear_attn_prefill_backend or cfg.linear_attn_backend
+    if (
+        prefill == "flashinfer"
+        and is_sm120
+        and cfg.mamba_ssm_dtype not in (None, "float32")
+    ):
+        raise ValueError(
+            "--linear-attn-prefill-backend flashinfer on SM120 requires "
+            "unpooled fp32 state (--mamba-ssm-dtype float32); use "
+            "--linear-attn-prefill-backend triton otherwise."
+        )
+    if prefill == "flashinfer" and is_sm120:
+        logger.info("SM120 FlashInfer GDN prefill will use unpooled fp32 state.")
     cuda_version = torch.version.cuda
     cuda_major = int(cuda_version.split(".")[0]) if cuda_version is not None else 0
     if (
         prefill == "flashinfer"
-        and get_platform().is_cuda
-        and torch.cuda.get_device_capability()[0] >= 10
+        and cc_major is not None
+        and cc_major >= 10
         and cuda_major < 13
     ):
         raise ValueError(
