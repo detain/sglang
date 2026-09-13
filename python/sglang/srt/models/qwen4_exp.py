@@ -73,7 +73,7 @@ from sglang.srt.models.qwen4_exp_ple_table import (
     make_ple_file_prefetcher,
     make_ple_file_rss_trimmer,
 )
-from sglang.srt.runtime_context import get_parallel
+from sglang.srt.runtime_context import get_exec, get_parallel, get_spec
 from sglang.srt.utils import is_sm120_supported, is_sm121, logger
 from sglang.srt.utils.numa_utils import allocate_interleaved_pinned_table
 
@@ -1804,7 +1804,7 @@ class Qwen4ExpModel(Qwen3_5ForCausalLM):
     ) -> None:
         if not is_sm120_supported() or is_sm121():
             return
-        graph_config = model_runner.server_args.cuda_graph_config
+        graph_config = get_exec().graph.cuda_graph_config
         max_tokens = 0
         if graph_config.prefill.backend != Backend.DISABLED:
             max_tokens = max(
@@ -1816,7 +1816,7 @@ class Qwen4ExpModel(Qwen3_5ForCausalLM):
             and graph_config.decode.backend != Backend.DISABLED
         ):
             decode_width = model_runner.decode_num_tokens_per_req(
-                num_draft_tokens=model_runner.server_args.speculative_num_draft_tokens
+                num_draft_tokens=get_spec().speculative_num_draft_tokens
             )
             max_tokens = max(
                 max_tokens,

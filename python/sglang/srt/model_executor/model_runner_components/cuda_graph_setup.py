@@ -135,7 +135,7 @@ def _prewarm_model_cuda_graphs(
         return
     if not is_sm120_supported() or is_sm121():
         return
-    graph_config = model_runner.server_args.cuda_graph_config
+    graph_config = get_exec().graph.cuda_graph_config
     prefill_enabled = graph_config.prefill.backend != Backend.DISABLED
     decode_enabled = (
         capture_decode_cuda_graph and graph_config.decode.backend != Backend.DISABLED

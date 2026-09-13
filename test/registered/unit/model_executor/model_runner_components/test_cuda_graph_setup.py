@@ -11,9 +11,30 @@ from sglang.srt.model_executor.model_runner_components.cuda_graph_setup import (
     has_standard_gqa_for_all_local_layers,
     index_attention_layers_by_global_id,
 )
+from sglang.srt.runtime_context import get_context
 from sglang.test.ci.ci_register import register_cpu_ci
 
 register_cpu_ci(est_time=12, suite="base-a-test-cpu")
+
+
+def _pristine_worker_server_args():
+    # In a worker process the published ServerArgs record is pristine: it
+    # carries the operator's raw input (None when no --cuda-graph-config flag
+    # was given), never the parsed config. Business code must read the bag.
+    return SimpleNamespace(cuda_graph_config=None)
+
+
+def _publish_graph_config(request, *, prefill_backend, decode_backend):
+    # Test doubles publish, they do not inject: the effective config lives in
+    # the exec bag, so seed it the way the siblings read it (get_exec().graph).
+    override = get_context().override_server_args(
+        cuda_graph_config=SimpleNamespace(
+            prefill=SimpleNamespace(backend=prefill_backend),
+            decode=SimpleNamespace(backend=decode_backend),
+        ),
+    )
+    override.install()
+    request.addfinalizer(override.restore)
 
 
 def test_standard_gqa_gate_uses_pipeline_local_layer_range():
@@ -50,8 +71,6 @@ def test_pipeline_attention_metadata_is_indexed_by_global_layer_id():
 
 
 def test_model_runner_can_override_decode_graph_runner(monkeypatch):
-    from sglang.srt.runtime_context import get_context
-
     # The capture decision reads the graph configuration and the MoE backends
     # out of the bags.
     override = get_context().override_server_args(
@@ -118,18 +137,16 @@ def test_align_pipeline_layers_uses_absolute_indices():
         )
 
 
-def test_cuda_graph_prewarm_delegates_to_the_language_model(monkeypatch):
+def test_cuda_graph_prewarm_delegates_to_the_language_model(monkeypatch, request):
+    _publish_graph_config(
+        request, prefill_backend="full", decode_backend="piecewise"
+    )
     prewarm = MagicMock(name="prewarm_cuda_graphs")
     language_model = SimpleNamespace(prewarm_cuda_graphs=prewarm)
     runner = SimpleNamespace(
         device="cuda",
         model=object(),
-        server_args=SimpleNamespace(
-            cuda_graph_config=SimpleNamespace(
-                prefill=SimpleNamespace(backend="full"),
-                decode=SimpleNamespace(backend="piecewise"),
-            )
-        ),
+        server_args=_pristine_worker_server_args(),
     )
     monkeypatch.setattr(
         cuda_graph_setup, "resolve_language_model", lambda _: language_model
@@ -143,19 +160,17 @@ def test_cuda_graph_prewarm_delegates_to_the_language_model(monkeypatch):
     prewarm.assert_called_once_with(runner, capture_decode_cuda_graph=True)
 
 
-def test_cuda_graph_prewarm_is_required_for_ple_offload(monkeypatch):
+def test_cuda_graph_prewarm_is_required_for_ple_offload(monkeypatch, request):
+    _publish_graph_config(
+        request, prefill_backend="full", decode_backend="piecewise"
+    )
     runner = SimpleNamespace(
         device="cuda",
         model=object(),
         model_config=SimpleNamespace(
             hf_text_config=SimpleNamespace(ple_offload_embedding=True)
         ),
-        server_args=SimpleNamespace(
-            cuda_graph_config=SimpleNamespace(
-                prefill=SimpleNamespace(backend="full"),
-                decode=SimpleNamespace(backend="piecewise"),
-            )
-        ),
+        server_args=_pristine_worker_server_args(),
     )
     monkeypatch.setattr(
         cuda_graph_setup,
@@ -173,16 +188,13 @@ def test_cuda_graph_prewarm_is_required_for_ple_offload(monkeypatch):
 
 
 def test_cuda_graph_prewarm_does_not_reach_non_sm120_models(monkeypatch):
+    # No graph config is published at all: the gates must return before any
+    # config read, exactly as they do on a worker whose record is pristine.
     prewarm = MagicMock(name="prewarm_cuda_graphs")
     runner = SimpleNamespace(
         device="cuda",
         model=SimpleNamespace(prewarm_cuda_graphs=prewarm),
-        server_args=SimpleNamespace(
-            cuda_graph_config=SimpleNamespace(
-                prefill=SimpleNamespace(backend="full"),
-                decode=SimpleNamespace(backend="piecewise"),
-            )
-        ),
+        server_args=_pristine_worker_server_args(),
     )
     monkeypatch.setattr(cuda_graph_setup, "resolve_language_model", lambda model: model)
     monkeypatch.setattr(
@@ -195,16 +207,13 @@ def test_cuda_graph_prewarm_does_not_reach_non_sm120_models(monkeypatch):
 
 
 def test_cuda_graph_prewarm_does_not_reach_sm121_models(monkeypatch):
+    # Same as the non-sm120 gate: nothing published, must return before any
+    # config read.
     prewarm = MagicMock(name="prewarm_cuda_graphs")
     runner = SimpleNamespace(
         device="cuda",
         model=SimpleNamespace(prewarm_cuda_graphs=prewarm),
-        server_args=SimpleNamespace(
-            cuda_graph_config=SimpleNamespace(
-                prefill=SimpleNamespace(backend="full"),
-                decode=SimpleNamespace(backend="piecewise"),
-            )
-        ),
+        server_args=_pristine_worker_server_args(),
     )
     monkeypatch.setattr(cuda_graph_setup, "resolve_language_model", lambda model: model)
     monkeypatch.setattr(
@@ -218,8 +227,6 @@ def test_cuda_graph_prewarm_does_not_reach_sm121_models(monkeypatch):
 
 
 def test_capture_cuda_graphs_prewarms_before_prefill_capture(monkeypatch):
-    from sglang.srt.runtime_context import get_context
-
     # The capture path reads the forward-hooks and symm-mem decisions out of
     # the bags, so publish them instead of faking them on the runner.
     override = get_context().override_server_args(
@@ -276,17 +283,15 @@ def test_capture_cuda_graphs_prewarms_before_prefill_capture(monkeypatch):
         override.restore()
 
 
-def test_cuda_graph_prewarm_skips_when_both_phases_are_disabled(monkeypatch):
+def test_cuda_graph_prewarm_skips_when_both_phases_are_disabled(monkeypatch, request):
+    _publish_graph_config(
+        request, prefill_backend="disabled", decode_backend="disabled"
+    )
     prewarm = MagicMock(name="prewarm_cuda_graphs")
     runner = SimpleNamespace(
         device="cuda",
         model=SimpleNamespace(prewarm_cuda_graphs=prewarm),
-        server_args=SimpleNamespace(
-            cuda_graph_config=SimpleNamespace(
-                prefill=SimpleNamespace(backend="disabled"),
-                decode=SimpleNamespace(backend="disabled"),
-            )
-        ),
+        server_args=_pristine_worker_server_args(),
     )
     monkeypatch.setattr(cuda_graph_setup, "resolve_language_model", lambda model: model)
     monkeypatch.setattr(
