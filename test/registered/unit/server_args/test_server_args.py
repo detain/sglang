@@ -77,6 +77,7 @@ from sglang.srt.entrypoints.sidecar import (
     start_sidecar,
 )
 from sglang.srt.environ import envs
+from sglang.srt.layers.attention.linear import utils as linear_attn_utils
 from sglang.srt.layers.cp.base import is_cp_enabled, is_interleave
 from sglang.srt.layers.moe.utils import (
     FlashinferA2ADispatchType,
@@ -744,11 +745,20 @@ class TestMambaCacheStochasticRounding(unittest.TestCase):
 
 
 class TestSM120FlashInferGDNContract(unittest.TestCase):
-    def handle(self, server_args, capability=(12, 0)):
+    """Legacy SM120 contract: unpooled fp32 (flashinfer bf16-state kernel
+    treated as absent). The probe is pinned OFF so these assertions are
+    stable on hosts that do ship the kernel."""
+
+    def handle(self, server_args, capability=(12, 0), *, bf16_kernel_available=False):
         with (
             override_platform(is_cuda=True, is_sm100=False),
             patch.object(torch.cuda, "get_device_capability", return_value=capability),
             patch.object(torch.version, "cuda", "13.2"),
+            patch.object(
+                linear_attn_utils,
+                "has_flashinfer_gdn_bf16_state_kernel",
+                return_value=bf16_kernel_available,
+            ),
         ):
             handle_linear_attn_backend(server_args)
 
@@ -857,6 +867,87 @@ class TestSM120FlashInferGDNContract(unittest.TestCase):
                         self.handle(args, capability=capability)
                 else:
                     self.handle(args, capability=capability)
+
+
+class TestSM120FlashInferGDNBf16StateKernel(unittest.TestCase):
+    """Relaxed SM120 contract when flashinfer ships the bf16-state kernel:
+    exact SM120 follows the SM100-like pooled bf16 policy (verify stays on
+    Triton: SM120 has no FlashInfer MTP verify entry point either way)."""
+
+    def handle(self, server_args, capability=(12, 0)):
+        with (
+            override_platform(is_cuda=True, is_sm100=False),
+            patch.object(torch.cuda, "get_device_capability", return_value=capability),
+            patch.object(torch.version, "cuda", "13.2"),
+            patch.object(
+                linear_attn_utils,
+                "has_flashinfer_gdn_bf16_state_kernel",
+                return_value=True,
+            ),
+        ):
+            handle_linear_attn_backend(server_args)
+
+    def test_sm120_flashinfer_decode_accepts_bfloat16_pooled(self):
+        args = ServerArgs(
+            model_path="dummy",
+            linear_attn_decode_backend="flashinfer",
+            mamba_ssm_dtype="bfloat16",
+        )
+        self.handle(args)
+
+    def test_sm120_flashinfer_decode_keeps_triton_verify(self):
+        args = ServerArgs(
+            model_path="dummy",
+            linear_attn_decode_backend="flashinfer",
+            mamba_ssm_dtype="bfloat16",
+        )
+        self.handle(args)
+        self.assertEqual(args.linear_attn_verify_backend, "triton")
+
+    def test_sm120_flashinfer_prefill_accepts_bfloat16_pooled(self):
+        args = ServerArgs(
+            model_path="dummy",
+            linear_attn_prefill_backend="flashinfer",
+            mamba_ssm_dtype="bfloat16",
+        )
+        self.handle(args)
+
+    def test_sm120_still_rejects_explicit_flashinfer_verify(self):
+        args = ServerArgs(
+            model_path="dummy",
+            linear_attn_decode_backend="flashinfer",
+            linear_attn_verify_backend="flashinfer",
+            mamba_ssm_dtype="bfloat16",
+        )
+        with self.assertRaisesRegex(ValueError, "not supported on SM120"):
+            self.handle(args)
+
+    def test_sm120_flashinfer_pooled_requires_bfloat16_like_sm100(self):
+        for capability in ((10, 0), (12, 0)):
+            with self.subTest(capability=capability):
+                args = ServerArgs(
+                    model_path="dummy",
+                    linear_attn_decode_backend="flashinfer",
+                    mamba_ssm_dtype="float32",
+                )
+                with self.assertRaisesRegex(ValueError, "pooled state requires"):
+                    self.handle(args, capability=capability)
+
+    def test_state_pool_policy_with_bf16_kernel(self):
+        cases = (
+            ((9, 0), False),
+            ((10, 0), True),
+            ((11, 0), True),
+            ((12, 0), True),
+            ((12, 1), True),
+            ((13, 0), True),
+        )
+        for capability, uses_pooled_state in cases:
+            with self.subTest(capability=capability):
+                self.assertEqual(
+                    linear_attn_utils.flashinfer_gdn_uses_state_pool(capability),
+                    uses_pooled_state,
+                )
 
 
 class TestLoadBalanceMethod(unittest.TestCase):

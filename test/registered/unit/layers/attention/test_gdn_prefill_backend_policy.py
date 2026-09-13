@@ -8,6 +8,7 @@ from sglang.srt.layers.attention.hybrid_linear_attn_backend import (
     MambaAttnBackendBase,
 )
 from sglang.srt.layers.attention.linear import gdn_backend
+from sglang.srt.layers.attention.linear import utils as linear_attn_utils
 from sglang.srt.layers.attention.linear.gdn_backend import (
     GDNAttnBackend,
     GDNKernelDispatcher,
@@ -316,6 +317,11 @@ class TestFlashInferGDNPrefillBackendPolicy(CustomTestCase):
                 gdn_flashinfer, "_get_flashinfer_gdn_kernels", return_value=kernels
             ),
             patch.object(torch.cuda, "get_device_capability", return_value=(12, 0)),
+            patch.object(
+                linear_attn_utils,
+                "has_flashinfer_gdn_bf16_state_kernel",
+                return_value=False,
+            ),
         ):
             kernel = gdn_flashinfer.FlashInferGDNKernel()
 
@@ -335,6 +341,25 @@ class TestFlashInferGDNPrefillBackendPolicy(CustomTestCase):
                 query_start_loc=None,
             )
 
+    def test_sm120_flashinfer_with_bf16_state_kernel_uses_pooled_state(self):
+        kernels = (True, MagicMock(), MagicMock(), MagicMock(), MagicMock())
+        with (
+            patch.object(
+                gdn_flashinfer, "_get_flashinfer_gdn_kernels", return_value=kernels
+            ),
+            patch.object(torch.cuda, "get_device_capability", return_value=(12, 0)),
+            patch.object(
+                linear_attn_utils,
+                "has_flashinfer_gdn_bf16_state_kernel",
+                return_value=True,
+            ),
+        ):
+            kernel = gdn_flashinfer.FlashInferGDNKernel()
+
+        self.assertTrue(kernel.use_state_pool)
+        # SM120 still has no FlashInfer MTP verify entry point.
+        self.assertFalse(kernel.supports_target_verify)
+
     def test_sm110_flashinfer_keeps_upstream_state_and_verify_policy(self):
         kernels = (True, MagicMock(), MagicMock(), MagicMock(), MagicMock())
         with (
@@ -350,31 +375,45 @@ class TestFlashInferGDNPrefillBackendPolicy(CustomTestCase):
 
     def test_flashinfer_state_pool_policy_across_capabilities(self):
         kernels = (True, MagicMock(), MagicMock(), MagicMock(), MagicMock())
+        # (capability, expected_pool_without_bf16_kernel,
+        #  expected_pool_with_bf16_kernel)
         cases = (
-            ((9, 0), False),
-            ((10, 0), True),
-            ((11, 0), True),
-            ((12, 0), False),
-            ((12, 1), True),
-            ((13, 0), True),
+            ((9, 0), False, False),
+            ((10, 0), True, True),
+            ((11, 0), True, True),
+            ((12, 0), False, True),
+            ((12, 1), True, True),
+            ((13, 0), True, True),
         )
-        for capability, expected_pool in cases:
-            with self.subTest(capability=capability):
-                with (
-                    patch.object(
-                        gdn_flashinfer,
-                        "_get_flashinfer_gdn_kernels",
-                        return_value=kernels,
-                    ),
-                    patch.object(
-                        torch.cuda,
-                        "get_device_capability",
-                        return_value=capability,
-                    ),
+        for capability, pool_off, pool_on in cases:
+            for bf16_kernel_available, expected_pool in (
+                (False, pool_off),
+                (True, pool_on),
+            ):
+                with self.subTest(
+                    capability=capability,
+                    bf16_kernel_available=bf16_kernel_available,
                 ):
-                    kernel = gdn_flashinfer.FlashInferGDNKernel()
+                    with (
+                        patch.object(
+                            gdn_flashinfer,
+                            "_get_flashinfer_gdn_kernels",
+                            return_value=kernels,
+                        ),
+                        patch.object(
+                            torch.cuda,
+                            "get_device_capability",
+                            return_value=capability,
+                        ),
+                        patch.object(
+                            linear_attn_utils,
+                            "has_flashinfer_gdn_bf16_state_kernel",
+                            return_value=bf16_kernel_available,
+                        ),
+                    ):
+                        kernel = gdn_flashinfer.FlashInferGDNKernel()
 
-                self.assertEqual(kernel.use_state_pool, expected_pool)
+                    self.assertEqual(kernel.use_state_pool, expected_pool)
 
 
 if __name__ == "__main__":

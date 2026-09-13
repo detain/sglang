@@ -6,8 +6,10 @@ SM90 (Hopper): full support — decode, prefill, MTP.  State dtype: fp32.
 SM100 (Blackwell): full support — decode, prefill, MTP. State dtype: bf16.
 SM110 (Blackwell): keeps the existing pooled bf16 decode/prefill policy;
 target verify is not enabled.
-SM120 (Blackwell workstation): decode and prefill use unpooled fp32 state;
-MTP verify is not supported.
+SM120 (Blackwell workstation): with flashinfer's bf16-state decode kernel
+available, decode and prefill use the pooled bf16 state like SM100;
+without it, decode and prefill use unpooled fp32 state. MTP verify is
+not supported either way.
 SM121 and later architectures keep the pooled bf16 state policy.
 
 Requires flashinfer >= 0.6.14.
@@ -175,7 +177,8 @@ class FlashInferGDNKernel(LinearAttnKernelBase):
     SM90 (Hopper): decode uses gather/scatter; prefill and MTP verify supported.
     SM100 (Blackwell): pooled bf16 state; prefill and MTP verify supported.
     SM110 (Blackwell): pooled bf16 state; target verify is not enabled.
-    SM120 (Blackwell workstation): unpooled fp32 state; no MTP verify.
+    SM120 (Blackwell workstation): pooled bf16 state when flashinfer ships the
+    bf16-state kernel, else unpooled fp32 state; no MTP verify.
 
     Requires flashinfer >= 0.6.14.
     """
@@ -396,7 +399,11 @@ class FlashInferGDNKernel(LinearAttnKernelBase):
         query_start_loc: torch.Tensor,
         **kwargs,
     ) -> torch.Tensor:
-        if self.is_sm120 and ssm_states.dtype != torch.float32:
+        if (
+            self.is_sm120
+            and not self.use_state_pool
+            and ssm_states.dtype != torch.float32
+        ):
             raise RuntimeError(
                 "SM120 FlashInfer GDN decode requires unpooled fp32 state. "
                 "Use --mamba-ssm-dtype float32 or "
@@ -502,7 +509,11 @@ class FlashInferGDNKernel(LinearAttnKernelBase):
             gdn_prefill_qkv_prepare_fwd,
         )
 
-        if self.is_sm120 and ssm_states.dtype != torch.float32:
+        if (
+            self.is_sm120
+            and not self.use_state_pool
+            and ssm_states.dtype != torch.float32
+        ):
             raise RuntimeError(
                 "SM120 FlashInfer GDN prefill requires unpooled fp32 state. "
                 "Use --mamba-ssm-dtype float32 or "

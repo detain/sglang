@@ -239,8 +239,9 @@ def handle_linear_attn_backend(server_args: Any):
             "defaulting --linear-attn-decode-backend to flashinfer."
         )
 
-    # FlashInfer keeps pooled state on SM100+ except exact SM120, which uses
-    # the SM90-style unpooled fp32 state path.
+    # FlashInfer keeps pooled state on SM100+; exact SM120 joins the pooled
+    # policy when flashinfer ships the bf16-state kernel, else it uses the
+    # SM90-style unpooled fp32 state path.
     decode = cfg.linear_attn_decode_backend or cfg.linear_attn_backend
 
     # FlashKDA is a prefill-only KDA kernel (no decode kernel) but shares the
@@ -299,6 +300,7 @@ def handle_linear_attn_backend(server_args: Any):
     if (
         decode == "flashinfer"
         and is_sm120
+        and not uses_pooled_state
         and cfg.mamba_ssm_dtype not in (None, "float32")
     ):
         raise ValueError(
@@ -349,6 +351,7 @@ def handle_linear_attn_backend(server_args: Any):
     if (
         prefill == "flashinfer"
         and is_sm120
+        and not uses_pooled_state
         and cfg.mamba_ssm_dtype not in (None, "float32")
     ):
         raise ValueError(
@@ -356,7 +359,7 @@ def handle_linear_attn_backend(server_args: Any):
             "unpooled fp32 state (--mamba-ssm-dtype float32); use "
             "--linear-attn-prefill-backend triton otherwise."
         )
-    if prefill == "flashinfer" and is_sm120:
+    if prefill == "flashinfer" and is_sm120 and not uses_pooled_state:
         logger.info("SM120 FlashInfer GDN prefill will use unpooled fp32 state.")
     cuda_version = torch.version.cuda
     cuda_major = int(cuda_version.split(".")[0]) if cuda_version is not None else 0

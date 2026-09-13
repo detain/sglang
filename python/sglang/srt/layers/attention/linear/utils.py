@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import importlib.util
 from enum import Enum
+from functools import lru_cache
 from typing import TYPE_CHECKING, Optional
 
 import msgspec
@@ -73,9 +75,37 @@ class LinearAttnBackends(msgspec.Struct, frozen=True):
     verify: LinearAttnKernelBackend
 
 
+@lru_cache(maxsize=1)
+def has_flashinfer_gdn_bf16_state_kernel() -> bool:
+    """Whether flashinfer exposes the pooled bf16-state GDN decode kernels.
+
+    Mirrors flashinfer's own lazy import guard around
+    ``flashinfer.gdn_kernels.gdn_decode_bf16_state`` (the CuTe-DSL kernels that
+    give exact SM120 pooled-bf16 support, validated numerically against the
+    Triton reference). Cached because it is consulted during argument
+    resolution and kernel construction.
+    """
+    try:
+        spec = importlib.util.find_spec("flashinfer.gdn_kernels.gdn_decode_bf16_state")
+        if spec is None:
+            return False
+        module = importlib.import_module(spec.name)
+    except (ImportError, RuntimeError, ValueError):
+        return False
+    return (
+        getattr(module, "gated_delta_rule", None) is not None
+        and getattr(module, "gated_delta_rule_mtp", None) is not None
+    )
+
+
 def flashinfer_gdn_uses_state_pool(capability: tuple[int, int]) -> bool:
     """Whether FlashInfer GDN uses the pooled bf16 state interface."""
-    return capability[0] >= 10 and capability != (12, 0)
+    if capability == (12, 0):
+        # Exact SM120 follows the pooled policy only when flashinfer ships the
+        # bf16-state kernel; without it SM120 keeps the SM90-style unpooled
+        # fp32 path.
+        return has_flashinfer_gdn_bf16_state_kernel()
+    return capability[0] >= 10
 
 
 def resolve_linear_attn_backends(
