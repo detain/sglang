@@ -1638,10 +1638,6 @@ class Qwen4ExpAttentionDecoderLayer(
             # and writes QSA-private pool buffers.
             current_stream = torch.cuda.current_stream()
             self.alt_stream.wait_stream(current_stream)
-            with torch.cuda.stream(self.alt_stream):
-                topk_indices = self._compute_qsa_topk_indices(
-                    hidden_states, positions, forward_batch
-                )
 
         q, k, v, gate = self._prepare_qkv_gate(
             positions=positions,
@@ -1650,6 +1646,10 @@ class Qwen4ExpAttentionDecoderLayer(
         )
 
         if overlap_indexer:
+            with torch.cuda.stream(self.alt_stream):
+                topk_indices = self._compute_qsa_topk_indices(
+                    hidden_states, positions, forward_batch
+                )
             current_stream.wait_stream(self.alt_stream)
             # Allocated on alt_stream, consumed by attention on the current
             # stream; tell the caching allocator before alt_stream is reused.
