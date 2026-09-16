@@ -22,6 +22,7 @@ from sglang.srt.models.qwen4_exp import (
     Qwen4ExpPLEGroupedNorm,
     Qwen4ExpPLELayer,
 )
+from sglang.srt.runtime_context import get_context
 from sglang.test.ci.ci_register import register_cuda_ci
 
 register_cuda_ci(est_time=60, stage="base-b", runner_config="1-gpu-small")
@@ -213,18 +214,23 @@ def test_model_prewarm_allocates_the_largest_sm120_capture_shape(monkeypatch):
     runner = SimpleNamespace(
         device="cuda",
         model_config=SimpleNamespace(quantization=None),
-        server_args=SimpleNamespace(
-            speculative_num_draft_tokens=4,
-            cuda_graph_config=SimpleNamespace(
-                prefill=SimpleNamespace(backend="full", bs=[8, 16], max_bs=16),
-                decode=SimpleNamespace(backend="full", bs=[1, 8], max_bs=8),
-            ),
-        ),
         decode_num_tokens_per_req=lambda **_: 4,
     )
     monkeypatch.setattr("sglang.srt.models.qwen4_exp.is_sm120_supported", lambda: True)
+    monkeypatch.setattr("sglang.srt.models.qwen4_exp.is_sm121", lambda: False)
 
-    Qwen4ExpModel.prewarm_cuda_graphs(model, runner, capture_decode_cuda_graph=True)
+    # The prewarm reads the effective graph config and draft width from the
+    # bags, so publish them instead of hanging them off the runner.
+    with get_context().override_server_args(
+        speculative_num_draft_tokens=4,
+        cuda_graph_config=SimpleNamespace(
+            prefill=SimpleNamespace(backend="full", bs=[8, 16], max_bs=16),
+            decode=SimpleNamespace(backend="full", bs=[1, 8], max_bs=8),
+        ),
+    ):
+        Qwen4ExpModel.prewarm_cuda_graphs(
+            model, runner, capture_decode_cuda_graph=True
+        )
 
     layer.prepare_cuda_graph_prefetch_buffer.assert_called_once_with(
         32, torch.device("cuda")
