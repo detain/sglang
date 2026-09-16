@@ -228,6 +228,7 @@ def test_model_prewarm_allocates_the_largest_sm120_capture_shape(monkeypatch, re
         decode_num_tokens_per_req=lambda **_: 4,
     )
     monkeypatch.setattr("sglang.srt.models.qwen4_exp.is_sm120_supported", lambda: True)
+    monkeypatch.setattr("sglang.srt.models.qwen4_exp.is_sm121", lambda: False)
 
     Qwen4ExpModel.prewarm_cuda_graphs(model, runner, capture_decode_cuda_graph=True)
 

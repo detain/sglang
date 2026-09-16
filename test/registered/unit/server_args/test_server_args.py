@@ -519,6 +519,14 @@ class TestImageProcessorBackend(CustomTestCase):
 
 
 class TestMultimodalFeatureTransport(CustomTestCase):
+    def setUp(self):
+        # The transport hook writes SGLANG_USE_CUDA_IPC_TRANSPORT; isolate
+        # each test from values leaked by earlier resolutions.
+        env_patch = patch.dict(os.environ, clear=False)
+        env_patch.start()
+        self.addCleanup(env_patch.stop)
+        envs.SGLANG_USE_CUDA_IPC_TRANSPORT.clear()
+
     @staticmethod
     def _set_model_type(server_args, *, is_multimodal):
         server_args._model_config = SimpleNamespace(is_multimodal=is_multimodal)
