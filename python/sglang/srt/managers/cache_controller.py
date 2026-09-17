@@ -601,6 +601,7 @@ class HiCacheController:
                     "nixl",
                     "simm",
                     "mori",
+                    "fast_file",
                 ]
             ) or (
                 self.storage_backend_type == "dynamic"
