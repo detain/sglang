@@ -250,6 +250,12 @@ def refresh_deep_gemm_layout_memory_budget(
             from sglang.srt.layers.moe.utils import MoeA2ABackend, MoeRunnerBackend
             from sglang.srt.layers.quantization.fp8 import Fp8MoEMethod
 
+            # No weight_block_size here on purpose: the SM120 auto branch only
+            # selects DeepGEMM for [128, 128] blockwise, and that path is
+            # contiguous-layout-only (allows_masked_standard_layout() is False
+            # on SM120), so the masked-layout budget below is never consumed
+            # there. Other arches keep auto on Triton, so returning False is
+            # equally correct for them.
             uses_deep_gemm_moe_runner = (
                 Fp8MoEMethod.is_deepgemm_moe_runner_backend_enabled(
                     MoeRunnerBackend(moe_runner_backend),

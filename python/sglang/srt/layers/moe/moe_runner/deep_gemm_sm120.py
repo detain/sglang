@@ -37,7 +37,23 @@ def is_supported() -> bool:
     Off SM120 the shared masked path is correct, so this is vacuously true;
     on SM120 it reports whether the contiguous implementation is present.
     """
-    return True
+    if not _is_sm120:
+        return True
+    from sglang.srt.layers import deep_gemm_wrapper
+
+    return bool(deep_gemm_wrapper.ENABLE_JIT_DEEPGEMM)
+
+
+def auto_enabled() -> bool:
+    """Whether ``--moe-runner-backend auto`` may resolve to this path.
+
+    Stricter than ``is_supported()``: restricted to SM120 proper (not
+    SM121/GB10, which the wrapper's contiguous-API probe does not cover)
+    with the installed deep_gemm exposing the grouped contiguous GEMM.
+    """
+    from sglang.srt.utils import get_device_sm
+
+    return get_device_sm() == 120 and is_supported()
 
 
 def use_swizzle() -> bool:

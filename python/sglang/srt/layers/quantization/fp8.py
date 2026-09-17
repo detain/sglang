@@ -1307,7 +1307,7 @@ class Fp8MoEMethod(FusedMoEMethodBase):
 
     @staticmethod
     def is_deepgemm_moe_runner_backend_enabled(
-        moe_runner_backend=None, moe_a2a_backend=None
+        moe_runner_backend=None, moe_a2a_backend=None, weight_block_size=None
     ) -> bool:
         """Check if MoE will actually use DeepGEMM runner for FP8."""
         from sglang.srt.layers.moe.utils import get_moe_a2a_backend
@@ -1319,6 +1319,18 @@ class Fp8MoEMethod(FusedMoEMethodBase):
         if moe_runner_backend.is_auto():
             if moe_a2a_backend is None:
                 moe_a2a_backend = get_moe_a2a_backend()
+            if moe_a2a_backend.is_none():
+                # The standard dispatcher pairs with DeepGEMM only on SM120,
+                # where the contiguous grouped GEMM consumes its layout and
+                # casts the 128x128 fp32 weight scales inside the kernel.
+                # Other architectures keep the Triton runner for `auto`.
+                if list(weight_block_size or []) != [128, 128]:
+                    return False
+                from sglang.srt.layers.moe.moe_runner.deep_gemm_sm120 import (
+                    auto_enabled,
+                )
+
+                return auto_enabled()
             if not (
                 moe_a2a_backend.is_deepep()
                 or moe_a2a_backend.is_mooncake()
@@ -1953,7 +1965,9 @@ class Fp8MoEMethod(FusedMoEMethodBase):
             from sglang.srt.layers import deep_gemm_wrapper
 
             # Check if MoE will actually use DeepGEMM runner
-            will_use_deepgemm = self.is_deepgemm_moe_runner_backend_enabled()
+            will_use_deepgemm = self.is_deepgemm_moe_runner_backend_enabled(
+                weight_block_size=self.quant_config.weight_block_size
+            )
 
             if self.is_fp4_expert and self.dequant_fp4_to_fp8:
                 for weight_param, scale_param in [
@@ -2689,7 +2703,9 @@ class Fp8MoEMethod(FusedMoEMethodBase):
         moe_runner_backend = get_moe_runner_backend()
 
         if moe_runner_backend.is_auto():
-            if self.is_deepgemm_moe_runner_backend_enabled():
+            if self.is_deepgemm_moe_runner_backend_enabled(
+                weight_block_size=self.quant_config.weight_block_size
+            ):
                 moe_runner_backend = MoeRunnerBackend.DEEP_GEMM
             elif (
                 _is_hip
