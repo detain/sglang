@@ -281,8 +281,14 @@ def test_jit_prewarm_uses_runtime_eligible_specializations(monkeypatch):
     monkeypatch.setattr(
         fast_topk, "_jit_fast_topk_module", lambda *a: calls.append(("topk", a))
     )
+    # Mirror the real signature: a `*a` stub silently absorbs an arity change,
+    # which is how a missing `out_dtype` once reached graph capture.
     monkeypatch.setattr(
-        qsa_indexer, "_jit_qsa_indexer_module", lambda *a: calls.append(("qsa", a))
+        qsa_indexer,
+        "_jit_qsa_indexer_module",
+        lambda dtype, out_dtype, head_dim, is_neox_style: calls.append(
+            ("qsa", (dtype, out_dtype, head_dim, is_neox_style))
+        ),
     )
     monkeypatch.setattr(
         hc_combine, "_jit_hc_combine_module", lambda *a: calls.append(("hc", a))
@@ -298,11 +304,13 @@ def test_jit_prewarm_uses_runtime_eligible_specializations(monkeypatch):
         lambda: calls.append(("fp8", ())),
     )
 
-    Qwen4ExpModel._prewarm_cuda_graph_jit_kernels(model, quantization="fp8")
+    Qwen4ExpModel._prewarm_cuda_graph_jit_kernels(
+        model, quantization="fp8", qsa_compressed_dtype=torch.float8_e4m3fn
+    )
 
     assert calls == [
         ("topk", (512,)),
-        ("qsa", (torch.bfloat16, 128, False)),
+        ("qsa", (torch.bfloat16, torch.float8_e4m3fn, 128, False)),
         ("hc", (4, 512, torch.bfloat16)),
         ("rms", (512, torch.bfloat16)),
         ("fp8", ()),

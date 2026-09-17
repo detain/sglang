@@ -1755,7 +1755,10 @@ class Qwen4ExpModel(Qwen3_5ForCausalLM):
 
     @staticmethod
     def _prewarm_cuda_graph_jit_kernels(
-        model: nn.Module, *, quantization: Optional[str]
+        model: nn.Module,
+        *,
+        quantization: Optional[str],
+        qsa_compressed_dtype: Optional[torch.dtype] = None,
     ) -> None:
         from sglang.kernels.ops.attention import qsa_indexer
         from sglang.kernels.ops.elementwise import fast_topk, hc_combine
@@ -1778,6 +1781,10 @@ class Qwen4ExpModel(Qwen3_5ForCausalLM):
                 ):
                     qsa_indexer._jit_qsa_indexer_module(
                         qsa_dtype,
+                        # The indexer stores Q and the compressed keys in the
+                        # pool's dtype, so that is the specialisation capture
+                        # runs; None (no QSA pool) keeps the input dtype.
+                        qsa_compressed_dtype or qsa_dtype,
                         module.index_head_dim,
                         rotary_emb.is_neox_style,
                     )
@@ -1848,6 +1855,9 @@ class Qwen4ExpModel(Qwen3_5ForCausalLM):
         self._prewarm_cuda_graph_jit_kernels(
             self,
             quantization=model_runner.model_config.quantization,
+            qsa_compressed_dtype=getattr(
+                model_runner.token_to_kv_pool, "qsa_compressed_dtype", None
+            ),
         )
         logger.info(
             "Prewarmed Qwen4-Exp SM120 JIT kernels in %.2f seconds",
