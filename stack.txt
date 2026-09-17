@@ -1,0 +1,178 @@
+# stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
+#
+# branch : stack-36644-core
+# head   : 038667befd
+# base   : upstream sgl-project/sglang main @ 464fffbec8
+#          (dsv4.1: chat encoding and tool parsing (#39665))
+# merged : 2026-09-17
+#
+# Target: Qwen3.8-Flash-Next (Qwen4ExpForConditionalGeneration), 4x RTX PRO 6000
+# Blackwell Max-Q, compute capability 12.0 (SM120), 96 GB each, PCIe only -- no
+# NVLink, no P2P. CUDA 12.9, glibc 2.39.
+#
+# Base model support is already upstream: #37500 'support qwen 3.8 flash next'.
+# Everything below is on top of that.
+#
+# All PRs listed are OPEN upstream as of the merge date; none are merged. They
+# are cherry-picked with `git cherry-pick -x`, so each commit carries its origin
+# hash, and the ones added on 2026-09-16 also carry an `Upstream-PR:` trailer.
+
+==============================================================================
+STACK, IN BUILD ORDER (bottom first)
+==============================================================================
+
+  PR #36787  [draft]  @Dev-Jahn
+      https://github.com/sgl-project/sglang/pull/36787
+      [Qwen 3.8 Flash Next] Add sm120 (RTX PRO 6000 Blackwell) support
+         1. 1e4ed36f1f  [QSA] Add direct-paged Triton sparse decode on sm120
+         2. 8c5c86c18a  [sm120] Keep fp32 GDN state for FlashInfer
+         3. 222149d06e  [sm120] Fix serving fallbacks and graph capture
+         4. d65bee507f  [MoE] Add tuned fused MoE configs for RTX PRO 6000 Server Edition
+         5. 13682d3aa2  [QSA] Add split-K sparse decode for small batches
+         6. aeb2b4412a  [QSA] Add Triton MQA scoring on sm120
+         7. 951e9ec840  [QSA] Fuse split-K merge into sparse decode
+         8. 2a2a2242d7  [PLE] Interleave the pinned table across NUMA nodes
+         9. 922d8bcf6b  [HC] Tune sm120 Triton geometry by row bucket
+        10. cced877bd6  [MoE] Add fused small-row NVFP4 kernel for sm120
+        11. 4ba8636767  [QSA] Bound sparse indices and use 64-bit KV addresses
+        12. 5062a932c4  [PLE] Select the prefetch buffer from capture state
+      # Core SM120 enablement: QSA Triton sparse decode, GDN state dtype, fused MoE
+      # configs and the small-row NVFP4 kernel, PLE table placement.
+
+  PR #37275  [draft]  @Dev-Jahn
+      https://github.com/sgl-project/sglang/pull/37275
+      [QSA] Tune sm120 sparse prefill geometry
+        13. 731dd20ed0  [QSA] Tune sm120 sparse prefill geometry
+      # Stacked on #36787.
+
+  PR #38144  [ready]  @Leslie360
+      https://github.com/sgl-project/sglang/pull/38144
+      fix(jit-kernel): exact fallback for fast_topk threshold-bin overflow (#36807)
+        14. ef9db161c2  fix(jit-kernel): exact fallback for fast_topk threshold-bin overflow
+      # Correctness fix in the top-k JIT kernel.
+
+  PR #38209  [ready]  @sghhhh
+      https://github.com/sgl-project/sglang/pull/38209
+      [Qwen3.8-Flash-Next] Streamline QSA prefill selection
+        15. 3191e5cc91  perf(qsa): streamline prefill selection
+      # Replaces the per-sequence Python loop with precomputed cu_seqlens + a fused
+      # packer. NOTE: this is what the CP series (#39721) conflicts with.
+
+  PR #36644  [ready]  @LingZ315
+      https://github.com/sgl-project/sglang/pull/36644
+      [Qwen3.8] Fix FP8 KV cache support in QSA
+        16. 0a79caa4f7  fix(qsa): support FP8 KV cache
+      # The branch this stack is named after.
+
+  LOCAL  [local]  Joe Huss
+      Local integration fixes (not submitted upstream)
+        17. 5521147e04  fix(sm120): read CUDA graph config from exec bag in Qwen4 JIT prewarm
+        18. 5bf8ba3576  test(sm120): set is_sm120 on FlashInfer alignment fixture
+        19. b5169fd30e  feat(sm120): allow pooled bf16 GDN state with FlashInfer bf16-state kernel
+        20. b21b748d4c  test: fix prewarm config publishing and mm transport env isolation
+      # Adaptations needed to make the above work together on this host.
+
+  PR #39807  [ready]  @JAVerma
+      https://github.com/sgl-project/sglang/pull/39807
+      Support consumer Blackwell (SM120/SM121) for NVFP4 serving
+        21. 8b6c3a04d3  [SM120] Select the CUTLASS NVFP4 MoE runner on consumer Blackwell
+        22. 542e4f53b8  [SM120] Reject trtllm_mha with an FP8 KV cache at construction
+        23. 72f95c922d  [JIT] Build against a usable CUDA toolkit on glibc >= 2.41 and pip-only installs
+      # Added 2026-09-16. Makes --moe-runner-backend auto resolve to CUTLASS on
+      # SM120, which is also what makes #36787's small-row NVFP4 kernel reachable.
+      # The JIT toolchain commit is inert here (glibc 2.39).
+
+  PR #39862  [ready]  @JarJarBeatyourattitude
+      https://github.com/sgl-project/sglang/pull/39862
+      [Fix] HiCache: carry registered Mamba slot side states (Qwen4-Exp PLE) through the host tier
+        24. aeec3b87de  [Fix] HiCache: carry registered Mamba slot side states through the host tier
+      # Added 2026-09-16. Does NOT make HiCache usable on this model -- see
+      # CAVEATS below.
+
+  PR #39809  [ready]  @avifenesh
+      https://github.com/sgl-project/sglang/pull/39809
+      [Function Call] Qwen3Coder: recover object parameters with an unescaped quote inside a string
+        25. 317a5ed56d  [Function Call] Qwen3Coder: recover object parameters with an unescaped quote inside a string
+        26. 5e3dee8e82  [Function Call] Qwen3Coder: recover object parameters the model wrote pre-escaped
+      # Added 2026-09-16. Includes a second commit not described in the PR body.
+
+  LOCAL  [local]  Joe Huss
+      Post-merge regression fix
+        27. 038667befd  fix(hicache): default MambaPoolHost slot side-state attrs at class level
+      # Required after the 2026-09-17 upstream merge; see CAVEATS.
+
+==============================================================================
+EVALUATED AND DELIBERATELY NOT INCLUDED
+==============================================================================
+
+  PR #39721 / #39722 / #39723 / #39724  @Shunkangz
+      [Qwen3.8 CP 1/4 .. 4/4] Collocated prefill context parallelism
+      https://github.com/sgl-project/sglang/pull/39724  (4/4 contains 1..3)
+
+      Reviewed 2026-09-16, not merged. Reasons:
+
+      1. Wrong interconnect. These cards have no NVLink (`nvidia-smi nvlink -s`
+         reports 'Device does not have or support Nvlink'; topology is NODE, i.e.
+         PCIe via host bridges). CP adds per-layer all-gathers of K/V and index-K
+         on top of TP traffic. #39722 was benchmarked on 4x B200 over NVLink.
+
+      2. The required config removes most of the serving setup. The hook in
+         #39723 refuses to start unless radix cache AND chunked prefill are
+         disabled, plus no EP / PP / a2a backend / DP attention / spec decode /
+         PD, and it force-disables prefill CUDA graphs. That also makes it
+         mutually exclusive with HiCache (#39862).
+
+      3. Conflicts with #38209 above. #39721 rewrites
+         QSAMetadata.get_prefill_mqa_inputs against the pre-#38209 Python loop.
+         One file, two hunks, but it is a semantic conflict: the resolution is to
+         keep the fused packer and branch the row-range computation on whether
+         query_sequence_ids is set. build_qsa_row_ranges still exists, so it is
+         tractable -- it just is not a mechanical merge.
+
+      4. All-or-nothing. _SUPPORTED_MODELS is empty until 4/4 registers
+         Qwen4ExpForConditionalGeneration, so 1/4-3/4 alone are dead code.
+
+      Local branches pr39721..pr39724 are kept for reference if long-context
+      prefill is revisited.
+
+==============================================================================
+CAVEATS
+==============================================================================
+
+  * Do NOT enable --enable-hierarchical-cache on this model yet.
+    #39862 fixes one real bug (PLE short-conv + N-gram state was lost through
+    the host tier, so a restored slot inherited the previous occupant's token
+    history) but the PR author's own measurement says host-tier hits still
+    return wrong output: 0/10 usable answers vs 10/10 cold and 10/10 device-hit.
+    Tracked upstream as issue #39830, still open.
+    https://github.com/sgl-project/sglang/issues/39830
+
+  * #39862 needed a follow-up fix (the last commit in the stack). Upstream unit
+    tests build MambaPoolHost with __new__ and never run __init__, so the
+    attributes #39862 adds there were missing and every reader raised
+    AttributeError. It broke two tests that pass on upstream main; the second
+    only appeared once the 2026-09-17 upstream merge brought in the NPU mamba
+    test (#32500). Empty class-level defaults restore the intended no-op path.
+
+  * sglang is installed EDITABLE against this checkout
+    (/root/sglang/sglang.prev/python/sglang). pytest run from a git worktree
+    still imports library code from here, so worktrees CANNOT be used to
+    baseline library changes -- only test-file changes. Baseline by checking the
+    commit out in this tree.
+
+  * 13 failures in test/registered/unit/layers/quantization/ are pre-existing on
+    SM120 and identical on upstream main (verified by real checkout, not a
+    worktree): mm_fp4 has no 'trtllm' backend on SM120, and the trtllm/cutedsl
+    kernels fail to JIT-build. The stack adds 3 passing tests and no failures.
+
+==============================================================================
+REBUILDING FROM SCRATCH
+==============================================================================
+
+  git checkout -B <branch> <upstream-main-sha>
+  for each PR above, in order:
+      git fetch origin pull/<N>/head:pr<N>
+      git cherry-pick -x <its commits, in the order listed>
+
+  Local commits are this stack's own; they have no upstream PR.
+
