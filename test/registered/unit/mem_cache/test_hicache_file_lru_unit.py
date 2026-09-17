@@ -30,6 +30,9 @@ from sglang.srt.mem_cache.hicache_storage import (
     HiCacheFile,
     HiCacheStorageConfig,
     MetadataCache,
+    PoolName,
+    PoolTransfer,
+    count_pool_hits,
 )
 from sglang.srt.mem_cache.storage.file.lru_file_evictor import _parse_size_to_bytes
 from sglang.test.test_utils import CustomTestCase
@@ -536,6 +539,138 @@ class TestHiCacheFileMetadataIntegration(HiCacheFileLRUTestBase):
             )  # since mock_exists returns True, k3 exists physically
             mock_scandir.assert_not_called()
             mock_exists.assert_called_once()
+
+
+class _FakeHostPool:
+    """Minimal host pool implementing the v2 storage page interface on CPU.
+
+    Mirrors the contract of HostKVCache subclasses used by
+    HiCacheFile._read_page/_write_page (dummy flat page buffer,
+    set/get_from_flat_data_page).  `reject_set` simulates a legacy page whose
+    payload is incompatible with the current pool layout, which real pools
+    reject with ValueError from set_from_flat_data_page (e.g. MambaPoolHost
+    slot-side-state pages written before #39862, or INDEXER sidecar pages
+    written before #39893).
+    """
+
+    def __init__(self, page_bytes: int, reject_set: bool = False):
+        self.page_size = 1
+        self.page_bytes = page_bytes
+        self.reject_set = reject_set
+        self.pages = {}
+
+    def get_dummy_flat_data_page(self):
+        return torch.zeros(self.page_bytes, dtype=torch.uint8)
+
+    def set_from_flat_data_page(self, page_offset, data_page):
+        if self.reject_set:
+            raise ValueError(f"incompatible legacy page at {page_offset}")
+        self.pages[page_offset] = data_page.clone()
+
+    def get_data_page(self, page_offset, flat=True):
+        return self.pages[page_offset]
+
+
+class TestCorruptPageDegradesToMiss(HiCacheFileLRUTestBase):
+    """A page that exists on disk but cannot be read/loaded must degrade to a
+    per-page miss (sgl-project/sglang#39830): an exception escaping here would
+    unwind _batch_io_v2 and kill the daemon prefetch/backup threads,
+    permanently disabling the tier for the rest of the serve."""
+
+    PAGE_BYTES = 64
+
+    def _write_raw_page(self, backend: HiCacheFile, storage_key: str, n_bytes: int):
+        path = os.path.join(
+            backend.file_path, f"{backend._get_suffixed_key(storage_key)}.bin"
+        )
+        with open(path, "wb") as f:
+            f.write(b"z" * n_bytes)
+
+    def test_get_truncated_file_returns_none(self):
+        # Short read (IOError raised inside get) must come back as the
+        # tensor-or-None miss contract, not an exception.
+        b = self.make_backend()
+        self._write_raw_page(b, "k0", self.PAGE_BYTES - 8)
+        out = b.get("k0", target_location=_t(self.PAGE_BYTES))
+        self.assertIsNone(out)
+
+    def test_read_page_truncated_file_returns_false(self):
+        b = self.make_backend()
+        pool = _FakeHostPool(self.PAGE_BYTES)
+        self._write_raw_page(b, "k0", self.PAGE_BYTES - 8)
+        self.assertFalse(b._read_page(PoolName.KV, "k0", pool, 0))
+
+    def test_read_page_missing_file_returns_false(self):
+        b = self.make_backend()
+        pool = _FakeHostPool(self.PAGE_BYTES)
+        self.assertFalse(b._read_page(PoolName.KV, "absent", pool, 0))
+
+    def test_read_page_value_error_becomes_false(self):
+        # Full-size file (get succeeds) but the pool rejects the legacy page
+        # layout with ValueError from set_from_flat_data_page.
+        b = self.make_backend()
+        self._write_raw_page(b, "k0", self.PAGE_BYTES)
+        pool = _FakeHostPool(self.PAGE_BYTES, reject_set=True)
+        self.assertFalse(b._read_page(PoolName.KV, "k0", pool, 0))
+
+    def test_write_page_error_becomes_false(self):
+        b = self.make_backend()
+
+        class _BoomPool(_FakeHostPool):
+            def get_data_page(self, page_offset, flat=True):
+                raise RuntimeError("page extraction failed")
+
+        self.assertFalse(
+            b._write_page(PoolName.KV, "k0", _BoomPool(self.PAGE_BYTES), 0)
+        )
+
+    def test_batch_get_v2_flags_bad_page_per_page(self):
+        # One corrupt (truncated) sidecar page among good ones: good pages
+        # load, the bad page is flagged False per page, and count_pool_hits
+        # truncates the hit to the contiguous leading prefix of successes.
+        b = self.make_backend()
+        pool = _FakeHostPool(self.PAGE_BYTES)
+        b.register_mem_host_pool_v2(pool, PoolName.INDEXER)
+        keys = ["h0", "h1", "h2"]
+        for i, k in enumerate(keys):
+            storage_key = b._log_key(PoolName.INDEXER, k)
+            if i == 1:
+                self._write_raw_page(b, storage_key, self.PAGE_BYTES // 2)  # corrupt
+            else:
+                self.assertTrue(b.set(storage_key, _t(self.PAGE_BYTES, fill=i)))
+
+        transfer = PoolTransfer(
+            name=PoolName.INDEXER,
+            host_indices=torch.tensor([0, 8, 16]),
+            keys=keys,
+        )
+        results = b.batch_get_v2([transfer])
+        self.assertEqual(results[PoolName.INDEXER], [True, False, True])
+        # Consumers clamp with the leading-run count.
+        self.assertEqual(count_pool_hits(results)[PoolName.INDEXER], 1)
+        # The good first page was actually loaded; the failing one was not.
+        self.assertIn(0, pool.pages)
+        self.assertNotIn(8, pool.pages)
+        # And the thread survived to load pages after the bad one.
+        self.assertIn(16, pool.pages)
+
+    def test_batch_set_v2_with_raising_pool_returns_false_not_raise(self):
+        b = self.make_backend()
+
+        class _BoomPool(_FakeHostPool):
+            def get_data_page(self, page_offset, flat=True):
+                raise ValueError("legacy layout")
+
+        pool = _BoomPool(self.PAGE_BYTES)
+        b.register_mem_host_pool_v2(pool, PoolName.INDEXER)
+        transfer = PoolTransfer(
+            name=PoolName.INDEXER,
+            host_indices=torch.tensor([0, 8]),
+            keys=["h0", "h1"],
+        )
+        results = b.batch_set_v2([transfer])
+        self.assertEqual(results[PoolName.INDEXER], [False, False])
+        self.assertEqual(count_pool_hits(results)[PoolName.INDEXER], 0)
 
 
 if __name__ == "__main__":
