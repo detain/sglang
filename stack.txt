@@ -1,9 +1,9 @@
 # stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
 #
-# STACK: main+pr36787+pr37275+pr38144+pr38209+pr36644+local_sm120_integration+pr39807+pr39862+pr39809+mambapoolhost_newinit_fix+pr39893+qsa_test_context_isolation
+# STACK: main+pr36787+pr37275+pr38144+pr38209+pr36644+local_sm120_integration+pr39807+pr39862+pr39809+mambapoolhost_newinit_fix+pr39893+qsa_test_context_isolation+qsa_hicache_residual_fixes
 #
 # branch : stack-36644-core
-# tip    : 01eba4bf8d  (last code commit; the manifest commit sits above it)
+# tip    : 54b41dc9e7  (last code commit; the manifest commit sits above it)
 # base   : upstream sgl-project/sglang main @ 464fffbec8
 #          (dsv4.1: chat encoding and tool parsing (#39665))
 # updated: 2026-09-17
@@ -120,6 +120,26 @@ STACK, IN BUILD ORDER (bottom first)
         29. 01eba4bf8d  test(qsa): publish the indexer test's context per test, not at import
       # See CAVEATS.
 
+  LOCAL  [local]  stack agent   (tag: qsa_hicache_residual_fixes)
+      Residuals of the #39830 defect class that neither #39862 nor #39893 covers
+        30. e39d62115b  fix(hicache): degrade unreadable storage pages to misses, keep IO threads alive
+        31. 54b41dc9e7  fix(qsa): carry compressed-K rows through the retraction backup
+      # #30: the #39862/#39893 author's own caveat -- a storage page that exists
+      # but does not deserialize (old-layout dir, corrupt file) raised through
+      # the file backend into daemon threads that catch only queue.Empty,
+      # silently killing the L3 tier and leaking the op's host allocation. Now
+      # per-page misses (rate-limited warnings) + ack-preserving thread guards;
+      # 7 new cases in test_hicache_file_lru_unit.py.
+      # #31: retraction offload (schedule_batch Req.offload_kv_cache) copied
+      # only (kv, mamba) for QSATokenToKVPool -- a resumed-after-retraction
+      # request read restored KV through stale compressed-K rows, the same
+      # failure shape as #39830 one mover over. The QSA legs now ride the
+      # backup payload (DSA dict pattern); CPU test added.
+      # Also closes the audit question on the L2 fence: the INDEXER transfer is
+      # issued on the same stream as the anchor KV before the per-layer done
+      # event, so #39893's _wait_for_layer covers it (docstring in pool_host/
+      # qsa.py). GPU e2e on this box is still open -- see CAVEATS.
+
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
 ==============================================================================
@@ -161,9 +181,14 @@ CAVEATS
   * HiCache (--enable-hierarchical-cache) needs BOTH #39862 and #39893. They fix
     different halves of issue #39830 (PLE slot side state, and QSA indexer state)
     and each was measured with the other applied. Issue #39830 is still open
-    upstream; neither PR is merged. Nothing here has been run end-to-end on this
+    upstream; neither PR is merged. Two residuals of the same defect class were
+    found in audit and are fixed locally by qsa_hicache_residual_fixes (30-31):
+    an unreadable storage page killing a daemon IO thread (the author's own
+    open question in the #39830 thread), and the retraction backup dropping
+    QSA compressed-K rows. Nothing here has been run end-to-end on this
     host with HiCache on -- the 0/15 -> 15/15 numbers are the #39893 author's, on
-    1x B200. Validate on this box before trusting it in production.
+    1x B200, and CPU tests only cover 30-31 locally. Validate on this box before
+    trusting it in production.
     https://github.com/sgl-project/sglang/issues/39830
 
   * #39862 needed a follow-up fix (038667befd). Upstream unit tests build
