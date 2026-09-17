@@ -78,6 +78,11 @@ class MambaPoolHost(HostKVCache):
     # raising AttributeError. __init__ always rebinds both.
     slot_state_entries: tuple = ()
     slot_state_buffers: tuple = ()
+    # Per-slot record of the token position where the checkpoint stored in that
+    # host slot was taken (-1 = unknown). Written by the HiCache backup/prefetch
+    # commit hooks and read by the load-back fencing check (issue #39830); the
+    # whole-page L3 payload is deliberately unchanged.
+    ckpt_pos_buffer = None
 
     def __init__(
         self,
@@ -181,6 +186,11 @@ class MambaPoolHost(HostKVCache):
         ]
 
         self.kv_buffer = self.init_kv_buffer()
+        # 8 bytes per slot: the token position each host checkpoint was taken
+        # at, for the #39830 restore fencing check. -1 = unknown.
+        self.ckpt_pos_buffer = torch.full(
+            (self.size,), -1, dtype=torch.int64, device=self.device
+        )
         self._configure_npu_mamba_io()
         self._init_write_back_staging_buffers()
         self.lock = threading.RLock()
@@ -345,6 +355,30 @@ class MambaPoolHost(HostKVCache):
         self.free_slots = torch.arange(self.size, dtype=torch.int64)
         self.release_slots = []
         self.num_release_slots = 0
+        if self.ckpt_pos_buffer is not None:
+            self.ckpt_pos_buffer.fill_(-1)
+
+    @synchronized
+    def record_ckpt_pos(self, host_indices: torch.Tensor, pos: int) -> None:
+        """Stamp the token position a checkpoint was taken at onto its host slots."""
+        if self.ckpt_pos_buffer is not None and host_indices is not None:
+            self.ckpt_pos_buffer[host_indices] = int(pos)
+
+    def get_ckpt_pos(self, host_indices: torch.Tensor) -> Optional[int]:
+        """Return the shared recorded position, or None if unknown/inconsistent.
+
+        Deliberately lock-free: a single indexed read of a CPU tensor used only
+        as a fencing hint by the restore path.
+        """
+        if self.ckpt_pos_buffer is None or host_indices is None:
+            return None
+        if host_indices.numel() == 0:
+            return None
+        pos = self.ckpt_pos_buffer[host_indices]
+        first = int(pos[0])
+        if first < 0 or not bool((pos == first).all()):
+            return None
+        return first
 
     def available_size(self):
         return len(self.free_slots) + self.num_release_slots

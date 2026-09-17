@@ -1689,6 +1689,16 @@ class UnifiedRadixCache(BasePrefixCache):
         }
         success = False
         try:
+            if any(p.rejected for p in preps.values()):
+                # A component refused this restore after poisoning its own
+                # state (see MambaComponent #39830 position fencing). Unwind
+                # like the other degrade paths: drop both locks, report a
+                # miss, and let the request re-prefill from the device
+                # boundary. The finally below recovers whatever the other
+                # components prepared.
+                self.dec_lock_ref(node_id, ancestor_lock_params)
+                self.dec_host_lock_ref(node_id, host_anchor_params)
+                return False
             success = self._load_back_transfers(
                 node_id=node_id,
                 mem_quota=mem_quota,

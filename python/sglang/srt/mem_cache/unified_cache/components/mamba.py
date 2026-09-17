@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from typing import TYPE_CHECKING, Callable, Optional, Sequence
 
@@ -56,8 +57,14 @@ if TYPE_CHECKING:
     )
 
 
+logger = logging.getLogger(__name__)
+
+
 class MambaComponent(TreeComponent):
     component_type = ComponentType.MAMBA
+    # Class-level default so a component built without __init__ (unit tests use
+    # __new__) can still take the refuse path without an AttributeError.
+    _ckpt_pos_rejects = 0
 
     def __init__(self, cache: UnifiedRadixCache, params: CacheInitParams):
         from sglang.srt.mem_cache.memory_pool import HybridReqToTokenPool
@@ -77,6 +84,8 @@ class MambaComponent(TreeComponent):
         self.mamba_max_states_per_path = get_exec().mamba.mamba_max_states_per_path
         # HiCache state
         self._mamba_pool_host = None  # set to host mamba pool when HiCache enabled
+        # Number of #39830 restore fencing refusals (for rate-limited logging).
+        self._ckpt_pos_rejects = 0
 
     def needs_incremental_backup(self, node: UnifiedTreeNode) -> bool:
         data = node.component_data[self.component_type]
@@ -662,6 +671,12 @@ class MambaComponent(TreeComponent):
         *,
         req: Optional[Req] = None,
     ) -> PrepareLoadBackResult:
+        if not self._host_ckpt_position_ok(node_id):
+            # #39830 fencing: the host slot paired with this node's KV was
+            # recorded at a different token position; it was already poisoned
+            # (detached + freed) there, so refuse the whole load-back and let
+            # the caller re-prefill rather than serve fluent wrong output.
+            return PrepareLoadBackResult(rejected=True)
         if (
             req is None
             or req.kv.holds_mamba
@@ -685,6 +700,91 @@ class MambaComponent(TreeComponent):
         if not success and prep.allocated_mamba_slot is not None:
             self.cache.req_to_token_pool.mamba_allocator.free(prep.allocated_mamba_slot)
             req.kv.mamba_pool_idx = None
+
+    # ---- #39830 restore-position fencing ----
+
+    def _token_depth(self, node: UnifiedTreeNode) -> Optional[int]:
+        """Tokens covered by the prefix ending at `node` (root chain walk)."""
+        depth = 0
+        cur: Optional[UnifiedTreeNode] = node
+        while cur is not None:
+            if cur.key is not None:
+                depth += len(cur.key)
+            cur = cur.parent
+        return depth
+
+    def _record_host_ckpt_pos(
+        self, node: UnifiedTreeNode, host_indices: Optional[torch.Tensor]
+    ) -> None:
+        """Stamp where a checkpoint was taken onto the host slots holding it."""
+        pool = self._mamba_pool_host
+        if pool is None or getattr(pool, "ckpt_pos_buffer", None) is None:
+            return
+        depth = self._token_depth(node)
+        if depth is not None:
+            pool.record_ckpt_pos(host_indices, depth)
+
+    def _host_ckpt_position_ok(self, node_id: NodeId) -> bool:
+        """Does the node's host mamba checkpoint carry this node's token position?
+
+        A KV page is paired with one mamba checkpoint per cached node; if the
+        slot behind `host_value` was re-recorded under another owner, restoring
+        it yields byte-perfect KV read through a stale state -- fluent wrong
+        output (issue #39830). Unknown records (legacy slots, pools without the
+        buffer, the Rust tree core that never runs these hooks) pass without
+        accusation; a confirmed mismatch poisons the copy and refuses the load.
+        """
+        pool = self._mamba_pool_host
+        if pool is None or getattr(pool, "ckpt_pos_buffer", None) is None:
+            return True
+        try:
+            node = self.tree_core.node_by_id(node_id)
+        except NotImplementedError:
+            return True  # native tree core does not expose Python nodes
+        cd = node.component_data[self.component_type]
+        if cd.host_value is None:
+            return True
+        recorded = pool.get_ckpt_pos(cd.host_value)
+        if recorded is None:
+            return True
+        depth = self._token_depth(node)
+        if depth is None or depth == recorded:
+            return True
+        self._poison_stale_host_ckpt(node, recorded, depth)
+        return False
+
+    def _poison_stale_host_ckpt(
+        self, node: UnifiedTreeNode, recorded: int, depth: int
+    ) -> None:
+        cd = node.component_data[self.component_type]
+        self._ckpt_pos_rejects += 1
+        if self._ckpt_pos_rejects <= 5 or self._ckpt_pos_rejects % 50 == 0:
+            logger.error(
+                "HiCache restore refused (issue #39830 fencing): mamba host "
+                "slot(s) %s hold a checkpoint recorded at token position %d but "
+                "the owning tree node is at depth %d (%d refusals so far). "
+                "Detaching the host copy; this restore degrades to a cache miss.",
+                cd.host_value.tolist(),
+                recorded,
+                depth,
+                self._ckpt_pos_rejects,
+            )
+        # Refused, not believed: free the host copy through the regular host
+        # eviction primitive so the LRU/leaf-set invariants hold. No cascade is
+        # needed: the node keeps its other components (a node whose Full data
+        # vanished everywhere is tombstoned by the eviction path, not here).
+        device_frees: dict[ComponentType, list[torch.Tensor]] = defaultdict(list)
+        host_frees: dict[ComponentType, list[torch.Tensor]] = defaultdict(list)
+        self.tree_core._evict_component_and_detach_lru(
+            node,
+            self,
+            device_frees,
+            host_frees,
+            target=EvictLayer.HOST,
+            tracker=defaultdict(int),
+        )
+        self.tree_core._update_evictable_leaf_sets(node)
+        self.cache._free_values(device_frees, host_frees)
 
     def prepare_prefetch(
         self,
@@ -802,6 +902,9 @@ class MambaComponent(TreeComponent):
                 cd = node.component_data[ct]
                 if cd.host_value is None:
                     cd.host_value = transfers[0].host_indices.clone()
+                    # Fence the pairing (#39830): remember where this
+                    # checkpoint was taken, on the slots that hold it.
+                    self._record_host_ckpt_pos(node, transfers[0].host_indices)
 
         elif phase == CacheTransferPhase.LOAD_BACK:
             if not transfers:
@@ -845,6 +948,10 @@ class MambaComponent(TreeComponent):
                 return
 
             target_node.component_data[ct].host_value = host_indices.clone()
+            # Bookkeeping for the restore fence: the storage fetch attached
+            # these slots at this node's boundary. (L3 page bytes carry no
+            # position; a mis-keyed page is caught by the hash chain, not here.)
+            self._record_host_ckpt_pos(target_node, host_indices)
             if target_node.component_data[ct].value is None:
                 host_lru = self.tree_core.host_lru_lists[ct]
                 if not host_lru.in_list(target_node):

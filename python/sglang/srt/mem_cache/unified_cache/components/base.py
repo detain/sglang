@@ -69,6 +69,9 @@ class PrepareLoadBackResult:
 
     # Freshly allocated device mamba slot, recovered on failure.
     allocated_mamba_slot: Optional[torch.Tensor] = None
+    # The component refused this restore (poisoned its own state); the whole
+    # load-back degrades to a miss and the request re-prefills.
+    rejected: bool = False
 
 
 @dataclasses.dataclass(frozen=True)
