@@ -187,6 +187,11 @@ class QSATokenToKVPool(HybridLinearKVPool):
         self.mem_usage = (k_size + v_size) / GB
 
     def get_qsa_key_state_buffer(self, layer_id: int) -> torch.Tensor:
+        # NOTE: deliberately not carried by get_cpu_copy/load_cpu_copy below.
+        # The pending ring is addressed by request slot, not token slot: the
+        # resumed request re-runs prefill for its uncommitted tail, which
+        # rewrites the ring from scratch, so a retracted request never reads
+        # stale ring rows on resume.
         return self.qsa_key_state_buffer_pool[
             self._transfer_full_attention_id(layer_id)
         ]
@@ -224,6 +229,65 @@ class QSATokenToKVPool(HybridLinearKVPool):
     ) -> None:
         buffer = self.get_qsa_compressed_k_buffer(layer_id)
         buffer[loc.long()] = compressed_k.to(buffer.dtype)
+
+    # --- retraction backup (Req.offload_kv_cache / load_kv_cache) ---------
+    # Compressed-K rows are addressed by ``full_slot // ratio``, so they ride
+    # the full-KV allocator's slot lifecycle: retraction frees the token slots
+    # and resume re-prefills into freshly allocated ones whose compressed rows
+    # belong to other requests.  Without moving these rows with the KV, the
+    # resumed read hits stale block selections -- the same defect class as
+    # sgl-project/sglang#39830, on the retraction path instead of HiCache.
+    # The payload flows opaquely through the allocator into
+    # RetractionBackup.cpu_tensors and back into load_cpu_copy on this same
+    # concrete object, so the dict shape only has to pair with itself (mirrors
+    # the {"kv": ..., "index_k": ...} pattern in DSATokenToKVPool).
+
+    def get_cpu_copy(self, indices, mamba_indices=None, req_pool_index=None):
+        kv_cache_cpu = super().get_cpu_copy(
+            indices, mamba_indices=mamba_indices, req_pool_index=req_pool_index
+        )
+        # Keep one row per token (no dedup) so load_cpu_copy scatters back by
+        # the same position mapping: allocation is page-aligned with
+        # page_size % ratio == 0, so every compression group's rows are
+        # constant within the group and the duplicates are harmless.
+        rows = indices.long() // self.qsa_compress_ratio
+        # One [tokens, heads, dim] CPU tensor per local full-attention layer,
+        # in qsa_compressed_k_buffer_pool order (load scatters back by position,
+        # so no global-layer bookkeeping is needed).
+        qsa_k_cpu = [
+            buffer[rows].to("cpu") for buffer in self.qsa_compressed_k_buffer_pool
+        ]
+        return {"kv": kv_cache_cpu, "qsa_compressed_k": qsa_k_cpu}
+
+    def load_cpu_copy(
+        self, cache_cpu, indices, mamba_indices=None, req_pool_index=None
+    ):
+        if not isinstance(cache_cpu, dict):
+            # Defensive: a bare (kv_cpu, mamba_cpu) tuple can only come from a
+            # producer that did not carry the QSA leg; restore KV/mamba alone
+            # instead of failing the resume.
+            super().load_cpu_copy(
+                cache_cpu,
+                indices,
+                mamba_indices=mamba_indices,
+                req_pool_index=req_pool_index,
+            )
+            return
+        super().load_cpu_copy(
+            cache_cpu["kv"],
+            indices,
+            mamba_indices=mamba_indices,
+            req_pool_index=req_pool_index,
+        )
+        # `indices` here are the NEW slots; the saved rows were gathered from
+        # the OLD slots, so gather and scatter using their own call's indices.
+        rows = indices.long() // self.qsa_compress_ratio
+        for buffer, saved in zip(
+            self.qsa_compressed_k_buffer_pool, cache_cpu["qsa_compressed_k"]
+        ):
+            buffer.index_copy_(
+                0, rows, saved.to(device=buffer.device, dtype=buffer.dtype)
+            )
 
     @staticmethod
     def _get_paged_state_buf_infos(tensors, page_size: int):
