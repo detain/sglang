@@ -23,7 +23,18 @@ from sglang.srt.layers.rotary_embedding.mrope import MRotaryEmbedding
 from sglang.srt.runtime_context import publish
 from sglang.srt.server_args import ServerArgs
 
-publish(ServerArgs(model_path="dummy"), role="test")
+
+@pytest.fixture(autouse=True)
+def _publish_test_context():
+    """Publish per test, not once at import.
+
+    pytest imports every selected module before running any test, so a
+    module-level publish here is dropped by any other file's reset_context()
+    teardown when the directory runs in one process (test_qsa_hicache.py does
+    exactly that). Publishing is last-publish-wins and cheap.
+    """
+    publish(ServerArgs(model_path="dummy"), role="test")
+
 
 HEAD_DIM = 128
 NUM_Q_HEADS = 4
