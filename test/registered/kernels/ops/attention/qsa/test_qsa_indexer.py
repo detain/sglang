@@ -546,3 +546,101 @@ def test_cross_prefix_group_matches_in_chunk_compress(fused, prefix_members, mon
     assert_bit_comparable(pool.compressed[9:12], ref_pool.compressed[9:12])
     # The crossing group must not be the clamped main-pass result.
     assert pool.compressed[9].abs().sum() > 0
+
+
+@pytest.mark.parametrize("num_groups", [1, 2])
+def test_verify_windows_compress_committed_keys(num_groups):
+    """MTP verify writes every draft row to the pending ring before it
+    compresses the groups those rows complete. With a one-group ring, a
+    window starting at base % 4 != 0 overwrote the slot of a member four
+    positions earlier in the same forward, so the committed group was
+    compressed from a draft's key. A ring spanning every group the window
+    touches (2 for 4 drafts at ratio 4) must reproduce the committed keys."""
+    from sglang.srt.layers.attention.qsa.metadata import (
+        build_group_ring_slots,
+        build_pending_ring_slots,
+    )
+    from sglang.srt.mem_cache.qsa_kv_pool import QSATokenToKVPool
+
+    device = torch.device("cuda")
+    dtype = torch.bfloat16
+    draft = 4
+    assert (
+        QSATokenToKVPool.pending_ring_num_groups(
+            max_num_draft_tokens=draft, compress_ratio=RATIO
+        )
+        == 2
+    )
+    torch.manual_seed(0)
+    rng = torch.Generator().manual_seed(1)
+    rotary = _make_rotary([24, 20, 20], True, device, dtype)
+    indexer = _make_indexer(rotary, device, dtype)
+    total = 400
+    true_keys = torch.randn(total + draft, 1, HEAD_DIM, device=device, dtype=dtype)
+    req = torch.tensor([1], device=device)
+    pool = FakePool(64, 256, device, dtype)
+
+    def ring(positions):
+        return build_pending_ring_slots(
+            token_to_batch_idx=torch.zeros_like(positions),
+            req_pool_indices=req,
+            sequence_lengths=positions + 1,
+            logical_positions=positions,
+            compress_ratio=RATIO,
+            is_extend=False,
+            num_groups=num_groups,
+        )
+
+    # A prefill left the first pending tail in the ring.
+    base = 37
+    tail = torch.arange((base // RATIO) * RATIO, base, device=device)
+    pool.set_qsa_key_state_buffer(0, ring(tail), true_keys[tail])
+    pool.set_qsa_rope_position_buffer(ring(tail), tail)
+
+    while base < total:
+        positions = torch.arange(base, base + draft, device=device)
+        accept = int(torch.randint(1, draft + 1, (1,), generator=rng))
+        keys = true_keys[positions].clone()
+        keys[accept:] = torch.randn_like(keys[accept:])  # rejected drafts
+        ends = positions[(positions + 1) % RATIO == 0]
+        metadata = SimpleNamespace(
+            token_to_kv_pool=pool,
+            token_to_batch_idx=torch.zeros(draft, dtype=torch.long, device=device),
+            req_pool_indices=req,
+            sequence_lengths=positions + 1,
+            is_cuda_graph=False,
+            write_locs=(ends // RATIO + 1).to(torch.int32),
+            compress_group_positions=ends,
+            compress_sequence_ids=torch.zeros_like(ends),
+            compress_member_rows=None,
+            compress_group_ring_locs=build_group_ring_slots(
+                req_pool_indices=req,
+                group_end_positions=ends,
+                sequence_ids=torch.zeros_like(ends),
+                compress_ratio=RATIO,
+                num_groups=num_groups,
+            ),
+        )
+        indexer.update_key_state_and_compress(
+            keys, positions, positions, metadata, state_slots=ring(positions)
+        )
+        base += accept
+
+    ref = FakePool(total + draft, 256, device, dtype)
+    ref.key_state[: total + draft] = true_keys
+    ref.qsa_rope_position_buffer[: total + draft] = torch.arange(
+        total + draft, device=device
+    )[:, None].expand(-1, 3)
+    groups = torch.arange(40 // RATIO, base // RATIO - 1, device=device)
+    member_locs = (groups[:, None] * RATIO + torch.arange(RATIO, device=device)).to(
+        torch.int32
+    )
+    indexer._fused_compress_store(ref, member_locs, (groups + 1).to(torch.int32))
+
+    got, want = pool.compressed[groups + 1], ref.compressed[groups + 1]
+    bad = int(((got.float() - want.float()).abs().amax(dim=(1, 2)) > 0.05).sum())
+    if num_groups == 1:
+        print(f"one-group ring: {bad}/{groups.numel()} committed groups corrupted")
+        assert bad > 0, "one-group ring should reproduce the verify collision"
+    else:
+        assert bad == 0, f"{bad} committed groups compressed from overwritten keys"

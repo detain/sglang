@@ -396,6 +396,11 @@ class QwenSparseAttnBackend(AttentionBackend):
             and num_sequences <= QSA_PREFILL_ALL_VISIBLE_MAX_BATCH
         )
 
+    @property
+    def _pending_ring_groups(self) -> int:
+        """Groups the pending index-K ring holds; the pool fixes this at construction."""
+        return getattr(getattr(self, "token_to_kv_pool", None), "qsa_num_groups", 1)
+
     def _require_chain_speculation(self, forward_mode, spec_info) -> None:
         if forward_mode is None or not forward_mode.is_target_verify():
             return
@@ -404,13 +409,22 @@ class QwenSparseAttnBackend(AttentionBackend):
                 "Qwen QSA target verification supports only speculative_eagle_topk=1"
             )
         draft_tokens = int(getattr(spec_info, "draft_token_num", 0) or 0)
-        if draft_tokens > self.compress_ratio:
-            # The pending-group ring keys state by position % ratio; a verify
-            # window wider than the ratio would collide within one forward.
+        # An unaligned window touches ceil((draft + ratio - 1) / ratio) groups
+        # (see QSATokenToKVPool.pending_ring_num_groups); the ring must hold them.
+        # Without a pool yet, keep the historical one-group bound.
+        groups = getattr(
+            getattr(self, "token_to_kv_pool", None), "qsa_num_groups", None
+        )
+        window = (
+            self.compress_ratio
+            if groups is None
+            else self.compress_ratio * (groups - 1) + 1
+        )
+        if draft_tokens > window:
             raise NotImplementedError(
-                "Qwen QSA requires speculative_num_draft_tokens <= the QSA "
-                f"compress ratio ({self.compress_ratio}): the pending "
-                f"index-key ring holds one group; got {draft_tokens}"
+                f"Qwen QSA requires speculative_num_draft_tokens <= {window} "
+                f"(compress ratio {self.compress_ratio}, pending index-key "
+                f"ring of {groups or 1} group(s)): got {draft_tokens}"
             )
 
     @staticmethod
@@ -905,6 +919,7 @@ class QwenSparseAttnBackend(AttentionBackend):
                 logical_positions=ring_logical_positions,
                 compress_ratio=self.compress_ratio,
                 is_extend=group_member_rows is not None,
+                num_groups=self._pending_ring_groups,
             )
             if write_locs.numel():
                 if group_member_rows is None or has_cross_prefix_group:
@@ -915,6 +930,7 @@ class QwenSparseAttnBackend(AttentionBackend):
                         group_end_positions=group_positions.long(),
                         sequence_ids=group_sequence_ids.long(),
                         compress_ratio=self.compress_ratio,
+                        num_groups=self._pending_ring_groups,
                     )
                 if group_member_rows is not None:
                     rope_source = (
@@ -1125,9 +1141,10 @@ class QwenSparseAttnBackend(AttentionBackend):
         forward_mode,
         spec_info,
     ) -> None:
-        self._require_chain_speculation(forward_mode, spec_info)
+        # The guard reads the ring's group count off the pool, so resolve it first.
         if self.token_to_kv_pool is None:
             self.token_to_kv_pool = getattr(self.runner, "token_to_kv_pool", None)
+        self._require_chain_speculation(forward_mode, spec_info)
         if self.req_to_token is None:
             req_pool = getattr(self.runner, "req_to_token_pool", None)
             self.req_to_token = getattr(req_pool, "req_to_token", None)
@@ -1380,6 +1397,7 @@ class QwenSparseAttnBackend(AttentionBackend):
                 logical_positions=current_positions,
                 compress_ratio=ratio,
                 is_extend=False,
+                num_groups=getattr(pool, "qsa_num_groups", 1),
             )
         )
         metadata.graph_ring_group_locs.copy_(
@@ -1388,6 +1406,7 @@ class QwenSparseAttnBackend(AttentionBackend):
                 group_end_positions=current_positions,
                 sequence_ids=metadata.token_to_batch_idx.long(),
                 compress_ratio=ratio,
+                num_groups=getattr(pool, "qsa_num_groups", 1),
             ).to(torch.int32)
         )
 
