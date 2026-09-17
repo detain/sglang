@@ -72,6 +72,13 @@ def _npu_hicache_mamba_io_mode() -> str:
 
 
 class MambaPoolHost(HostKVCache):
+    # Class-level defaults so a pool built without __init__ -- the upstream unit
+    # tests construct one with __new__ and set only the fields they exercise --
+    # takes the documented "model registers no slot side states" path instead of
+    # raising AttributeError. __init__ always rebinds both.
+    slot_state_entries: tuple = ()
+    slot_state_buffers: tuple = ()
+
     def __init__(
         self,
         device_pool: MambaPool,
