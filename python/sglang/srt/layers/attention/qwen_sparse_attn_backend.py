@@ -251,6 +251,16 @@ class QwenSparseAttnBackend(AttentionBackend):
         self._qsa_prefill_indices_scratch: Dict[
             Tuple[int, torch.device], torch.Tensor
         ] = {}
+        # (row shape, dtype, device) -> (staging, fp8 K out, fp8 V out)
+        # for out-of-place scaled KV stores; grow-only, see ``_store_kv``.
+        self._qsa_fp8_store_scratch: Dict[
+            Tuple[Tuple[int, ...], torch.dtype, torch.device],
+            Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+        ] = {}
+        # Superseded (grown-out of) scratch tuples kept alive: a captured CUDA
+        # graph may still reference their addresses; freeing them would let the
+        # allocator hand that memory to later work. Bounded by record breaks.
+        self._qsa_fp8_store_scratch_retired: list = []
         self._graph_seq_lens = None
         self._graph_token_to_batch = None
         self._graph_cu_seqlens_q = None
@@ -282,6 +292,37 @@ class QwenSparseAttnBackend(AttentionBackend):
             v_scale if v_scale > 0.0 else 1.0,
         )
 
+    def _get_fp8_store_scratch(
+        self, x: torch.Tensor, cache_dtype: torch.dtype, slot: int
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Grow-only (staging, fp8 out) views of ``x``'s shape and length.
+
+        Keyed by (row shape, dtype, device); slots 0/1 hold the K and V fp8
+        results so both stay alive until the pool consumes them in one store.
+        The staging row lets ``torch.div`` run out-of-place (it cannot write
+        a bf16 quotient into an fp8 ``out=``); the cast is a contiguous
+        ``copy_``. Mirrors the ``_get_fa2_scratch`` pattern: the first call
+        for a geometry allocates (during warmup or capture, both legal for
+        the caching allocator) and every later store allocates nothing.
+        """
+        rows = int(x.shape[0])
+        key = (tuple(x.shape[1:]), x.dtype, x.device)
+        buffers = self._qsa_fp8_store_scratch.get(key)
+        if buffers is None or buffers[0].shape[0] < rows:
+            if buffers is not None:
+                # Retire, never free: graphs captured earlier may write through
+                # these addresses on replay (eager prefill row counts can exceed
+                # every captured decode batch size).
+                self._qsa_fp8_store_scratch_retired.append(buffers)
+            shape = (rows,) + tuple(x.shape[1:])
+            buffers = (
+                torch.empty(shape, dtype=x.dtype, device=x.device),
+                torch.empty(shape, dtype=cache_dtype, device=x.device),
+                torch.empty(shape, dtype=cache_dtype, device=x.device),
+            )
+            self._qsa_fp8_store_scratch[key] = buffers
+        return buffers[0][:rows], buffers[1 + slot][:rows]
+
     def _store_kv(self, layer, loc, k: torch.Tensor, v: torch.Tensor) -> None:
         cache_dtype = getattr(self.token_to_kv_pool, "dtype", k.dtype)
         if not is_fp8_kv_dtype(cache_dtype):
@@ -291,11 +332,32 @@ class QwenSparseAttnBackend(AttentionBackend):
         if k_scale == 1.0 and v_scale == 1.0:
             self.token_to_kv_pool.set_kv_buffer(layer, loc, k, v)
             return
-        # MHATokenToKVPool applies non-unit scales in-place before casting.
-        # Preserve the current K/V because prefill consumes them after the write.
-        self.token_to_kv_pool.set_kv_buffer(
-            layer, loc, k.clone(), v.clone(), k_scale, v_scale
-        )
+        # Non-unit descale. MHATokenToKVPool.set_kv_buffer applies k_scale to
+        # its argument with an in-place ``div_`` before the fp8 cast, and the
+        # first-chunk prefill path reads the live bf16 K/V after this commit
+        # (forward_extend -> sparse_gqa_fwd_interface_triton), so passing k/v
+        # through would clobber data the attention kernel still consumes.
+        # Cloning keeps correctness but allocates two full-size bf16
+        # temporaries per store; instead quantize out-of-place into persistent
+        # grow-only scratch and hand the pool a buffer that already matches
+        # its dtype, which skips the pool's mutating cast branch entirely.
+        # The stored bytes stay byte-identical to the previous clone path --
+        # ((x / scale).to(fp8), same div-then-cast rounding) -- so the
+        # read-side contract (Triton widen + descale, trtllm BMM scales) is
+        # unchanged.
+        stage, k_fp8 = self._get_fp8_store_scratch(k, cache_dtype, 0)
+        if k_scale == 1.0:
+            k_fp8.copy_(k)
+        else:
+            torch.div(k, k_scale, out=stage)
+            k_fp8.copy_(stage)
+        stage, v_fp8 = self._get_fp8_store_scratch(v, cache_dtype, 1)
+        if v_scale == 1.0:
+            v_fp8.copy_(v)
+        else:
+            torch.div(v, v_scale, out=stage)
+            v_fp8.copy_(stage)
+        self.token_to_kv_pool.set_kv_buffer(layer, loc, k_fp8, v_fp8)
 
     @staticmethod
     def _is_speculative_paged_mode(forward_mode) -> bool:

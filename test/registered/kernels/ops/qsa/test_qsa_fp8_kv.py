@@ -251,12 +251,20 @@ def test_qsa_fp8_cache_write_preserves_prefill_kv():
             self, layer, loc, cache_k, cache_v, k_scale=None, v_scale=None
         ):
             self.args = (cache_k, cache_v, k_scale, v_scale)
-            if k_scale is not None:
-                cache_k.div_(k_scale)
-                cache_v.div_(v_scale)
+            if cache_k.dtype != self.dtype:
+                if k_scale is not None:
+                    cache_k.div_(k_scale)
+                    cache_v.div_(v_scale)
+                self.written_k = cache_k.to(self.dtype)
+                self.written_v = cache_v.to(self.dtype)
+            else:
+                self.written_k = cache_k
+                self.written_v = cache_v
 
     backend = QwenSparseAttnBackend.__new__(QwenSparseAttnBackend)
     backend.token_to_kv_pool = MutatingPool()
+    backend._qsa_fp8_store_scratch = {}
+    backend._qsa_fp8_store_scratch_retired = []
     layer = SimpleNamespace(layer_id=0, k_scale_float=0.25, v_scale_float=0.5)
     k = torch.randn(3, 1, 16, dtype=torch.bfloat16)
     v = torch.randn(3, 1, 16, dtype=torch.bfloat16)
@@ -264,13 +272,25 @@ def test_qsa_fp8_cache_write_preserves_prefill_kv():
 
     backend._store_kv(layer, torch.arange(3, dtype=torch.int32), k, v)
 
+    # The store quantizes out-of-place into persistent scratch and hands the
+    # pool an already-fp8 buffer (no scale args); the live K/V tensors are
+    # untouched for the prefill pass that reads them after the commit.
     written_k, written_v, written_k_scale, written_v_scale = (
         backend.token_to_kv_pool.args
     )
     assert written_k is not k and written_v is not v
-    assert written_k_scale == 0.25 and written_v_scale == 0.5
+    assert written_k.dtype == torch.float8_e4m3fn
+    assert written_k_scale is None and written_v_scale is None
     torch.testing.assert_close(k, expected_k)
     torch.testing.assert_close(v, expected_v)
+    torch.testing.assert_close(
+        backend.token_to_kv_pool.written_k.view(torch.uint8),
+        _quantize_fp8(k, 0.25).view(torch.uint8),
+    )
+    torch.testing.assert_close(
+        backend.token_to_kv_pool.written_v.view(torch.uint8),
+        _quantize_fp8(v, 0.5).view(torch.uint8),
+    )
 
 
 def test_qsa_trtllm_decode_receives_fp8_kv_descales(monkeypatch):
