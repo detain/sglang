@@ -1,10 +1,12 @@
 # stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
 #
+# STACK: main+pr36787+pr37275+pr38144+pr38209+pr36644+local_sm120_integration+pr39807+pr39862+pr39809+mambapoolhost_newinit_fix+pr39893+qsa_test_context_isolation
+#
 # branch : stack-36644-core
-# head   : 038667befd
+# tip    : 01eba4bf8d  (last code commit; the manifest commit sits above it)
 # base   : upstream sgl-project/sglang main @ 464fffbec8
 #          (dsv4.1: chat encoding and tool parsing (#39665))
-# merged : 2026-09-17
+# updated: 2026-09-17
 #
 # Target: Qwen3.8-Flash-Next (Qwen4ExpForConditionalGeneration), 4x RTX PRO 6000
 # Blackwell Max-Q, compute capability 12.0 (SM120), 96 GB each, PCIe only -- no
@@ -13,9 +15,9 @@
 # Base model support is already upstream: #37500 'support qwen 3.8 flash next'.
 # Everything below is on top of that.
 #
-# All PRs listed are OPEN upstream as of the merge date; none are merged. They
-# are cherry-picked with `git cherry-pick -x`, so each commit carries its origin
-# hash, and the ones added on 2026-09-16 also carry an `Upstream-PR:` trailer.
+# All PRs listed are OPEN upstream; none are merged. They are cherry-picked with
+# `git cherry-pick -x`, so each commit carries its origin hash, and each also
+# carries an `Upstream-PR:` trailer.
 
 ==============================================================================
 STACK, IN BUILD ORDER (bottom first)
@@ -64,7 +66,7 @@ STACK, IN BUILD ORDER (bottom first)
         16. 0a79caa4f7  fix(qsa): support FP8 KV cache
       # The branch this stack is named after.
 
-  LOCAL  [local]  Joe Huss
+  LOCAL  [local]  Joe Huss   (tag: local_sm120_integration)
       Local integration fixes (not submitted upstream)
         17. 5521147e04  fix(sm120): read CUDA graph config from exec bag in Qwen4 JIT prewarm
         18. 5bf8ba3576  test(sm120): set is_sm120 on FlashInfer alignment fixture
@@ -86,8 +88,8 @@ STACK, IN BUILD ORDER (bottom first)
       https://github.com/sgl-project/sglang/pull/39862
       [Fix] HiCache: carry registered Mamba slot side states (Qwen4-Exp PLE) through the host tier
         24. aeec3b87de  [Fix] HiCache: carry registered Mamba slot side states through the host tier
-      # Added 2026-09-16. Does NOT make HiCache usable on this model -- see
-      # CAVEATS below.
+      # Added 2026-09-16. Fixes the PLE half of the HiCache corruption; the QSA half
+      # is #39893 below. Needed a follow-up fix -- see CAVEATS.
 
   PR #39809  [ready]  @avifenesh
       https://github.com/sgl-project/sglang/pull/39809
@@ -96,10 +98,27 @@ STACK, IN BUILD ORDER (bottom first)
         26. 5e3dee8e82  [Function Call] Qwen3Coder: recover object parameters the model wrote pre-escaped
       # Added 2026-09-16. Includes a second commit not described in the PR body.
 
-  LOCAL  [local]  Joe Huss
+  LOCAL  [local]  Joe Huss   (tag: mambapoolhost_newinit_fix)
       Post-merge regression fix
         27. 038667befd  fix(hicache): default MambaPoolHost slot side-state attrs at class level
       # Required after the 2026-09-17 upstream merge; see CAVEATS.
+
+  PR #39893  [ready]  @alphabetc1
+      https://github.com/sgl-project/sglang/pull/39893
+      fix: preserve QSA indexer state through HiCache
+        28. 92ae0be023  fix: preserve QSA indexer state through HiCache
+      # Added 2026-09-17. The other half of #39830: QSA compressed index keys live
+      # outside full_kv_pool, so a host-tier restore returned valid KV read through
+      # stale block selections. Author's table, Qwen3.8-Flash-Next-NVFP4 on 1x B200,
+      # with #39862 applied to both builds:
+      #     host restore after eviction   0/15 -> 15/15
+      #     device hit after host restore 0/15 -> 15/15
+      # Its 6 GPU regression tests pass here on SM120 (validated upstream on B200).
+
+  LOCAL  [local]  Joe Huss   (tag: qsa_test_context_isolation)
+      Test isolation fix for #39893
+        29. 01eba4bf8d  test(qsa): publish the indexer test's context per test, not at import
+      # See CAVEATS.
 
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
@@ -120,7 +139,7 @@ EVALUATED AND DELIBERATELY NOT INCLUDED
          #39723 refuses to start unless radix cache AND chunked prefill are
          disabled, plus no EP / PP / a2a backend / DP attention / spec decode /
          PD, and it force-disables prefill CUDA graphs. That also makes it
-         mutually exclusive with HiCache (#39862).
+         mutually exclusive with HiCache (#39862 + #39893).
 
       3. Conflicts with #38209 above. #39721 rewrites
          QSAMetadata.get_prefill_mqa_inputs against the pre-#38209 Python loop.
@@ -139,20 +158,28 @@ EVALUATED AND DELIBERATELY NOT INCLUDED
 CAVEATS
 ==============================================================================
 
-  * Do NOT enable --enable-hierarchical-cache on this model yet.
-    #39862 fixes one real bug (PLE short-conv + N-gram state was lost through
-    the host tier, so a restored slot inherited the previous occupant's token
-    history) but the PR author's own measurement says host-tier hits still
-    return wrong output: 0/10 usable answers vs 10/10 cold and 10/10 device-hit.
-    Tracked upstream as issue #39830, still open.
+  * HiCache (--enable-hierarchical-cache) needs BOTH #39862 and #39893. They fix
+    different halves of issue #39830 (PLE slot side state, and QSA indexer state)
+    and each was measured with the other applied. Issue #39830 is still open
+    upstream; neither PR is merged. Nothing here has been run end-to-end on this
+    host with HiCache on -- the 0/15 -> 15/15 numbers are the #39893 author's, on
+    1x B200. Validate on this box before trusting it in production.
     https://github.com/sgl-project/sglang/issues/39830
 
-  * #39862 needed a follow-up fix (the last commit in the stack). Upstream unit
-    tests build MambaPoolHost with __new__ and never run __init__, so the
-    attributes #39862 adds there were missing and every reader raised
-    AttributeError. It broke two tests that pass on upstream main; the second
-    only appeared once the 2026-09-17 upstream merge brought in the NPU mamba
-    test (#32500). Empty class-level defaults restore the intended no-op path.
+  * #39862 needed a follow-up fix (038667befd). Upstream unit tests build
+    MambaPoolHost with __new__ and never run __init__, so the attributes #39862
+    adds there were missing and every reader raised AttributeError. It broke two
+    tests that pass on upstream main; the second only appeared once the
+    2026-09-17 upstream merge brought in the NPU mamba test (#32500). Empty
+    class-level defaults restore the intended no-op path.
+
+  * #39893 needed a test-isolation fix (01eba4bf8d). Its new test file calls
+    reset_context() in teardown -- the documented idiom -- which drops the
+    context that test_qsa_indexer.py published at module import. pytest imports
+    all selected modules before running any test, so running the qsa directory in
+    one process failed 4 indexer tests with "config namespace 'exec' not
+    published". CI runs per-file and never saw it. The indexer test now
+    republishes per test.
 
   * sglang is installed EDITABLE against this checkout
     (/root/sglang/sglang.prev/python/sglang). pytest run from a git worktree
@@ -160,10 +187,16 @@ CAVEATS
     baseline library changes -- only test-file changes. Baseline by checking the
     commit out in this tree.
 
-  * 13 failures in test/registered/unit/layers/quantization/ are pre-existing on
-    SM120 and identical on upstream main (verified by real checkout, not a
-    worktree): mm_fp4 has no 'trtllm' backend on SM120, and the trtllm/cutedsl
-    kernels fail to JIT-build. The stack adds 3 passing tests and no failures.
+  * Run test files PER FILE, the way CI does. A single pytest process over a
+    directory lets one file's published/reset context change another's result,
+    in both directions.
+
+  * Known-failing, not caused by this stack:
+      - 13 in test/registered/unit/layers/quantization/ -- pre-existing on SM120,
+        identical on upstream main (verified by real checkout). mm_fp4 has no
+        'trtllm' backend on SM120; trtllm/cutedsl kernels fail to JIT-build.
+      - test_qsa_strided_zero_fill.py OOMs when a server is holding the GPUs;
+        it wants 2 GiB free. Environmental.
 
 ==============================================================================
 REBUILDING FROM SCRATCH
