@@ -1090,13 +1090,28 @@ class HiCacheController:
                 # Get one batch token, and update the completed_tokens if succeed
                 extra_info = HiCacheStorageExtraInfo(prefix_keys=prefix_keys)
 
-                hit_pages = self._page_transfer_kv_batch(
-                    operation,
-                    batch_hashes,
-                    batch_host_indices,
-                    extra_info,
-                    kv_derived_transfers,
-                )
+                try:
+                    hit_pages = self._page_transfer_kv_batch(
+                        operation,
+                        batch_hashes,
+                        batch_host_indices,
+                        extra_info,
+                        kv_derived_transfers,
+                    )
+                except Exception:
+                    # A backend raised instead of reporting a miss (corrupt
+                    # page, third-party backend bug).  Report the batch as a
+                    # complete miss but keep looping: every rank must emit the
+                    # same number of token-bearing PrefetchAcks because
+                    # prefetch_sync_thread MIN-reduces them pairwise, and the
+                    # ack sequence must end with completed_req.  The failure
+                    # itself is handled per-page inside the file backend.
+                    logger.warning(
+                        f"Prefetch batch failed for {operation.request_id}; "
+                        "truncating the hit prefix.",
+                        exc_info=True,
+                    )
+                    hit_pages = 0
                 # Check termination
                 if hit_pages != len(batch_hashes):
                     all_success = False
@@ -1157,19 +1172,32 @@ class HiCacheController:
         while not self.storage_stop_event.is_set():
             try:
                 operation = self.prefetch_buffer.get(block=True, timeout=1)
-                if operation is None:
-                    continue
-                self._page_transfer(operation)
-
-                self.prefetch_sync_queue.put(
-                    PrefetchAck(
-                        rid=operation.request_id,
-                        completed_req=True,
-                        operation=operation,
-                    )
-                )
             except Empty:
                 continue
+            if operation is None:
+                continue
+            # A page-level IO failure (corrupt backend file, backend bug) must
+            # not kill this daemon thread: it would strand the operation with
+            # no completed_req ack -- leaking its host allocation forever --
+            # and silently disable the L3 read tier for the rest of the serve
+            # (sgl-project/sglang#39830).  Degrade to "done with whatever
+            # progress the per-batch acks already reported"; the scheduler
+            # frees the un-acked host tail.
+            try:
+                self._page_transfer(operation)
+            except Exception:
+                logger.warning(
+                    f"Prefetch IO failed for {operation.request_id}; "
+                    "closing out with partial progress.",
+                    exc_info=True,
+                )
+            self.prefetch_sync_queue.put(
+                PrefetchAck(
+                    rid=operation.request_id,
+                    completed_req=True,
+                    operation=operation,
+                )
+            )
 
     def prefetch_rate_limited(self) -> bool:
         """
@@ -1223,32 +1251,44 @@ class HiCacheController:
         while (not self.storage_stop_event.is_set()) or not self.prefetch_queue.empty():
             try:
                 operation = self.prefetch_queue.get(block=True, timeout=1)
-                if operation is None:
-                    continue
+            except Empty:
+                continue
+            if operation is None:
+                continue
+            # An existence-query failure must not kill this daemon thread: it
+            # would strand every later prefetch (nothing drains into
+            # prefetch_hit_queue) and leak the scheduler's ongoing_prefetch
+            # entries.  Degrade to a zero-hit answer, which the scheduler
+            # already revokes safely (sgl-project/sglang#39830).
+            try:
                 if operation.is_terminated():
                     hash_value, storage_hit_count = [], 0
                 else:
                     hash_value, storage_hit_count = self._storage_hit_query(operation)
-                storage_hit_count_tensor = torch.tensor(
-                    storage_hit_count, dtype=torch.int
+            except Exception:
+                logger.warning(
+                    f"Storage hit query failed for {operation.request_id}; "
+                    "reporting zero hits.",
+                    exc_info=True,
                 )
-                self._all_reduce(
-                    storage_hit_count_tensor,
-                    torch.distributed.ReduceOp.MIN,
-                    self.prefetch_hits_sync_groups,
-                )
-                storage_hit_count = storage_hit_count_tensor.item()
+                hash_value, storage_hit_count = [], 0
+            # Outside the guarded query on purpose: every rank must run the same
+            # number of hit-count all_reduces or the sync threads deadlock, so a
+            # locally failed query still participates (with a zero) instead of
+            # skipping the collective.
+            storage_hit_count_tensor = torch.tensor(storage_hit_count, dtype=torch.int)
+            self._all_reduce(
+                storage_hit_count_tensor,
+                torch.distributed.ReduceOp.MIN,
+                self.prefetch_hits_sync_groups,
+            )
+            storage_hit_count = storage_hit_count_tensor.item()
 
-                # Record the TP-synced hit count; the scheduler thread decides
-                # at drain time whether to revoke (below threshold) or allocate.
-                operation.hash_value = hash_value[
-                    : (storage_hit_count // self.page_size)
-                ]
-                operation.storage_hit_count = storage_hit_count
-                self.prefetch_hit_queue.put(operation)
-
-            except Empty:
-                continue
+            # Record the TP-synced hit count; the scheduler thread decides
+            # at drain time whether to revoke (below threshold) or allocate.
+            operation.hash_value = hash_value[: (storage_hit_count // self.page_size)]
+            operation.storage_hit_count = storage_hit_count
+            self.prefetch_hit_queue.put(operation)
 
     def write_storage(
         self,
@@ -1309,15 +1349,26 @@ class HiCacheController:
         while not self.storage_stop_event.is_set():
             try:
                 operation = self.backup_queue.get(block=True, timeout=1)
-                if operation is None:
-                    continue
-
-                if not self.backup_skip:
-                    self._page_backup(operation)
-                self.ack_backup_queue.put(operation)
-
             except Empty:
                 continue
+            if operation is None:
+                continue
+            # A raised backup failure must still ack: the scheduler releases
+            # the staged host slots only from ack_backup_queue, and a dead
+            # thread would leak them and disable the L3 write tier
+            # (sgl-project/sglang#39830).  Acking a failed op matches the
+            # existing partial-failure behavior (_page_backup breaks its loop
+            # on failure but is still acked).
+            try:
+                if not self.backup_skip:
+                    self._page_backup(operation)
+            except Exception:
+                logger.warning(
+                    f"Backup operation {operation.id} failed; "
+                    "acknowledging with partial progress.",
+                    exc_info=True,
+                )
+            self.ack_backup_queue.put(operation)
 
     def prefetch_sync_thread_func(self):
         """Synchronize prefetch results across all PP and TP ranks."""

@@ -22,6 +22,12 @@ logger = logging.getLogger(__name__)
 # Max pages per batched storage IO call.
 STORAGE_BATCH_SIZE = 128
 
+# Number of unreadable/corrupt pages to report at warning level before falling
+# back to debug logging. A storage dir written by an older build (pre sidecar /
+# slot-side-state layout changes) can contain thousands of incompatible pages;
+# one warning per page would drown the log, but silence would hide the problem.
+_BAD_PAGE_WARN_BUDGET = 8
+
 
 @dataclass
 class HiCacheStorageConfig:
@@ -455,6 +461,9 @@ class HiCacheFile(HiCacheStorage):
             ),
         )
 
+        # Rate limit for unreadable-page warnings; see _BAD_PAGE_WARN_BUDGET.
+        self._bad_page_warnings = 0
+
     def _get_suffixed_key(self, key: str) -> str:
         return key + self.config_suffix
 
@@ -483,6 +492,19 @@ class HiCacheFile(HiCacheStorage):
             if stem.endswith(self.config_suffix):
                 self.metadata_cache.add(stem)
 
+    def _report_bad_page(self, what: str, key: str) -> None:
+        # A page that exists but cannot be (de)serialized is a storage miss for
+        # the current build: report it as such (rate-limited) and let the batch
+        # truncate to the contiguous good prefix instead of unwinding into the
+        # daemon storage threads, which would disable the tier for the whole
+        # serve (see sgl-project/sglang#39830).
+        message = f"HiCacheFile page {what} failed for {key}; treating as a miss."
+        if self._bad_page_warnings < _BAD_PAGE_WARN_BUDGET:
+            self._bad_page_warnings += 1
+            logger.warning(message)
+        else:
+            logger.debug(message)
+
     def get(
         self,
         key: str,
@@ -505,6 +527,14 @@ class HiCacheFile(HiCacheStorage):
             if self.metadata_cache is not None:
                 self.metadata_cache.remove(suffixed)
             logger.warning(f"Failed to fetch {key} from HiCacheFile storage.")
+            return None
+        except OSError:
+            # Short read (IOError) or other read failures on a corrupt /
+            # truncated page (e.g. one written by a build with a different
+            # page layout).  Degrade to a miss with the tensor-or-None
+            # contract: the caller truncates the batch prefix, and a
+            # background storage thread never sees the exception.
+            self._report_bad_page("read", suffixed)
             return None
 
     def batch_get(
@@ -673,12 +703,24 @@ class HiCacheFile(HiCacheStorage):
         return key if pool_name == PoolName.KV else f"{key}.{pool_name}"
 
     def _read_page(self, pool_name: str, key: str, host_pool, page_offset: int) -> bool:
-        """Read one page from storage into host_pool at page_offset."""
+        """Read one page from storage into host_pool at page_offset.
+
+        A page whose payload cannot be deserialized (e.g. a sidecar or
+        slot-side-state file written by an older build with a shorter layout)
+        is reported as a per-page miss: ``set_from_flat_data_page`` explicitly
+        raises on incompatible layouts, and that exception must not unwind
+        through ``_batch_io_v2`` into the daemon storage threads
+        (sgl-project/sglang#39830).
+        """
         storage_key = self._log_key(pool_name, key)
-        data_page = self.get(storage_key, host_pool.get_dummy_flat_data_page())
-        if data_page is None:
+        try:
+            data_page = self.get(storage_key, host_pool.get_dummy_flat_data_page())
+            if data_page is None:
+                return False
+            host_pool.set_from_flat_data_page(page_offset, data_page)
+        except (OSError, ValueError, RuntimeError):
+            self._report_bad_page("read", storage_key)
             return False
-        host_pool.set_from_flat_data_page(page_offset, data_page)
         return True
 
     def _write_page(
@@ -686,8 +728,24 @@ class HiCacheFile(HiCacheStorage):
     ) -> bool:
         """Write one page from host_pool at page_offset to storage as raw bytes."""
         storage_key = self._log_key(pool_name, key)
-        data_page = host_pool.get_data_page(page_offset, flat=True)
+        try:
+            data_page = host_pool.get_data_page(page_offset, flat=True)
+        except (OSError, ValueError, RuntimeError):
+            self._report_bad_page("write", storage_key)
+            return False
         return self.set(storage_key, data_page)
+
+    def _safe_page_op(self, op_fn, pool_name: str, key: str, host_pool, offset):
+        # Per-page last line of defense: a single bad page must come back as
+        # False (a miss) rather than raising out of the batch comprehension,
+        # which would skip every later page and kill the calling storage
+        # thread.  The consumers (count_pool_hits / page loops) truncate the
+        # batch to the leading run of True results.
+        try:
+            return op_fn(pool_name, key, host_pool, offset)
+        except (OSError, ValueError, RuntimeError):
+            self._report_bad_page(op_fn.__name__, key)
+            return False
 
     def _batch_io_v2(self, transfers: List[PoolTransfer], op_fn):
         results: dict[str, List[bool]] = {}
@@ -710,7 +768,13 @@ class HiCacheFile(HiCacheStorage):
                 continue
 
             results[transfer.name] = [
-                op_fn(transfer.name, key, host_pool, host_indices[i * page_size].item())
+                self._safe_page_op(
+                    op_fn,
+                    transfer.name,
+                    key,
+                    host_pool,
+                    host_indices[i * page_size].item(),
+                )
                 for i, key in enumerate(keys)
             ]
         return results

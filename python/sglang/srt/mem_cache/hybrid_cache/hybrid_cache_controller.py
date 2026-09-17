@@ -1139,10 +1139,23 @@ class HybridCacheController(BaseHiCacheController):
             self._sync_trailing_keys(transfers_nonkv, sidecar_hashes, sidecar_hit_pages)
             self._resolve_sidecar_nonkv_derived_pool_transfers(operation)
             extra_info = HiCacheStorageExtraInfo(prefix_keys=operation.prefix_keys)
-            results = self.storage_backend.batch_get_v2(
-                transfers_nonkv, extra_info=extra_info
-            )
-            pool_hits = count_pool_hits(results)
+            try:
+                results = self.storage_backend.batch_get_v2(
+                    transfers_nonkv, extra_info=extra_info
+                )
+                pool_hits = count_pool_hits(results)
+            except Exception:
+                # The backend raised instead of reporting per-page misses.
+                # Degrade to zero sidecar hits -- _clamp_prefetch_result then
+                # discards the whole fetched prefix, which is the safe
+                # 'restore prefix wrong' guard of #39830 -- and still emit the
+                # pool_hits ack so the ack sequence terminates normally.
+                logger.warning(
+                    f"Sidecar batch_get_v2 failed for {operation.request_id}; "
+                    "reporting zero sidecar hits.",
+                    exc_info=True,
+                )
+                pool_hits = {}
         # Emit PrefetchAck to prefetch_sync_queue, even the operation has been canceled by the
         # scheduler thread.  The prefetch sync thread expects the same number of PrefetchAck objects
         # to perform all_reduce.
@@ -1245,12 +1258,23 @@ class HybridCacheController(BaseHiCacheController):
         while not self.storage_stop_event.is_set():
             try:
                 operation = self.backup_queue.get(block=True, timeout=1)
-                if operation is None:
-                    continue
-                self._page_backup(operation)
-                self.ack_backup_queue.put(operation)
             except Empty:
                 continue
+            if operation is None:
+                continue
+            # Sidecar batch_set_v2 may raise on a corrupt/incompatible host
+            # page; the thread must survive and ack so the scheduler frees the
+            # staged host slots (same degradation as the base backup loop,
+            # sgl-project/sglang#39830).
+            try:
+                self._page_backup(operation)
+            except Exception:
+                logger.warning(
+                    f"Hybrid backup operation {operation.id} failed; "
+                    "acknowledging with partial progress.",
+                    exc_info=True,
+                )
+            self.ack_backup_queue.put(operation)
 
     def _resolve_sidecar_kv_derived_pool_transfers(self, operation):
         for transfer in operation.pool_transfers:
