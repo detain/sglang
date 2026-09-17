@@ -7,7 +7,20 @@ from sglang.srt.mem_cache.qsa_kv_pool import QSATokenToKVPool
 
 
 class QSAIndexerPoolHost(DeepSeekV4PagedHostPool):
-    """Page-row mirror of QSA compressed keys, indexed by full-KV token slots."""
+    """Page-row mirror of QSA compressed keys, indexed by full-KV token slots.
+
+    L2 restore fencing: the INDEXER transfer is built from the same
+    ``full_layer_mapping`` as the anchor KV pool and executed by
+    ``L2TransferEngine.submit_host_to_device``, which iterates every transfer
+    for a loop layer on ONE host_to_device stream before calling
+    ``on_layer_done(layer_id)`` (l2_transfer.py:88-110).  The per-layer event
+    ``QSATokenToKVPool.get_qsa_compressed_k_buffer`` waits on is recorded on
+    that same stream afterwards (cache_controller.py LayerLoadingEvent.complete
+    records on the current stream), so it transitively covers this pool's
+    bytes for the same global layer -- including under the ``direct`` io
+    backend, whose kernels/memcpys all use getCurrentCUDAStream().  No
+    separate completion fence is needed for this sidecar.
+    """
 
     def __init__(
         self,
