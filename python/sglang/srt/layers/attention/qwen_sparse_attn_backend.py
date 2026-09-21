@@ -1618,6 +1618,7 @@ class QwenSparseAttnBackend(AttentionBackend):
             sequence_lens_tensor,
             layer.scaling,
             **scale_kwargs,
+            max_q=max(extend_lens, default=1),
         )
         return self._pad_extend_output(output, num_output_rows)
 
