@@ -65,7 +65,7 @@ def test_graph_capture_does_not_bind_the_shared_eager_buffer():
     stub.prepare_cuda_graph_prefetch_buffer(4, ids.device)
     side.wait_stream(torch.cuda.current_stream())
     with torch.cuda.stream(side), torch.cuda.graph(graph):
-        during_capture = stub._get_prefetch_buffer(4, ids)
+        during_capture = stub._get_prefetch_buffer(4, ids.device)
     torch.cuda.current_stream().wait_stream(side)
 
     assert stub._eager_prefetch_buffer is None
@@ -73,8 +73,8 @@ def test_graph_capture_does_not_bind_the_shared_eager_buffer():
 
     # The eager path still grows its single buffer and hands out a prefix of it,
     # which is exactly what must never be captured.
-    small = stub._get_prefetch_buffer(2, ids)
-    large = stub._get_prefetch_buffer(8, ids)
+    small = stub._get_prefetch_buffer(2, ids.device)
+    large = stub._get_prefetch_buffer(8, ids.device)
     assert small.shape[0] == 2 and large.shape[0] == 8
     assert stub._eager_prefetch_buffer.shape[0] == 8
     assert large.data_ptr() != during_capture.data_ptr()
@@ -98,7 +98,7 @@ def test_recapture_reuses_the_preallocated_graph_prefetch_buffer(monkeypatch):
         "_allocate_prefetch_buffer",
         lambda *_: pytest.fail("capture allocated a PLE prefetch buffer"),
     )
-    assert stub._get_prefetch_buffer(4, ids).data_ptr() == second.data_ptr()
+    assert stub._get_prefetch_buffer(4, ids.device).data_ptr() == second.data_ptr()
 
 
 def test_capture_rejects_an_unprepared_prefetch_size(monkeypatch):
@@ -109,7 +109,7 @@ def test_capture_rejects_an_unprepared_prefetch_size(monkeypatch):
     monkeypatch.setattr(stub, "_is_capturing", lambda: True)
 
     with pytest.raises(RuntimeError, match="4 tokens available, 8 needed"):
-        stub._get_prefetch_buffer(8, ids)
+        stub._get_prefetch_buffer(8, ids.device)
 
 
 def test_zero_sized_prewarm_budget_uses_stable_capture_buffer(monkeypatch):
@@ -118,8 +118,8 @@ def test_zero_sized_prewarm_budget_uses_stable_capture_buffer(monkeypatch):
     monkeypatch.setattr(stub, "_is_capturing", lambda: True)
     monkeypatch.setattr("sglang.srt.models.qwen4_exp.is_sm120_supported", lambda: True)
 
-    first = stub._get_prefetch_buffer(8, ids)
-    second = stub._get_prefetch_buffer(8, ids)
+    first = stub._get_prefetch_buffer(8, ids.device)
+    second = stub._get_prefetch_buffer(8, ids.device)
 
     assert first.data_ptr() == second.data_ptr()
     assert stub._graph_prefetch_buffers[8].data_ptr() == first.data_ptr()
