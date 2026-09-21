@@ -20,6 +20,8 @@ from sglang.test.ci.ci_register import register_cuda_ci
 
 register_cuda_ci(est_time=30, stage="base-b-kernel-unit", runner_config="4-gpu-b200")
 
+requires_cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA only")
+
 HC_COUNT = 4
 HIDDEN_SIZE = 2560
 LOWRANK = 320
@@ -60,6 +62,7 @@ _TOLERANCES = {
 
 @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
 @pytest.mark.parametrize("num_tokens", [1, 4, 7, _FUSED_MIX_MAX_ROWS])
+@requires_cuda
 def test_fused_hc_mix_matches_reference(dtype, num_tokens):
     x, w_down, w_up = _make_inputs(num_tokens, dtype)
     assert fused_hc_mix_supported(x, w_down, w_up)
@@ -68,6 +71,7 @@ def test_fused_hc_mix_matches_reference(dtype, num_tokens):
     torch.testing.assert_close(out.to(torch.float64), ref, **_TOLERANCES[dtype])
 
 
+@requires_cuda
 def test_fused_hc_mix_no_less_accurate_than_eager():
     """The fused kernel (fp32 accumulation throughout) must not be farther
     from the fp64 reference than the eager bf16 chain it replaces."""
@@ -84,6 +88,7 @@ def test_fused_hc_mix_no_less_accurate_than_eager():
 
 @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
 @pytest.mark.parametrize("num_tokens", [17, _SM120_FUSED_MIX_MAX_ROWS])
+@requires_cuda
 def test_sm120_fused_hc_mix_matches_reference(dtype, num_tokens):
     if torch.cuda.get_device_capability() != (12, 0):
         pytest.skip("SM120-specific row range")
@@ -95,6 +100,7 @@ def test_sm120_fused_hc_mix_matches_reference(dtype, num_tokens):
 
 
 @pytest.mark.parametrize("num_tokens", [1, 16, _SM120_FUSED_MIX_MAX_ROWS])
+@requires_cuda
 def test_sm120_fused_hc_mix_graph_replay_stability(num_tokens):
     if torch.cuda.get_device_capability() != (12, 0):
         pytest.skip("SM120-specific launch geometry")
@@ -119,11 +125,13 @@ def test_sm120_fused_hc_mix_graph_replay_stability(num_tokens):
     )
 
 
+@requires_cuda
 def test_fused_hc_mix_gate_rejects_prefill_rows():
     x, w_down, w_up = _make_inputs(_SM120_FUSED_MIX_MAX_ROWS + 1, torch.bfloat16)
     assert not fused_hc_mix_supported(x, w_down, w_up)
 
 
+@requires_cuda
 def test_fused_hc_mix_deterministic_inference_fallback(monkeypatch):
     x, w_down, w_up = _make_inputs(1, torch.bfloat16)
     monkeypatch.setattr(hc_mix_triton, "_deterministic_inference", lambda: True)
