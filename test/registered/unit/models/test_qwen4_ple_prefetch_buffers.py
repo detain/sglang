@@ -225,6 +225,9 @@ def test_model_prewarm_allocates_the_largest_sm120_capture_shape(monkeypatch, re
     runner = SimpleNamespace(
         device="cuda",
         model_config=SimpleNamespace(quantization=None),
+        # The prewarm looks up the pool's compressed-KV dtype for the indexer
+        # JIT specialization; at runtime the pool always exists.
+        token_to_kv_pool=SimpleNamespace(qsa_compressed_dtype=torch.bfloat16),
         decode_num_tokens_per_req=lambda **_: 4,
     )
     monkeypatch.setattr("sglang.srt.models.qwen4_exp.is_sm120_supported", lambda: True)
