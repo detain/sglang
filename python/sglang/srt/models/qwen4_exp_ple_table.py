@@ -1,7 +1,12 @@
 """Host storage for offloaded PLE tables.
 
 ``pinned`` (default)
-    ``torch.empty(..., pin_memory=True)``. On a discrete GPU this frees VRAM.
+    Page-locked host memory of exactly the table's size. On a discrete GPU this
+    frees VRAM. The buffer is allocated with ``mmap`` and registered with
+    ``cudaHostRegister`` rather than ``torch.empty(..., pin_memory=True)``:
+    PyTorch's caching host allocator rounds every pinned allocation up to a
+    power of two, so the 47.7 GiB fp8 table would lock 64 GiB (and a 95.4 GiB
+    bf16 table 128 GiB) of host memory.
 
 ``file``
     A shared mmap of a sparse file under ``--ple-offload-dir``. GPUs with
@@ -27,7 +32,10 @@ import numpy as np
 import torch
 
 from sglang.srt.environ import envs
-from sglang.srt.utils.numa_utils import allocate_interleaved_pinned_table
+from sglang.srt.utils.numa_utils import (
+    _table_nbytes,
+    allocate_interleaved_pinned_table,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -254,10 +262,7 @@ def allocate_ple_host_table(
         table._sglang_ple_pinned_mapping = mapping
         return table
 
-    numel = 1
-    for d in shape:
-        numel *= int(d)
-    nbytes = numel * torch.empty(0, dtype=dtype).element_size()
+    nbytes = _table_nbytes(shape, dtype)
     table_dir = os.path.expanduser(table_dir or envs.SGLANG_QWEN4_PLE_FILE_DIR.get())
     os.makedirs(table_dir, exist_ok=True)
     path = os.path.join(table_dir, ple_table_file_name(shape, dtype, tag))
