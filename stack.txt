@@ -554,6 +554,48 @@ STACK, IN BUILD ORDER (bottom first)
       #   -> 12 passed, 6 subtests passed. Server boot past this point not
       #   re-run here (GPUs); it was the only exception on the failing path.
 
+  (tag: boot-fix) ===========================================================
+  QSA STALE PROFILE FIELD ON FIRST PREFILL -- 2026-09-21 (LOCAL, no upstream
+  provenance)
+  ============================================================================
+  # Symptom: server booted clean (weights, graphs, HiCache all fine) and every
+  # TP rank then died on the FIRST request, in the extend path:
+  #   AttributeError: 'QSAProfile' object has no attribute 'variant'
+  # at qwen_sparse_attn_backend.py:888, under
+  #   eager_runner._execute_extend -> hybrid_linear_attn_backend
+  #   -> QwenSparseAttnBackend.init_forward_metadata
+  #   -> _metadata_from_forward_batch
+  # on the Qwen3.8-Flash-Next-FP8 boot (GDN + QSA + MTP + EAGLE + hicache).
+  # Cause: local entry "perf(qsa): streamline prefill selection" (f8e74b5759)
+  # gated the new prefill-pack block on
+  #   self.qsa_profile is None or self.qsa_profile.variant == QSA_VARIANT_COMPRESSED
+  # but upstream #38960 (entry: remove unused tokenwise QSA) had already
+  # deleted both the QSAProfile.variant field and the QSA_VARIANT_* constants
+  # -- compressed is now the only variant. The guard was dead code AND a
+  # double dangling reference (AttributeError first; the undefined
+  # QSA_VARIANT_COMPRESSED name would have been the next NameError).
+  # Fix: drop the guard; the block now runs on
+  #   not speculative_paged and not forward_batch.forward_mode.is_decode()
+  # which is what the removed disjunct already evaluated to for every config
+  # (profile None -> True; profile present -> compressed -> True).
+  # Regression guard (CPU, no GPU needed):
+  # test/registered/unit/layers/attention/test_qsa_profile_field_refs.py
+  # AST-walks qwen_sparse_attn_backend.py + qsa/config.py, collects every
+  # attribute read off a qsa_profile/profile expression, and asserts each
+  # resolves to a real QSAProfile struct field or property -- so the next
+  # upstream field removal fails in the CPU suite instead of on request #1.
+         74. 944a0436b3  fix(qsa): drop the removed QSAProfile.variant prefill guard
+             and add the static profile-field guard test
+      # Verified: PYTHONPATH=python python -m pytest
+      #   test/registered/unit/layers/attention/test_qsa_profile_field_refs.py
+      #   -> 2 passed (and 1 failed / 1 passed with the pre-fix line restored,
+      #      naming 'variant').
+      #   test/registered/kernels/ops/qsa/test_qsa.py -> 45 passed, 1 skipped
+      #   test/registered/kernels/ops/qsa/test_qsa_indexer.py -> 25 passed
+      #   test/registered/kernels/ops/attention/
+      #     test_qsa_prefill_compressed_pack.py -> 17 passed
+      #   (GPUs were free after the crashed server exited.)
+
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
 ==============================================================================
