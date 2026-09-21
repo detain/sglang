@@ -536,13 +536,23 @@ def sparse_gqa_fwd_interface_triton_ck(
     scale,
     k_scale: Optional[float] = None,
     v_scale: Optional[float] = None,
+    # max_q is the host-side bound on per-request query length used for the
+    # launch grid. A per-layer device read (.item()) is a pipeline drain; the
+    # backend already knows the value from forward_batch.extend_seq_lens_cpu,
+    # so callers should pass it here instead of letting this function sync.
+    *,
+    max_q: Optional[int] = None,
 ):
     k, v = k.contiguous(), v.contiguous()
     kv_is_fp8 = _validate_sparse_gqa_dtypes(q, k, v)
     total_q, num_q_heads, head_dim = q.shape
     num_kv_heads = k.shape[1]
     group_size = num_q_heads // num_kv_heads
-    max_q = int((cu_q[1:] - cu_q[:-1]).max().item())
+    if max_q is None:
+        # Fallback: the caller did not supply the host-side bound, so pay the
+        # device read. Every in-tree caller should pass max_q; this branch
+        # exists for out-of-tree callers and tests.
+        max_q = int((cu_q[1:] - cu_q[:-1]).max().item())
     block_m, block_n, warps, stages = _get_prefill_config(
         total_q,
         group_size,
