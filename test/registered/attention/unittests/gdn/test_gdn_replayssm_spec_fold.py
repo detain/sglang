@@ -111,6 +111,7 @@ def _fold(state, rings, slots, accept_lens, track_slots=None, track_steps=None):
     )
 
 
+@unittest.skipIf(not torch.cuda.is_available(), "CUDA is required")
 class TestGdnReplayssmSpecFold(CustomTestCase):
     def setUp(self):
         torch.manual_seed(0)
