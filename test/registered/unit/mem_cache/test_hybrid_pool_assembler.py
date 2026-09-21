@@ -16,6 +16,7 @@ from sglang.srt.mem_cache.hybrid_cache.hybrid_pool_assembler import (
     _SwaStrategy,
     build_full_draft_pools,
     build_hybrid_swa_group,
+    build_pool_entry,
 )
 from sglang.srt.mem_cache.memory_pool import HybridLinearKVPool
 from sglang.test.ci.ci_register import register_cpu_ci
@@ -270,6 +271,34 @@ class TestTransferLayerSpan(CustomTestCase):
             ],
             [7, 7],
         )
+
+
+class TestBuildPoolEntryCallSites(CustomTestCase):
+    """`build_pool_entry` is keyword-only; a stale kwarg name only fails at runtime.
+
+    The QSA indexer and QSA draft sidecars need a GPU to reach, so guard their
+    call sites statically instead.
+    """
+
+    def test_every_call_site_uses_signature_keywords(self):
+        import ast
+        import inspect
+
+        allowed = set(inspect.signature(build_pool_entry).parameters)
+        source = inspect.getsource(hybrid_pool_assembler)
+        tree = ast.parse(source)
+        offenders = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if not (isinstance(func, ast.Name) and func.id == "build_pool_entry"):
+                continue
+            self.assertEqual(node.args, [], "build_pool_entry is keyword-only")
+            for kw in node.keywords:
+                if kw.arg is not None and kw.arg not in allowed:
+                    offenders.append((node.lineno, kw.arg))
+        self.assertEqual(offenders, [], f"unknown kwargs; expected one of {allowed}")
 
 
 if __name__ == "__main__":

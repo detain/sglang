@@ -1148,7 +1148,7 @@ def build_hybrid_mamba_stack(
                 ),
                 device_pool=qsa_pool,
                 layer_mapping=full_layer_mapping,
-                transfer_layer_num=transfer_layer_num + len(qsa_draft_pools),
+                transfer_layer_id_max=transfer_layer_id_max + len(qsa_draft_pools),
                 packed_draft_device_pools=qsa_draft_pools,
             )
         )
@@ -1485,7 +1485,7 @@ def build_full_draft_pools(
                 ),
                 device_pool=draft_kv_pool,
                 layer_mapping=draft_layer_mapping,
-                transfer_layer_num=draft_host_pool.layer_num,
+                transfer_layer_id_max=draft_host_pool.layer_num,
             )
         )
 
