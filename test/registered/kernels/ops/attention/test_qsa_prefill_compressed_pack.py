@@ -20,6 +20,8 @@ from sglang.test.ci.ci_register import register_cuda_ci
 
 register_cuda_ci(est_time=30, stage="base-b-kernel-unit", runner_config="1-gpu-large")
 
+requires_cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA only")
+
 
 def _forbidden_calls(function, names: set[str]) -> list[str]:
     tree = ast.parse(textwrap.dedent(inspect.getsource(function)))
@@ -87,6 +89,7 @@ def _fragmented_slot_table(sequence_lens, page_size=64):
         (8192,),
     ),
 )
+@requires_cuda
 def test_qsa_prefill_compressed_pack_matches_indirect_gather(sequence_lens):
     ratio, heads, head_dim, page_size = 4, 1, 128, 64
     slot_table, max_page = _fragmented_slot_table(sequence_lens, page_size)
@@ -120,6 +123,7 @@ def test_qsa_prefill_compressed_pack_matches_indirect_gather(sequence_lens):
     torch.testing.assert_close(packed, expected_packed, rtol=0, atol=0)
 
 
+@requires_cuda
 def test_qsa_prefill_compressed_scratch_is_reused():
     backend = QwenSparseAttnBackend.__new__(QwenSparseAttnBackend)
     backend._qsa_prefill_compressed_scratch = {}
@@ -144,6 +148,7 @@ def test_qsa_prefill_compressed_scratch_is_reused():
         ((2047, 2048), ((2039, 2047), (2040, 2048))),
     ),
 )
+@requires_cuda
 def test_qsa_prefill_all_visible_indices_matches_reference(sequence_lens, query_ranges):
     token_topk, compress_ratio = 2048, 4
     ranges = (
@@ -188,6 +193,7 @@ def test_qsa_prefill_all_visible_indices_matches_reference(sequence_lens, query_
     torch.testing.assert_close(actual, expected, rtol=0, atol=0)
 
 
+@requires_cuda
 def test_qsa_prefill_indices_scratch_is_reused():
     backend = QwenSparseAttnBackend.__new__(QwenSparseAttnBackend)
     backend._qsa_prefill_indices_scratch = {}
