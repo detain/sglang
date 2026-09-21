@@ -524,6 +524,36 @@ STACK, IN BUILD ORDER (bottom first)
       # ple_prefetch_buffers 1F -> 5P/5S delta is fixup a75c368f1e, which
       # predated this battery snapshot -- not a triage effect).
 
+  (tag: boot-fix) ===========================================================
+  QSA + MAMBA HICACHE BOOT CRASH -- 2026-09-21 (LOCAL, no upstream provenance)
+  ============================================================================
+  # Symptom: every TP rank died in Scheduler.__init__ during
+  # attach_hybrid_pool_to_unified_cache with
+  #   NameError: name 'transfer_layer_num' is not defined
+  # at hybrid_pool_assembler.py:1151, on the Qwen3.8-Flash-Next-FP8 boot
+  # (GDN + QSA + MTP + --enable-hierarchical-cache). The QSA INDEXER entry of
+  # build_hybrid_mamba_stack passed a kwarg name that build_pool_entry never
+  # had (it takes transfer_layer_id_max) AND read an undefined local. Only the
+  # qsa_pool is not None branch reaches it, so no CPU test covered it.
+  # Fix: transfer_layer_id_max=transfer_layer_id_max + len(qsa_draft_pools),
+  # matching the sibling KV entry's bound (which is
+  # transfer_layer_id_max + len(mtp_draft_device_pools) over the same
+  # _with_mtp_layer_mapping-extended full_layer_mapping, so the indexer
+  # sidecar now spans exactly the packed target+draft layers it stores).
+  # Second site of the identical typo fixed in build_full_draft_pools
+  # (QSATokenToKVPool draft sidecar, was hybrid_pool_assembler.py:1488) --
+  # a TypeError waiting on the QSA-draft path.
+  # Regression guard (CPU, no GPU needed): TestBuildPoolEntryCallSites in
+  # test/registered/unit/mem_cache/test_hybrid_pool_assembler.py AST-walks the
+  # module and asserts every build_pool_entry call site uses only signature
+  # keywords; it reports both pre-fix offenders and passes after.
+         73. 82697f219d  fix(hicache): pass transfer_layer_id_max to the QSA pool entries
+             (indexer + draft sidecar) and add the static call-site test
+      # Verified: PYTHONPATH=python python -m pytest
+      #   test/registered/unit/mem_cache/test_hybrid_pool_assembler.py -q
+      #   -> 12 passed, 6 subtests passed. Server boot past this point not
+      #   re-run here (GPUs); it was the only exception on the failing path.
+
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
 ==============================================================================
