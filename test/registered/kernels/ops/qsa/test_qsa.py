@@ -1374,6 +1374,8 @@ def test_qsa_mtp_step_out_cache_loc_matches_draft_forward_layout():
 def test_qsa_graph_metadata_kernels_match_legacy_host_path():
     """For decode rows and target-verify fan-out (boundary and non-boundary),
     replay kernels and the host refresh must build identical graph buffers."""
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA required")
     from sglang.srt.layers.attention.qsa.graph_metadata import launch_graph_metadata
 
     device = "cuda"
@@ -1538,6 +1540,8 @@ def _qsa_expected_graph_layout(
 def test_qsa_graph_layout_covers_speculative_rows_and_padded_tail():
     """The layout kernel must rebuild speculative row fan-out and the padded dummy tail;
     the row-metadata kernel must derive compressed slots from those rows."""
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA required")
     from sglang.srt.layers.attention.qsa.graph_metadata import launch_graph_metadata
 
     device = "cuda"
