@@ -596,6 +596,71 @@ STACK, IN BUILD ORDER (bottom first)
       #     test_qsa_prefill_compressed_pack.py -> 17 passed
       #   (GPUs were free after the crashed server exited.)
 
+  (tag: boot-fix) ===========================================================
+  CUSTOM ALL-REDUCE v1 vs expandable_segments AT TP2 -- 2026-09-21 (LOCAL, no
+  upstream provenance)
+  ============================================================================
+  # Symptom: moving the Qwen3.8-Flash-Next-FP8 serve from tp4 to tp2 on this
+  # PCIe-only 4x RTX PRO 6000 box booted clean through weights, both memory
+  # pools and the full target-verify graph, then died in CUDA graph capture:
+  #   RuntimeError: invalid argument
+  #   .../allreduce/custom_all_reduce.cuh:614      (cudaIpcGetMemHandle)
+  #   Exception: Capture cuda graph failed: invalid argument
+  # via decode_cuda_graph_runner.py -> parallel_state.graph_capture ->
+  #   custom_all_reduce.py:241 register_graph_buffers
+  #   -> custom_all_reduce_ops.get_graph_buffer_ipc_meta
+  # The canned advice ("lower mem-fraction-static / cuda-graph-max-bs") is a
+  # red herring -- 9.17 GB was free and all 23 verify graphs had captured.
+  # Cause: the run sets PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True, so
+  # torch's caching allocator hands out cuMemCreate/cuMemMap (VMM) pointers.
+  # cudaIpcGetMemHandle accepts only cudaMalloc pointers and returns
+  # cudaErrorInvalidValue on VMM ones. CustomAllreduce (v1) registers the
+  # captured graph input buffers -- which are model activations from the torch
+  # allocator -- through exactly that call. Its own workspace is fine: it uses
+  # a raw lib.cudaMalloc in create_shared_buffer, so only the graph path is
+  # affected, and only under CUDA graphs (i.e. always, in practice).
+  # Why tp4 never hit it: v1 self-disables at world_size > 2 without NVLink
+  # ("not supported on more than two PCIe-only GPUs"), and v2 -- which DOES
+  # have a VMM path (_register_graph_inputs checks is_vmm_pointer and routes
+  # to VmmGraphInputManager) -- is admitted only on full NVLink
+  # (can_use_custom_all_reduce_v2 -> can_use_custom_all_reduce_with_nvlink).
+  # So tp4 = both disabled -> NCCL -> fine. tp2 on PCIe = v2 rejected for no
+  # NVLink, v1 accepted because world_size == 2, and v1 had no VMM guard.
+  # That gap (v2 guards VMM, v1 does not) is the bug.
+  # Fix: give v1 the guard v2 already has. New public
+  # is_vmm_backed_allocator(device) in utils/cuda_vmm_utils.py (probe one byte,
+  # is_vmm_pointer on it; False when cuda.bindings is absent so the historical
+  # cudaMalloc assumption is preserved). custom_all_reduce.py calls it right
+  # after the nvlink check and returns disabled with a warning naming
+  # expandable_segments. v2's private _is_vmm_backed_allocator now delegates to
+  # the shared helper so there is one implementation.
+  # Effect: all-reduce falls back to NCCL, which is what tp4 already uses --
+  # no regression, and the tp2 server boots. Pure Python, so it takes effect
+  # without rebuilding sgl_kernel (the installed .so is built from
+  # sglang.prev, hence the sglang.prev path in the traceback).
+  # Regression guard (CPU, no GPU needed):
+  # test/registered/unit/distributed/test_custom_all_reduce_vmm_guard.py
+  # drives CustomAllreduce.__init__ with world_size 2 / no NVLink / VMM True
+  # and asserts it stays disabled AND never reaches create_shared_buffer (a
+  # half-built __init__ would leak IPC-shared buffers); the paired case pins
+  # that a cudaMalloc allocator is unaffected.
+         75. a89d298bac  fix(allreduce): disable legacy custom all-reduce on
+             a VMM-backed allocator and share the VMM probe with v2
+      # Verified: PYTHONPATH=python python -m pytest
+      #   test/registered/unit/distributed/test_custom_all_reduce_vmm_guard.py
+      #   -> 2 passed (and 1 failed, "assert False is True", with the guard
+      #      block deleted -- the test does catch the bug).
+      #   test/registered/unit/distributed/test_custom_all_reduce_v2_capability
+      #   .py -> 4 passed (delegation change is behavior-preserving).
+      #   Probe discriminates: is_vmm_backed_allocator(cuda:0) is False with
+      #   the default allocator and True under expandable_segments:True.
+      # Serving config that triggered it: /root/run_sglang_qwenflashnext8.sh
+      #   (tp2/ep2 on GPUs 0-1, mem-fraction-static 0.90, weights 63.01 GB +
+      #   MTP 2.68 GB, mamba pinned at 256 slots = 7.14 GB, KV 1587520 tokens,
+      #   9.17 GB free at "Memory pool end"). Keep expandable_segments ON --
+      #   it is load-bearing at that memory pressure.
+
+
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
 ==============================================================================
