@@ -99,6 +99,23 @@ def is_vmm_pointer(ptr: int) -> bool:
     return False
 
 
+def is_vmm_backed_allocator(device: torch.device) -> bool:
+    """Whether torch's caching allocator hands out VMM-backed memory here.
+
+    True under ``PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True``, which
+    backs allocations with cuMemCreate/cuMemMap instead of cudaMalloc. Such
+    pointers cannot be shared with ``cudaIpcGetMemHandle``.
+
+    Returns False when the CUDA driver bindings are missing: the probe is the
+    only reliable signal, and False keeps the historical "assume cudaMalloc"
+    behavior for callers that gate an IPC path on this.
+    """
+    if _drv is None:
+        return False
+    probe = torch.empty(1, dtype=torch.uint8, device=device)
+    return is_vmm_pointer(probe.data_ptr())
+
+
 def compute_graph_capture_bases(graph_inputs: List[tuple]):
     """Map graph-capture inputs onto their VMM base allocations.
 

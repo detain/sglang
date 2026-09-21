@@ -29,6 +29,7 @@ from sglang.srt.utils import (
     is_musa,
     log_info_on_rank0,
 )
+from sglang.srt.utils.cuda_vmm_utils import is_vmm_backed_allocator
 
 _is_cuda = is_cuda()
 _is_hip = is_hip()
@@ -92,6 +93,24 @@ class CustomAllreduce:
         )
         if full_nvlink is None:
             return  # fail to get nvlink status
+
+        if _is_cuda and is_vmm_backed_allocator(device):
+            # register_graph_buffers() shares the CUDA-graph input buffers with
+            # cudaIpcGetMemHandle, which only accepts cudaMalloc pointers and
+            # fails with "invalid argument" on the VMM pointers that
+            # expandable_segments hands out. CustomAllReduceV2 has a dedicated
+            # VMM path but is admitted only on full NVLink, so PCIe-only hosts
+            # with world_size == 2 land here. Fall back to NCCL instead of
+            # dying at CUDA graph capture.
+            logger.warning(
+                "CustomAllreduce is disabled because PyTorch's caching "
+                "allocator is VMM-backed (PYTORCH_CUDA_ALLOC_CONF="
+                "expandable_segments:True); its CUDA graph buffers cannot be "
+                "shared over CUDA IPC. Unset expandable_segments to re-enable "
+                "it. To silence this warning, specify "
+                "disable_custom_all_reduce=True explicitly."
+            )
+            return
 
         self.group = group
         self.max_size = max_size

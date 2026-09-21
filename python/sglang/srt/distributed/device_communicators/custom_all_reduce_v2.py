@@ -48,6 +48,7 @@ from sglang.srt.model_executor.runner_backend_utils.tc_piecewise_cuda_graph impo
 from sglang.srt.utils.cuda_vmm_utils import (
     VmmGraphInputManager,
     compute_graph_capture_bases,
+    is_vmm_backed_allocator,
     is_vmm_pointer,
 )
 
@@ -404,9 +405,9 @@ class CustomAllReduceV2:
             yield
         finally:
             self._graph_mode_allowed = False
-        assert not torch.cuda.is_current_stream_capturing(), (
-            "Cannot register graph inputs while capturing CUDA graph"
-        )
+        assert (
+            not torch.cuda.is_current_stream_capturing()
+        ), "Cannot register graph inputs while capturing CUDA graph"
         self._register_graph_inputs()
 
     def _register_graph_inputs(self) -> None:
@@ -475,8 +476,7 @@ class CustomAllReduceV2:
 
 def _is_vmm_backed_allocator(device: torch.device) -> bool:
     """Check whether expandable-segments VMM backs the caching allocator."""
-    probe = torch.empty(1, dtype=torch.uint8, device=device)
-    return is_vmm_pointer(probe.data_ptr())
+    return is_vmm_backed_allocator(device)
 
 
 def can_use_custom_all_reduce_v2(
