@@ -1,16 +1,18 @@
 # stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
 #
-# STACK: qwennext-stack-62-2026-09-21
+# STACK: qwennext-stack-72-2026-09-21
 #   main+pr36787+pr37275+pr38144+pr38209+pr36644+pr39862+pr39809+pr39893+local_hicache_qsa_fixes
 #   +pr39614+pr39978+pr40002+pr39065+pr40501+pr40175+pr40362+pr39391+pr37061+pr39333+pr33778
-#   +pr38977+pr39977+pr40480+pr39880+pr40235+pr39807   (65 commits, 25 PR blocks, 14 local commits)
+#   +pr38977+pr39977+pr40480+pr39880+pr40235+pr39807+cpu-triage   (72 commits,
+#   25 PR blocks, 21 local commits -- stack.txt/doc commits excluded)
 # branch : qwennext-stack
-# tip    : b41acabb3d   (the stack.txt commit sits above it)
+# tip    : a789b826dd   (the stack.txt commit sits above it)
 # base   : upstream sgl-project/sglang main @ 7ad55e4386 ([HiCache] TMA-staged
 #          host<->device KV transfer kernel (sm_90+) (#40278), 2026-09-21)
 # updated: 2026-09-21 (full rebuild on the 09-21 main tip + 7 newly-mined PRs
-#          appended #39333 #33778 #38977 #39977 #40480 #39880 #40235, then the
-#          erroneously-dropped #39807 restored as entries 63-65)
+#          appended #39333 #33778 #38977 #39977 #40480 #39880 #40235, the
+#          erroneously-dropped #39807 restored as 63-65, then CPU-battery
+#          skip-guard triage entries 66-72)
 #
 # Target: Qwen3.8-Flash-Next (Qwen4ExpForConditionalGeneration), 4x RTX PRO 6000
 # Blackwell Max-Q, compute capability 12.0 (SM120), 96 GB each, PCIe only -- no
@@ -493,6 +495,35 @@ STACK, IN BUILD ORDER (bottom first)
       # fused_moe_triton_config 5P, cuda_graph_setup 12P. NOT booted on this
       # host (NVFP4 checkpoint boot owed).
 
+  (tag: cpu-triage) =========================================================
+  CPU BATTERY TRIAGE -- 2026-09-21 (LOCAL commits, no upstream provenance)
+  ============================================================================
+  # All seven failing battery files were 'RuntimeError: No CUDA GPUs are
+  # available' CLASS only -- no real code regressions found (the hc_mix
+  # "8 stack-induced failures" = the 18 sm120-device tests added by entry 8
+  # fff007d2f5, which crashed in _make_inputs(device='cuda') before their
+  # own sm120 row-range skips). Fixed with the repo's canonical guards:
+  # per-test @requires_cuda (test_sconv_cache.py idiom) or module
+  # pytestmark (test_fused_swiglu_epilogue.py idiom) or class
+  # @unittest.skipIf (gdn sibling idiom) -- all gate ONLY on
+  # not torch.cuda.is_available(), never mask a real failure class; on CI
+  # with GPUs every test still runs unchanged.
+         66. 8056ce4742  test(hc-mix): gate the 18 CUDA-device tests with a skip marker
+         67. 6e5073ecfc  test(qsa-indexer): skip the CUDA-only indexer tests when no device
+         68. 09189fc331  test(qsa): skip the two CUDA graph-metadata kernel tests
+         69. 17c51b6612  test(qsa-hicache): skip all QSA HiCache pool tests (module pytestmark)
+         70. c44c712aa9  test(qsa-pack): gate the 15 CUDA-device compressed-pack tests
+         71. 772f52da19  test(fast-topk): skip the AOT-kernel regression file (module pytestmark)
+         72. a789b826dd  test(gdn-fold): skip the spec-fold class (unittest.skipIf)
+      # Post-fix CPU results (per-file): hc_mix 8P/18S (was 8P/18F),
+      # qsa_indexer 25S (was 25F: 20 vllm-fallback + 5 No-CUDA, both only
+      # fire without a GPU), test_qsa 42P/4S (was 42P/2F/2S), qsa_hicache 6S
+      # (was 6E), compressed_pack 2P/15S (was 2P/15F), fast_topk 10S (was
+      # 10F), gdn spec_fold 5S (was 5F). Full 37-file battery re-run: all
+      # lines match the finalization baseline (the one old RC=1
+      # ple_prefetch_buffers 1F -> 5P/5S delta is fixup a75c368f1e, which
+      # predated this battery snapshot -- not a triage effect).
+
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
 ==============================================================================
@@ -620,17 +651,16 @@ CAVEATS
   * Run test files PER FILE, the way CI does -- one process over a directory
     lets published/reset contexts leak between files in both directions.
 
-  * Known-failing at tip a75c368f1e, NOT caused by this stack (54-file CPU
-    battery, green modulo environment):
+  * Known-failing at tip a789b826dd (entries 66-72 fixed the CUDA-masked
+    battery failures; 37-file CPU battery green modulo environment):
       - test/registered/unit/layers/quantization/: 13F pre-existing on SM120
         (mm_fp4 has no 'trtllm' backend; trtllm/cutedsl kernels fail to
         JIT-build) -- identical on upstream main.
-      - test_qsa_indexer.py: 25F with CUDA masked (20x ModuleNotFoundError
-        vllm via MRotaryEmbedding fallback + 5x No-CUDA) -- GPU-gated CI file
-        with no CPU skip guards; pre-existing signature.
-      - kernels-dir GPU-gated files fail with 'No CUDA GPUs are available':
-        test_fp8_kv_compressed_pack 15F, fast_topk 10F, hc_mix 18F, qsa 2F,
-        qsa_hicache 6E, #33778's test_gdn_replayssm_spec_fold 5F.
+      - Formerly No-CUDA-failing files now SKIP cleanly on CPU (guards
+        gate only on not torch.cuda.is_available(); they still run on CI):
+        test_qsa_indexer, test_qsa (2 graph-metadata tests), test_qsa_hicache,
+        test_qsa_prefill_compressed_pack, test_fast_topk_regression,
+        test_hc_mix_triton, test_gdn_replayssm_spec_fold.
       - test_hicache_storage_file_backend.py: 3F -- server-boot classes
         degrade on CPU; REPRODUCED IDENTICALLY at pre-append 33cef80e32 (only
         the deleted-class hunk changed; CPU-verified at pick time).
@@ -651,6 +681,9 @@ REBUILDING FROM SCRATCH
   # are the ones picked for entries 63-65; skip its two merge commits.
   for each PR block above, in entry order 1-65:
       git cherry-pick -x <its upstream shas, listed under each entry>
+  # Entries 66-72 (cpu-triage skip guards) are test-only one-liners on top;
+  # re-author them (or cherry-pick from qwennext-stack -- this branch is the
+  # reference build).
   # Local commits (17, 19, 23-31, 37, 52, 62) are this stack's own -- they are
   # on branch prev-stack-36644 under the old shas where noted, except 52/62
   # which are 09-21-authored; re-author them or cherry-pick from the current
