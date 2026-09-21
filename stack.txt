@@ -3,13 +3,14 @@
 # STACK: qwennext-stack-62-2026-09-21
 #   main+pr36787+pr37275+pr38144+pr38209+pr36644+pr39862+pr39809+pr39893+local_hicache_qsa_fixes
 #   +pr39614+pr39978+pr40002+pr39065+pr40501+pr40175+pr40362+pr39391+pr37061+pr39333+pr33778
-#   +pr38977+pr39977+pr40480+pr39880+pr40235   (62 commits, 24 PR blocks, 14 local commits)
+#   +pr38977+pr39977+pr40480+pr39880+pr40235+pr39807   (65 commits, 25 PR blocks, 14 local commits)
 # branch : qwennext-stack
-# tip    : a75c368f1e   (the stack.txt commit sits above it)
+# tip    : b41acabb3d   (the stack.txt commit sits above it)
 # base   : upstream sgl-project/sglang main @ 7ad55e4386 ([HiCache] TMA-staged
 #          host<->device KV transfer kernel (sm_90+) (#40278), 2026-09-21)
-# updated: 2026-09-21 (full rebuild on the 09-21 main tip + 7 newly-mined PRs appended:
-#          #39333 #33778 #38977 #39977 #40480 #39880 #40235)
+# updated: 2026-09-21 (full rebuild on the 09-21 main tip + 7 newly-mined PRs
+#          appended #39333 #33778 #38977 #39977 #40480 #39880 #40235, then the
+#          erroneously-dropped #39807 restored as entries 63-65)
 #
 # Target: Qwen3.8-Flash-Next (Qwen4ExpForConditionalGeneration), 4x RTX PRO 6000
 # Blackwell Max-Q, compute capability 12.0 (SM120), 96 GB each, PCIe only -- no
@@ -18,7 +19,7 @@
 #
 # PROVENANCE: every picked commit is `git cherry-pick -x`, so it carries
 # '(cherry picked from commit <full-sha>)' -- no Upstream-PR trailers are used.
-# All 24 PRs verified OPEN (heads not ancestors of base) as of 2026-09-21.
+# All 25 PRs verified OPEN (heads not ancestors of base) as of 2026-09-21.
 # PR heads MOVE on this repo -- re-fetch before quoting shas.
 
 ==============================================================================
@@ -454,6 +455,44 @@ STACK, IN BUILD ORDER (bottom first)
       # ids -> torch.zeros(device=<Tensor>) TypeError, 10F. Same arity-lesson
       # as entry 37, one caller class over. Restores 5P/5S.
 
+  PR #39807  [open]  @JAVerma
+      https://github.com/sgl-project/sglang/pull/39807
+      Support consumer Blackwell (SM120/SM121) for NVFP4 serving
+         63. 8a7c77411b  [SM120] Select the CUTLASS NVFP4 MoE runner on consumer Blackwell
+             <- 72969d00c522f3d60d22defe939f49ba0b5e3a2b
+         64. 57e7fe65c3  [SM120] Reject trtllm_mha with an FP8 KV cache at construction
+             <- 029e2f4567dc01f420d46729d11b886a9cbbe4a6
+         65. b41acabb3d  [JIT] Build against a usable CUDA toolkit on glibc >= 2.41 and pip-only installs
+             <- 6e4eef4680e876f9c73a7d11ddbac44d4eaa0bc2
+      # RESTORED 2026-09-21: carried in the 09-17 stack (old entries 21-23),
+      # erroneously dropped from the rebuild's 62-commit list (PR still open,
+      # commits not ancestors of base -- but that made it excluded-by-mistake,
+      # not by review). Appended at the end of the stack; the old local shas
+      # (8b6c3a04d3/542e4f53b8/72f95c922d on branch prev-stack-36644) were
+      # against the older base, so the live PR-branch commits were re-picked.
+      # 63: auto-resolves NVFP4 FusedMoE to FLASHINFER_CUTLASS on SM120/121
+      # (TRTLLM NVFP4 kernels are SM100-only) and makes
+      # enable_flashinfer_cutlass_moe read the RESOLVED backend -- the general
+      # fix, not sm120-specific. Orthogonal to entry 29 (that resolver is the
+      # FP8 blockwise/deep_gemm path in fp8.py; this one is modelopt NVFP4 in
+      # modelopt_quant.py -- merged cleanly beside entry 9's small-row hooks).
+      # Makes entry 9's small-row NVFP4 kernel actually reachable.
+      # 64: fails at trtllm_mha construction when asked explicitly with an
+      # FP8 (e4m3) KV cache on SM120 (FMHAv2 has no e4m3 prefill kernel there);
+      # names the flashinfer / --kv-cache-dtype bfloat16 remedies. Only fires
+      # when the backend was explicitly requested (get_default_attn_backend
+      # gates trtllm_mha on is_sm100 anyway).
+      # 65: glibc>=2.41 (Ubuntu 26.04) C23 rsqrt/noexcept vs pre-13.2 CUDA
+      # toolkit header clash + pip CUDA wheel lib/-vs-lib64 and -lcudart dev
+      # symlink handling. INERT HERE (glibc 2.39) but keeps JIT builds working
+      # on newer distros; explicit CUDA_HOME still wins.
+      # CPU: 63's test_nvfp4_moe_backend_selection 3P (resolution-only tests,
+      # run anywhere); regressions all baseline-identical: nvfp4_moe_sm120
+      # 3P/15S, sparse_decode 2P/19S, sparse_index_bounds 1P/7S, mqa_triton
+      # 5P/4S, server_args 279P, deepgemm_auto_resolve 9P (entry 29 intact),
+      # fused_moe_triton_config 5P, cuda_graph_setup 12P. NOT booted on this
+      # host (NVFP4 checkpoint boot owed).
+
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
 ==============================================================================
@@ -467,15 +506,9 @@ EVALUATED AND DELIBERATELY NOT INCLUDED
       the pre-#38209 loop (semantic conflict); 1/4-3/4 alone are dead code.
       Local branches pr39721..pr39724 kept.
 
-  PR #39807  @JAVerma
-      Support consumer Blackwell (SM120/SM121) for NVFP4 serving
-      Carried in the 09-17 stack (old entries 21-23: CUTLASS NVFP4 MoE runner
-      select / reject trtllm_mha with FP8 KV / glibc>=2.41 JIT build). DROPPED
-      in the 09-21 rebuild: the PR is still open and its commits are not
-      ancestors of the new base, so this rebuild does not include them --
-      re-pick from branch pr39807 if NVFP4 auto-runner selection is needed
-      again (entry 29 already covers the deep_gemm a2a=none resolution half;
-      the JIT-toolkit commit was inert here anyway, glibc 2.39).
+  PR #39807 -- NO LONGER HERE: restored 2026-09-21 as entries 63-65 (see
+      STACK section). Its earlier "dropped" listing in this file was a
+      rebuild mistake, now corrected.
 
   PR #40582  (superseded)
       Mining verdict 2026-09-21: subset of #40501 -- the latter is picked
@@ -612,9 +645,11 @@ REBUILDING FROM SCRATCH
   # All PR heads are already fetched as local branches pr36787 pr37275 pr38144
   # pr38209 pr36644 pr39862 pr39809 pr39893 pr39614 pr39978 pr40002 pr39065
   # pr40501 pr40175 pr40362 pr39391 pr37061 pr39333 pr33778 pr38977 pr39977
-  # pr40480 pr39880 pr40235 (branch prev-stack-36644 holds the old stack's
-  # local shas). Heads move -- re-fetch origin pull/N/head before trusting.
-  for each PR block above, in entry order 1-62:
+  # pr40480 pr39880 pr40235 pr39807 (branch prev-stack-36644 holds the old
+  # stack's local shas). Heads move -- re-fetch origin pull/N/head before
+  # trusting. pr39807's branch head commits (72969d00c5/029e2f4567/6e4eef4680)
+  # are the ones picked for entries 63-65; skip its two merge commits.
+  for each PR block above, in entry order 1-65:
       git cherry-pick -x <its upstream shas, listed under each entry>
   # Local commits (17, 19, 23-31, 37, 52, 62) are this stack's own -- they are
   # on branch prev-stack-36644 under the old shas where noted, except 52/62
