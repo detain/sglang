@@ -1,0 +1,635 @@
+# stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
+#
+# STACK: qwennext-stack-62-2026-09-21
+#   main+pr36787+pr37275+pr38144+pr38209+pr36644+pr39862+pr39809+pr39893+local_hicache_qsa_fixes
+#   +pr39614+pr39978+pr40002+pr39065+pr40501+pr40175+pr40362+pr39391+pr37061+pr39333+pr33778
+#   +pr38977+pr39977+pr40480+pr39880+pr40235   (62 commits, 24 PR blocks, 14 local commits)
+# branch : qwennext-stack
+# tip    : a75c368f1e   (the stack.txt commit sits above it)
+# base   : upstream sgl-project/sglang main @ 7ad55e4386 ([HiCache] TMA-staged
+#          host<->device KV transfer kernel (sm_90+) (#40278), 2026-09-21)
+# updated: 2026-09-21 (full rebuild on the 09-21 main tip + 7 newly-mined PRs appended:
+#          #39333 #33778 #38977 #39977 #40480 #39880 #40235)
+#
+# Target: Qwen3.8-Flash-Next (Qwen4ExpForConditionalGeneration), 4x RTX PRO 6000
+# Blackwell Max-Q, compute capability 12.0 (SM120), 96 GB each, PCIe only -- no
+# NVLink, no P2P. CUDA 12.9 (torch 2.13.0+cu130 in the verification venv), glibc 2.39.
+# Base model support is upstream (#37500). Everything below is on top of base.
+#
+# PROVENANCE: every picked commit is `git cherry-pick -x`, so it carries
+# '(cherry picked from commit <full-sha>)' -- no Upstream-PR trailers are used.
+# All 24 PRs verified OPEN (heads not ancestors of base) as of 2026-09-21.
+# PR heads MOVE on this repo -- re-fetch before quoting shas.
+
+==============================================================================
+STACK, IN BUILD ORDER (bottom first)
+==============================================================================
+
+  PR #36787  [open]  @Dev-Jahn
+      https://github.com/sgl-project/sglang/pull/36787
+      [Qwen 3.8 Flash Next] Add sm120 (RTX PRO 6000 Blackwell) support
+          1. 0aff92a402  [QSA] Add direct-paged Triton sparse decode on sm120
+             <- b1807a64af3dd5f21fc49c021b43a846e0d1a69e
+          2. 3266c14243  [sm120] Fix serving fallbacks and graph capture
+             <- ad8fe71eff1f0a7282817aa581547d3440b88c41
+          3. 24bf6d987c  [MoE] Add tuned fused MoE configs for RTX PRO 6000 Server Edition
+             <- 1e94486e68b3f837c0920ae0f9f61c67ec910eff
+          4. a56b3f2d1f  [QSA] Add split-K sparse decode for small batches
+             <- fa5dc43fb2c8629d353b7175b58419c859debcf3
+          5. afc7164e4d  [QSA] Add Triton MQA scoring on sm120
+             <- 748afc6e27bd1a81c0b8e3c74123380f0ac98e8a
+          6. 0ee7403e0b  [QSA] Fuse split-K merge into sparse decode
+             <- a0ffa98ab5e5fa1f6cd2af29922b863c91e55ad5
+          7. 2a530fd5d4  [PLE] Interleave the pinned table across NUMA nodes
+             <- d1ae39afcc2626c566c099da43c48c8917ed48aa
+          8. fff007d2f5  [HC] Tune sm120 Triton geometry by row bucket
+             <- ae6b5ffaada28748c51cbd9fde68b0be8d6729c1
+          9. e787ec6ab3  [MoE] Add fused small-row NVFP4 kernel for sm120
+             <- b0bad4b1eb4c9712afdb9bce61001ba091914754
+         10. f9ddea14c0  [QSA] Bound sparse indices and use 64-bit KV addresses
+             <- 56eb712b0bbfabd7bbf39322f29b2faa97a06376
+         11. 0eb412eba9  [PLE] Select the prefetch buffer from capture state
+             <- 7d0c0811544e018d066a84e52f8500bb5c16c2f3
+      # Core SM120 enablement: QSA Triton sparse decode + MQA scoring, fused MoE
+      # configs and small-row NVFP4 kernel, PLE table placement/prefetch.
+      # HEAD REWRITTEN vs the 09-17 stack: the old 12-commit version carried
+      # '[sm120] Keep fp32 GDN state for FlashInfer' (8c5c86c18a); the current
+      # head has 11 commits and that one is gone -- it is superseded upstream by
+      # 0574d2b8a5 '[NVIDIA] [GDN] Enable FlashInfer MTP verify on SM100+'
+      # (#23273), which is already in base. Likewise the old LOCAL exec-bag
+      # graph-config prewarm fix is now inside commit 11 (get_exec().graph).
+
+  PR #37275  [open]  @Dev-Jahn
+      https://github.com/sgl-project/sglang/pull/37275
+      [QSA] Tune sm120 sparse prefill geometry
+         12. d6624db4a2  [QSA] Tune sm120 sparse prefill geometry
+             <- 8ee2a2633b5e6b331d52ececec1d35a52449bd38
+      # Stacked on #36787.
+
+  PR #38144  [open]  @Li Songqiao (handle @Leslie360 per 09-16 review)
+      https://github.com/sgl-project/sglang/pull/38144
+      fix(jit-kernel): exact fallback for fast_topk threshold-bin overflow (#36807)
+         13. 47b0b4d92c  fix(jit-kernel): exact fallback for fast_topk threshold-bin overflow
+             <- c99be3ddd4d35d884bc912457cebd14b37bc411b
+         14. 0b28f9664f  style(jit-kernel): satisfy clang-format in fast_topk.cuh
+             <- e62d8d04c8a6f7565b2d3aa541cc662af19360cc
+      # Correctness fix in the top-k JIT kernel (silent wrong top-k when the
+      # threshold bin overflows SMEM_INPUT_SIZE). 14 is the PR's clang-format
+      # follow-up. See also the AOT sibling port (entry 28).
+
+  PR #38209  [open]  @sghhhh
+      https://github.com/sgl-project/sglang/pull/38209
+      [Qwen3.8-Flash-Next] Streamline QSA prefill selection
+         15. f8e74b5759  perf(qsa): streamline prefill selection
+             <- 7a4343c5ed21eeedb48bad9e54032a3d4e674e62
+      # Replaces the per-sequence Python loop with precomputed cu_seqlens + a
+      # fused packer. This is what the CP series (#39721..) conflicts with.
+
+  PR #36644  [open]  @LingZ315
+      https://github.com/sgl-project/sglang/pull/36644
+      [Qwen3.8] Fix FP8 KV cache support in QSA
+         16. 475b2125a1  fix(qsa): support FP8 KV cache
+             <- d2c8b42cb1091db9de760663fbc56aef05b22a57
+      # The branch this stack lineage is named after. Complements entry 31
+      # (out-of-place FP8 store) and entry 53 (#39333 gather-join).
+
+  LOCAL  [local]  Joe Huss   (tag: local_prewarm_mm_isolation)
+      Local integration fixes (not submitted upstream)
+         17. a8508637bb  test: fix prewarm config publishing and mm transport env isolation
+      # Same content as 09-17 stack entry 20 (b21b748d4c). The two other local
+      # fixes from that block (exec-bag graph config; FlashInfer alignment
+      # fixture) are no longer needed: superseded by the rebased #36787 head
+      # and upstream #23273 respectively.
+
+  PR #39862  [open]  @JarJarBeatyourattitude (commit author Jonathan Larson)
+      https://github.com/sgl-project/sglang/pull/39862
+      [Fix] HiCache: carry registered Mamba slot side states (Qwen4-Exp PLE) through the host tier
+         18. 61a9a4e522  [Fix] HiCache: carry registered Mamba slot side states through the host tier
+             <- 891293b5c6cd68db25cd5b198eba5bf61b540fb4
+      # Fixes the PLE half of issue #39830; the QSA half is #39893 (entry 22).
+      # Needs follow-up fix 19 (see CAVEATS).
+
+  LOCAL  [local]  Joe Huss   (tag: mambapoolhost_newinit_fix)
+      Regression fix for #39862
+         19. a00d069439  fix(hicache): default MambaPoolHost slot side-state attrs at class level
+      # Upstream unit tests build MambaPoolHost via __new__ (never __init__), so
+      # attrs #39862 adds in __init__ were missing and every reader raised
+      # AttributeError. Empty class-level defaults restore the no-op path.
+
+  PR #39809  [open]  @avifenesh
+      https://github.com/sgl-project/sglang/pull/39809
+      [Function Call] Qwen3Coder: recover object parameters with an unescaped quote inside a string
+         20. f93fa2e21b  [Function Call] Qwen3Coder: recover object parameters with an unescaped quote inside a string
+             <- ce70cbe2b51d7b7fbcba91a1236f117d9b734216
+         21. 1fb8d49f46  [Function Call] Qwen3Coder: recover object parameters the model wrote pre-escaped
+             <- 0a6f6416648aa571385c5e7f0beb956a71e5f8e4
+      # 21 is a second commit not described in the PR body.
+
+  PR #39893  [open]  @alphabetc1
+      https://github.com/sgl-project/sglang/pull/39893
+      fix: preserve QSA indexer state through HiCache
+         22. eee5fa19ac  fix: preserve QSA indexer state through HiCache
+             <- c0a51b7964af78a3cf9d335d5bf4128d5aa4f7b2
+      # The other half of #39830: QSA compressed index keys live outside
+      # full_kv_pool, so a host-tier restore served valid KV read through stale
+      # block selections. Author's 0/15 -> 15/15 host-restore numbers are B200,
+      # with #39862 applied to both builds. Needs test-isolation fix 23.
+
+  LOCAL  [local]  Joe Huss   (tag: qsa_test_context_isolation)
+      Test isolation fix for #39893
+         23. 54d3efcfff  test(qsa): publish the indexer test's context per test, not at import
+      # #39893's test file resets the context in teardown, which dropped the
+      # one test_qsa_indexer.py published at import; CI runs per-file and never
+      # saw it. The indexer test now republishes per test.
+
+  LOCAL  [local]  stack agent   (tag: qsa_hicache_residual_fixes)
+      Residuals of the #39830 defect class neither #39862 nor #39893 covers
+         24. f1da80bc26  fix(hicache): degrade unreadable storage pages to misses, keep IO threads alive
+         25. 295ac3670b  fix(qsa): carry compressed-K rows through the retraction backup
+      # 24: a storage page that exists but does not deserialize raised through
+      # the file backend into daemon threads that catch only queue.Empty --
+      # silently killing L3 and leaking host allocations. Now per-page misses +
+      # ack-preserving thread guards (7 new cases in test_hicache_file_lru_unit).
+      # 25: retraction offload copied only (kv, mamba) for QSATokenToKVPool --
+      # a resumed request read restored KV through stale compressed-K rows.
+      # QSA legs now ride the backup payload (DSA dict pattern); CPU test added.
+      # The indexer transfer shares the anchor-KV stream before the per-layer
+      # done event, so #39893's _wait_for_layer covers the L2 fence (docstring
+      # in pool_host/qsa.py). GPU e2e on this box still open -- see CAVEATS.
+
+  LOCAL  [local]  stack agent   (tag: qwen4_gap_findings)
+      Findings documentation (no code)
+         26. 8790501306  docs: add sglang_missing.md, sm120/Qwen3.8-Flash-Next gap findings
+      # PR mining + HF cards + config gap analysis + E0-E6 experiment matrix.
+      # Current run script carries E1+E2+E4 (/root/run_sglang_qwenflashnext7.sh
+      # supersedes qwenflashnext6.sh referenced inside the doc).
+
+  LOCAL  [local]  stack agent   (tag: moe_json_maxq)
+      Tuned fused-MoE config retarget
+         27. 79200bf344  perf(sm120): retarget tuned fp8 fused-MoE configs to RTX PRO 6000 Max-Q Workstation
+      # #36787 keyed the tuned fp8_w8a8 block-[128,128] JSONs to the exact
+      # '..._Server_Edition' device name; this box reports
+      # '..._Max-Q_Workstation_Edition' so the lookup missed. Byte-copied the
+      # E=64/128/256 N=640 triple under the Max-Q name. Near-neighbor perf,
+      # not retuned. Boot must log the Max-Q config path.
+
+  LOCAL  [local]  stack agent   (tag: aot_topk_port)
+      #38144 class fix for the AOT sibling
+         28. 5c275d38f5  fix(aot): exact fallback for fast_topk threshold-bin overflow
+      # kernels/aot/csrc/elementwise/topk.cu shared the pre-#38144 staging
+      # overflow; same detection + exact-rescan fallback, all four wheel
+      # entries fixed via the one kernel body. Compile-verified sm_100/120.
+      # ACTIVATES ONLY ON THE NEXT sgl-kernel WHEEL REBUILD -- the installed
+      # .so predates it. Latent pattern remains in kpool_topk_transform.cuh,
+      # deepseek_v4/topk_v1.cuh, deepseek_v4_topk.cu (follow-up).
+
+  LOCAL  [local]  stack agent   (tag: sm120_agent_fixes)
+      Three reviewed fixes from the gap analysis
+         29. 314b830a88  feat(sm120): let moe-runner auto resolve the SM120 deep_gemm path with a2a=none
+         30. 89f7df1f02  feat(hicache): fence restored mamba checkpoints by token position
+         31. 1d0176e989  perf(qsa): out-of-place FP8 KV store, drop the per-write clone
+      # 29: deep_gemm_sm120.py exists exactly for the StandardDispatcher layout
+      # we must use on PCIe; auto now resolves sm120+a2a=none+blockwise-[128,128]
+      # to it (SM121 excluded). WARNING: the E2 boot gate FAILED (Xid-43, see
+      # CAVEATS) -- this resolver is why triton must be named explicitly now.
+      # 30: #39830's standing ask -- per-slot ckpt_pos on the mamba host pool,
+      # asserted at prepare_load_back against restored KV depth; mismatch ->
+      # rate-limited error + poison + degrade to miss. Known gaps: the fence
+      # does not cover an in-flight READ window on poisoned slots, it is a
+      # no-op on the Rust-tree core path, and L3 page bytes carry no position
+      # (L2 fence only). CPU tests: fence 15P.
+      # 31: #36644 cloned K/V per write to dodge the pool's in-place div_ on
+      # tensors the first-chunk prefill re-reads; store is now out-of-place
+      # into persistent scratch (graph-frozen retired tuples held). Unity
+      # scales still early-return clone-free.
+
+  PR #39614  [open]  @zhendonghua
+      https://github.com/sgl-project/sglang/pull/39614
+      [Qwen4-Exp] Optional fp8 (e4m3) storage for the compressed QSA indexer cache
+         32. 7c6acc9256  [Qwen4-Exp] Optional fp8 (e4m3) storage for the compressed QSA indexer cache
+             <- 2ae694faab96e11513cdf05b8ad5dac321028576
+         33. d12d5956f0  Drop the cookbook section; docs go separately
+             <- b692ccb31b85b5b9fffeb1e8e5adcae7078b8adb
+         34. c4a4aa44e7  Trim comments to the repo's style; drop an unused constant
+             <- 392cd379cb09a90e90cc7cddf553739663312277
+         35. 073c378e95  Review follow-ups: drop the dtype unit test, gate fp8 on SM90/SM100, trim comments
+             <- 03d7f444b81f13150d6c9e0822a29a53888886ecf
+         36. 04a333a4c6  fix lint
+             <- 25fabcf060256a6d5d3860fb16b8824c9a238266
+      # --qsa-indexer-dtype {auto,bfloat16,fp8_e4m3}: indexer keys + index Q as
+      # unscaled e4m3, TileLang scoring GEMMs on the fp8 path (vLLM
+      # indexer_kv_dtype=fp8 parity). PR head moved (3 -> 5 commits) since 09-17.
+      # ON THIS BOX THE FLAG IS A NO-OP: fp8 gates SM90/SM100 only, and sm120
+      # scores via the Triton MQA path (#36787) which the PR does not touch.
+      # Groundwork: pool dtype plumbing, cell accounting, prep-kernel TOut.
+      # BUT the PR changed _jit_qsa_indexer_module's ARITY and broke the sm120
+      # prewarm caller -- fixed locally at entry 37, re-fixed at entry 52.
+
+  LOCAL  [local]  stack agent   (tag: qsa_prewarm_dtype_fix)
+      Boot fix for the SM120 QSA indexer prewarm
+         37. 41c1ffae52  fix(qwen4-exp): pass out_dtype to the SM120 QSA indexer prewarm
+      # #39614 added out_dtype as the 2nd parameter of _jit_qsa_indexer_module
+      # but missed the third caller (the SM120 graph prewarm from entry 2) --
+      # TypeError at startup for EVERY flag value. Fix reads the dtype the
+      # indexer really stores from token_to_kv_pool.qsa_compressed_dtype.
+      # The unit test stubbed with `lambda *a` (absorbs any arity) -- CI stayed
+      # green through the break; the stub now mirrors the real signature.
+
+  PR #39978  [open]  @SouthWest7
+      https://github.com/sgl-project/sglang/pull/39978
+      [Perf] Optimize SM120 FP8 blockwise decode GEMM
+         38. 28adb50d83  Optimize SM120 FP8 blockwise decode GEMM
+             <- 19789d4b2c8c15a9619a1820c708e9a663afa455
+      # JIT sm120 CUTLASS fp8-blockwise DECODE GEMM: EVICT_FIRST streaming TMA
+      # weight loads + warp-local fp8 MMA with fp32 split-K for narrow small-M,
+      # SM-count tile selection, fallbacks retained. Author-validated on RTX
+      # PRO 6000 class parts; NOT A/B'd on this Max-Q host (GPU A/B owed).
+      # Takes effect through the runtime JIT build (no wheel rebuild needed).
+
+  PR #40002  [open]  @debanshd
+      https://github.com/sgl-project/sglang/pull/40002
+      fix(quantization): handle unquantized MTP/NEXTN draft layers in compressed-tensors
+         39. bf2f78cd79  fix(quantization): handle unquantized MTP/NEXTN draft layers in compressed-tensors
+             <- 9ec33db861a5952e4e72258bd3d376e102b97767
+         40. 1d7a0f2f43  fix: address review feedback and CI checks for #40002
+             <- 6e6fe6d2ca0ca4f07521c7e675e23d1b188a8e6d
+      # Resolves #38574. CT checkpoints target generic Linear/FusedMoE classes;
+      # the NEXTN/MTP draft head then matched a scheme it cannot satisfy ->
+      # crash. Adds is_mtp_layer_name()/find_matched_target_by_name(); untargeted
+      # MTP layers fall back to Unquantized{Linear,FusedMoE}Method.
+      # Covers `mtp.`-prefixed drafts (ours: qwen4_exp_mtp, qwen3_5_mtp); inert
+      # for our modelopt NVFP4 config, carried for CT NEXTN checkpoints. `model.`
+      # -prefixed drafts and the _is_mxfp4_moe/linear_fp8_config fast paths are
+      # known gaps (upstream follow-up). CPU: ct_mtp 5P + siblings green.
+
+  PR #39065  [open]  @number-eleven11
+      https://github.com/sgl-project/sglang/pull/39065
+      Fix SM120 DeepGEMM grouped FP8 weight requantization
+         41. f8077b033c  Fix SM120 DeepGEMM grouped FP8 weight requantization
+             <- 3db8d4481c202f6d483605c3afca78f36c206122
+      # Added 2026-09-21 (new stack -- the 09-17 stack did not carry it; the
+      # open PR's head commit picked here). Fixes the grouped requant path
+      # SM120 uses for fp8 MoE weights under deep_gemm. Complements entries
+      # 29/57 (same deep_gemm_wrapper surface; #39977 depends on this gate).
+
+  PR #40501  [open]  @zhangxiaolei (+ @Yangmin Li on entry 44)
+      https://github.com/sgl-project/sglang/pull/40501
+      [Qwen4-Exp] Pipeline-parallel serving, PP PD prefill with MTP, PP follow-ups
+         42. 92da01dc03  feat(qwen4): support pipeline parallel serving
+             <- 9f3718bb137e944a22d329ac65567f2f6d3a89fa, 2183d95f7d735439d19065411df1ac623ce4b576
+         43. 59a44c7d24  feat(qwen4): support PP PD prefill with MTP
+             <- bc0f1359ddd52056bd1436e589c82571a8f5c185, c1de0fd220cc116d962082aa32e2e6439e106aca
+         44. 1498ae0a5d  [Qwen4-Exp] PP follow-ups: hyper-connection relay contract, multimodal embedding relay, gate allowlist
+             <- 30e97509a39542fd3ef67a3bd01efc4a3f7fdd7f
+      # Added 2026-09-21. Supersedes #40582 (mining verdict: 40582 is a subset).
+      # PP + PD-prefill-with-MTP for Qwen4-Exp; entries carry two cherry-picks
+      # each (feature + review squash in the PR). PP code touches
+      # models/qwen4_exp.py -- later picks (#40235 entry 61) resolved against
+      # it (stage-local has_ple kept: any(layers[start:end].ple)).
+      # NOT BOOTED on this host; PCIe interconnect means PP comms are the
+      # bottleneck -- needs --pp sizing retune before use. PP+NEXTN aggregate
+      # accuracy is gated on watchlist #39643/#40001 (GSM8K .980 -> .955).
+
+  PR #40175  [open]  @Emre Albayrak
+      https://github.com/sgl-project/sglang/pull/40175
+      [diffusion] attention: add fp8_fa_sm120 FP8 backend for SM120 GPUs
+         45. fd3bbb87f7  [diffusion] attention: add fp8_fa_sm120 FP8 backend for SM120 GPUs
+             <- 77e3371f5fd6c2b56a5c35441df05c3ce682c47e
+         46. c52c82b61b  [diffusion] fp8_fa_sm120: allocate buffers per call, cache compiled kernels only
+             <- eae2853c44f6953687e4725415d5b6443366d63a
+      # Added 2026-09-21. Diffusion-side SM120 FP8 flash-attention backend --
+      # unrelated to the LLM serving path, inert unless the diffusion server is
+      # used. Requires the [diffusion] extra (st_attn/vsa/modelopt); our
+      # editable install pulls it so `serve --help` renders the Diffusion
+      # section. test_fp8_fa_sm120.py is GPU-gated (collects 0 tests on CPU).
+
+  PR #40362  [open]  @Leslie360
+      https://github.com/sgl-project/sglang/pull/40362
+      fix(gdn): keep gating beta in fp32 on the extend/prefill path
+         47. 02cae71f5f  fix(gdn): keep gating beta in fp32 on the extend/prefill path
+             <- 10622d979325926771edc6dcc24ce1d22bd03443
+         48. 6279417ae2  test(gdn): move beta fp32 guard test into registered unit taxonomy
+             <- 78d6b1ba9f9699a632005beb84e7c83c9051eb66
+         49. 4b0583c04c  style(gdn): fix isort/ruff-format in the beta fp32 guard test
+             <- 1f313ba3263f2043c1adf4ccdd36483010d43551
+      # Prefill-side complement of #38977 (entries 55-56, decode side). Fixes
+      # bf16 round-trip of sigmoid(beta) in fused_gdn_gating.py.
+      # test_gdn_gating_beta_fp32.py: 3P on CPU.
+
+  PR #39391  [open]  @Li Songqiao
+      https://github.com/sgl-project/sglang/pull/39391
+      [Spec] Tolerate draft configs that fail to parse during algorithm resolution
+         50. d89ca1b516  [Spec] Tolerate draft configs that fail to parse during algorithm resolution
+             <- efd129a14c76a565d941a09e1c5811db3dd05559
+      # Added 2026-09-21. Draft-config parse failures fall back to the default
+      # spec algorithm instead of killing the server -- relevant for our
+      # NEXTN/MTP + heterogeneous checkpoint combos.
+
+  PR #37061  [open]  @Leslie  (same commit also on stacked PR #37062)
+      https://github.com/sgl-project/sglang/pull/37061
+      fix(arg_groups): reject NGRAM with --enable-linear-replayssm-spec
+         51. cc1da9edbe  fix(arg_groups): reject NGRAM with --enable-linear-replayssm-spec
+             <- de6f8ebe203b34773ef7af2ab8e6bff4ae3d3559
+      # Config-combination guard: ngram + linear-replayssm-spec is unsupported
+      # and fails late/expensive; now rejected at arg validation. The commit
+      # lives on both the #37061 and #37062 heads (stacked pair).
+
+  LOCAL  [local]  stack agent   (tag: ple_prewarm_test_mock)
+      Test fix for stack-induced prewarm drift
+         52. 33cef80e32  test(qwen4-exp): give the SM120 prewarm mock a token_to_kv_pool for the out_dtype lookup
+      # Entry 37's out_dtype lookup made the prewarm read
+      # mock.token_to_kv_pool.qsa_compressed_dtype; the test mock lacked the
+      # attribute -> 10F in test_qwen4_ple_prefetch_buffers.py on CPU. Restores
+      # 5P/5S. (The earlier 11P/5S figure conflated a combined offload+prefetch
+      # run; true baseline for this file alone is 5P/5S both pre- and post-
+      # append -- 5 of its 10 tests are GPU-gated CUDA-path skips.)
+
+  PR #39333  [open]  @William Pieh
+      https://github.com/sgl-project/sglang/pull/39333
+      [QSA] Join gather indices instead of gathered K/V in chunk-prefill extend
+         53. 8e831dc8a6  [QSA] Join gather indices instead of gathered K/V in chunk-prefill extend
+             <- b6acceb7cddcba1b97c268705b0e55880f3984e9
+      # Added 2026-09-21. Concatenates the small INDEX tensors and does one
+      # index_select instead of gathering then torch.cat-ing K/V -- roughly 2x
+      # less transient prefill memory on long contexts. Auto-merged cleanly
+      # beside the stack's FP8 scale_kwargs path in qwen_sparse_attn_backend.py
+      # (single join replaces the k_parts/v_parts cat; descale kwargs kept).
+      # Ships no tests; regression: test_qsa_fp8_store_kv + 
+      # test_qsa_sparse_prefill_config = 19P + 40 subtests (baseline).
+
+  PR #33778  [open]  @Vedant V Jhaveri
+      https://github.com/sgl-project/sglang/pull/33778
+      Optimize GDN target verify QKV handling
+         54. 0dc085431a  Optimize GDN target verify QKV handling
+             <- d6b9744eec1af9e2a9cc774eff83c79386f1d0cf
+      # Added 2026-09-21 (old mining pass had it under a stale sha -- heads
+      # move). Zero-copy strided QKV views for the GDN Triton/ReplaySSM
+      # target-verify path: drops the per-layer fused_qkv_split copy on the MTP
+      # hot path. Clean pick (linear/ dirs untouched by the stack). CPU:
+      # test_gdn_prefill_backend_policy 17P; the shipped
+      # test_gdn_replayssm_spec_fold.py needs CUDA (5 env failures on CPU,
+      # same accepted signature as other GPU-gated kernel files). UNBOOTED.
+
+  PR #38977  [open]  @GowayLee
+      https://github.com/sgl-project/sglang/pull/38977
+      [FLA] Keep sigmoid(beta) in fp32 in GDN packed decode and KDA replay decode kernels
+         55. 101857ad21  [FLA] Keep sigmoid(beta) in fp32 in GDN packed decode and KDA replay decode kernels
+             <- 67a25468c7762686f4eb40e5f90f58a5c182d901
+         56. 2c58b71128  Move the beta fp32 regression test to the kernel-kind taxonomy path
+             <- 301780e843493a9cabcab32a5de727c7715143c2
+      # Decode-side complement of #40362 (47-49): removes the bf16 round-trip
+      # on tl.sigmoid(beta) in fused_recurrent{,_linear_replayssm}.py -- one
+      # hunk per file, disjoint from #40362's fused_gdn_gating.py. 56 moved a
+      # new test under test/registered/kernel/... (singular); resolved into our
+      # kernels/ (plural) taxonomy dir with the 2-line CI-stage deltas kept.
+      # CPU: test_decode_keeps_beta_in_fp32 = 2S (self-guarded); 47's test
+      # still 3P.
+
+  PR #39977  [open]  @shtjww
+      https://github.com/sgl-project/sglang/pull/39977
+      [Fix] Preserve ownership in deep_gemm_wrapper.transform_sf_into_required_layout
+         57. 6ea0315fd8  [Fix] Preserve ownership in deep_gemm_wrapper.transform_sf_into_required_layout
+             <- 65d1877e74e272b5b5519148bf67b403af9e3977
+         58. 9a40c2e34e  style: apply ruff-format (import order, line wrapping)
+             <- 0035c291f64d4c12a113d8912e1e3b8e0aa9319e
+      # Added 2026-09-21. FP8-scale use-after-free: call sites must go through
+      # sglang.srt.layers.deep_gemm_wrapper.transform_sf_into_required_layout
+      # (ownership-preserving) instead of importing deep_gemm's directly.
+      # NaN scales were reachable with our blockwise [128,128] recipe.
+      # deepseek_v4.py conflict resolved as the union: stack's
+      # `if _FP8_WO_A_UE8M0:` gate (from #39065) + the wrapper import (the
+      # wrapper symbol exists exactly when the gate can be true -- both derive
+      # from ENABLE_JIT_DEEPGEMM). Complements entry 41. CPU: wrapper-ownership
+      # test 2S (guarded).
+
+  PR #40480  [open]  @sha7doww
+      https://github.com/sgl-project/sglang/pull/40480
+      Make PLE logical clearing safe while KV memory is offloaded
+         59. 7737b661d8  Make PLE logical clearing safe while KV memory is offloaded
+             <- 91685bcf996e853640dfb50294486696611abd95
+      # Added 2026-09-21. We run --ple-offload-embedding + HiCache; a logical
+      # clear of PLE state during KV offload could free/reuse rows the offload
+      # still referenced. ple_state_pool.py was untouched by the stack -> clean
+      # pick. CPU: shipped test_ple_state_pool_offload 6P; prefetch file stays
+      # 5P/5S (verified identical at 33cef80e32).
+
+  PR #39880  [open]  git author 'Zhiqiang Xie'
+      https://github.com/sgl-project/sglang/pull/39880
+      [HiCache] Add the fast_file local storage backend
+      mining report)
+         60. acdb60f0ce  [HiCache] Add the fast_file local storage backend
+             <- a71c281449420dab12cbd1a61128e53337d8d9a1
+      # Added 2026-09-21. New L3 backend: direct host-buffer I/O (no per-page
+      # staging copies), parallel reads, background eviction
+      # (storage/fast_file/: fast_file_store 825L + lru_file_evictor 588L).
+      # Registry/args auto-merged; conflict in test_hicache_storage_file_backend
+      # .py resolved by keeping ONLY the PR's new DirectIO class (upstream had
+      # deleted the legacy server-boot Accuracy classes the PR base still
+      # carried). CPU: fast_file unit 53P+13 subtests; regressions lru 41P,
+      # ckpt fence 15P. Select via hicache-storage-backend=fast_file --
+      # default file backend unchanged.
+
+  PR #40235  [open]  @Dev-Jahn
+      https://github.com/sgl-project/sglang/pull/40235
+      [Qwen4-Exp] Add host staging for file-backed PLE
+         61. 628445d6ef  [Qwen4-Exp] Add host staging for file-backed PLE
+             <- 2dba4a0be2300ce05700b778e43f51da0f8e76f9
+      # Added 2026-09-21 -- the RISKIEST pick: 9 hand-merged conflicts in
+      # models/qwen4_exp.py (plus 1 in test_qwen4_ple_offload.py), resolved as
+      # the union of the stack's PP stage-localization (42-44) + prewarm
+      # out_dtype work (37/52) + the PR's file-backed staging (PleHostStaging,
+      # PageCacheRowSource, host page tables gate, ready-event/ngram paths).
+      # Motivation (mining report): exactly our GPU class -- RTX PRO 6000 lacks
+      # the HMM flag, the pinned table costs 47.7 GiB in RAM, staging measured
+      # 2.8x better than HMM. Opt-in via env/flag (default off).
+      # CPU: ple_staging 37P, ple_hash 3P, ple_table 19P/3S (+6 tests the PR
+      # added), offload 20S + host_hash 3S + prefetch 5P/5S, cuda_graph 12P.
+      # Followed by local fixup 62. UNBOOTED.
+
+  LOCAL  [local]  stack agent   (tag: ple_staging_test_arity_fixup)
+      Test fix for #40235's _get_prefetch_buffer signature
+         62. a75c368f1e  test(qwen4-exp): pass device, not lookup_ids, to _get_prefetch_buffer
+      # The PR changed _get_prefetch_buffer's 2nd parameter from a lookup_ids
+      # tensor to a device; its own test-file hunk (auto-merged) kept passing
+      # ids -> torch.zeros(device=<Tensor>) TypeError, 10F. Same arity-lesson
+      # as entry 37, one caller class over. Restores 5P/5S.
+
+==============================================================================
+EVALUATED AND DELIBERATELY NOT INCLUDED
+==============================================================================
+
+  PR #39721 / #39722 / #39723 / #39724  @Shunkangz
+      [Qwen3.8 CP 1/4 .. 4/4] Collocated prefill context parallelism
+      Reviewed 2026-09-16, still not included: wrong interconnect (per-layer
+      K/V all-gathers on PCIe, no NVLink); required config disables radix
+      cache + chunked prefill + spec + PP/EP/DP-attn/PD (mutually exclusive
+      with our HiCache pair); #39721 rewrites get_prefill_mqa_inputs against
+      the pre-#38209 loop (semantic conflict); 1/4-3/4 alone are dead code.
+      Local branches pr39721..pr39724 kept.
+
+  PR #39807  @JAVerma
+      Support consumer Blackwell (SM120/SM121) for NVFP4 serving
+      Carried in the 09-17 stack (old entries 21-23: CUTLASS NVFP4 MoE runner
+      select / reject trtllm_mha with FP8 KV / glibc>=2.41 JIT build). DROPPED
+      in the 09-21 rebuild: the PR is still open and its commits are not
+      ancestors of the new base, so this rebuild does not include them --
+      re-pick from branch pr39807 if NVFP4 auto-runner selection is needed
+      again (entry 29 already covers the deep_gemm a2a=none resolution half;
+      the JIT-toolkit commit was inert here anyway, glibc 2.39).
+
+  PR #40582  (superseded)
+      Mining verdict 2026-09-21: subset of #40501 -- the latter is picked
+      instead (entries 42-44).
+
+  Skipped in the 2026-09-21 mining pass (rationale in
+  /tmp/opencode/pr_mining_2026-09-21.md):
+      #39433 (GLM-5.3-only nextn_layer_ids -- no-op for qwen4_exp),
+      #39982 (PD-disagg compaction gates), #40426/#39408 (deepep_v2 -- TP4
+      PCIe, no EP), #39388/#39210 (MegaMoE -- not our runner),
+      #40173 (NVFP4xMXFP4 hybrid draft CUTLASS -- not our ckpt combo),
+      #39492 (DSV4 flashinfer envelope), AMD/NPU/XPU PRs, all diffusion-
+      Qwen-Image PRs, #39474/#39928 (already merged into base).
+      Issues: #39570 (crash only at ~4000 concurrent reqs; we cap at 96),
+      #40558 (trtllm fmha -- not our backend).
+
+==============================================================================
+WATCH LIST (re-evaluate before next sync)
+==============================================================================
+
+  * #39643 + #40001 -- PP+MTP aggregate accuracy gate: with #40501-style PP +
+    NEXTN the GSM8K aggregate dropped .980 -> .955 in review testing; do not
+    rely on PP+NEXTN accuracy on this stack until these land/are picked.
+  * #40499 -- (carried from the 09-21 watch list; no further notes this
+    session -- re-check before acting).
+  * #40143  QSA ring>1 compression group -- only if raising
+    --speculative-num-draft-tokens above 4; conflicts qsa/metadata +
+    qsa_indexer + kv pool vs #39614/#39809.
+  * #40223  HiCache pack all MTP draft KV + conv/SSM state into target host
+    pools -- #39830 correctness family; conflicts our pool_host/mamba +
+    hybrid_pool_assembler + fence work; insert after #39862 once reviewed.
+  * #40041  fused PLE gate+conv prep for target verify (~2% e2e decode;
+    roadmap #38731); kernel files clean but qwen4_exp.py conflict.
+  * #40552  HyperConnection fusions for Qwen-3.8-Flash (18 files, new JIT
+    csrc incl sm100 splitk GEMM epilogue -- sm120 coverage unproven).
+  * #39575  unaligned QSA extend prefixes from chunk-cache tails; conflicts
+    qsa/metadata + qsa_indexer. Confirm repro under our config first.
+  * #38180  disable mixed-chunk with compressed QSA + fail-fast -- check
+    against our chunked-prefill + QSA settings.
+  * #39082  defer QSA indexer import in EAGLE draft worker (startup-only).
+  * #40594  model-level checkpoint page-cache release (host-RAM relief during
+    load -- revisit together with #40235).
+  * #38642 / #37633 / #37638 -- DFLASH family (carried from watch list;
+    #40144/#39685 were skipped in mining because the watch covers them).
+  * HiCache series by YAMY1234/paulzhang-tm (all overlap our edited files):
+    #40576 watermark async write-back, #40512 order-independent host
+    reclamation, #39395 write-back usable capacity, #39747 existence-cache
+    capacity knob (tiny, file-L3 relevant), #39745 chunk-boundary Mamba
+    backup fix, #39856 Full-KV prefetch anchor + host mamba ratio, #39845
+    exclusive L2->L3 dedup.
+
+==============================================================================
+CAVEATS
+==============================================================================
+
+  * HiCache (--enable-hierarchical-cache) needs BOTH #39862 and #39893 (they
+    fix different halves of open issue #39830, each measured with the other).
+    Residuals fixed locally (entries 24-25, 30). Nothing has been run
+    end-to-end on THIS host with HiCache on -- the 0/15 -> 15/15 numbers are
+    the author's B200 results and the CPU tests only cover 24-25+30. Zero
+    'HiCache restore refused' lines under host-pool thrash is the explicit
+    post-boot health signal. Fence caveats (30): in-flight-read UAF window on
+    poison, no-op on the Rust-tree core, L3 bytes unfenced.
+    https://github.com/sgl-project/sglang/issues/39830
+
+  * #39614 arity lesson (repeated twice, entries 37 + 62): a PR carried as
+    'groundwork, default unchanged' still has to be checked against callers
+    outside the files it touches -- and against TEST stubs that absorb
+    signatures with `lambda *a`.
+
+  * E2's deep_gemm MoE path is BROKEN ON THIS HOST: `--moe-runner-backend
+    deep_gemm --fp8-gemm-backend deep_gemm` faults (Xid 43 on all 4 GPUs,
+    then CUDA 719) during eager two-pass warmup -- shape/scale-layout-
+    specific, not a graph-capture issue, reproduced with nvcc 12.9.
+    WORKAROUND: name triton explicitly (`--moe-runner-backend triton
+    --fp8-gemm-backend triton`) -- entry 29 made `auto` land on the faulting
+    path. Live config: /root/run_sglang_qwenflashnext7.sh.
+
+  * HiCache file backend: SGLANG_HICACHE_FILE_BACKEND_MAX_SIZE is enforced PER
+    TP RANK (all 4 ranks are storage owners for this non-MLA model); effective
+    ceiling = tp_size x MAX_SIZE -- divide by tp_size. Unset env => inert
+    evictor + /tmp/hicache fallback (filled 980 GB once). MIN_FREE_SPACE is a
+    floor, not a budget. --hicache-size and --hicache-ratio are mutually
+    exclusive (absolute wins when > 0). #39880's fast_file backend inherits
+    the same registry.
+
+  * UNBOOTED ON THIS HOST as of 2026-09-21: everything appended in the 09-21
+    session -- #39978, #40501, #33778, #38977, #39977, #40480, #39880,
+    #40235 (plus earlier #39614/#40002 remain unbooted). All validation so
+    far is CPU batteries + static audits. PP (#40501) additionally needs a
+    PCIe-appropriate --pp retune, and its NEXTN accuracy story waits on
+    watchlist #39643/#40001.
+
+  * sglang is installed EDITABLE against a checkout -- pytest run from a git
+    worktree still imports LIBRARY code from the installed tree, so worktrees
+    can only baseline TEST-file changes. (On this box the live server's venv
+    /root/sglang/.venv is editable to the OLD checkout /root/sglang/sglang.prev;
+    THIS repo was verified via a hardlink clone at .venv2 -- see next caveat.)
+
+  * Verification venv for THIS repo: /root/sglang/sglang/.venv2 (pip install -e
+    python[diffusion] with torch 2.13.0+cu130 / triton 3.7.1 / flashinfer
+    0.6.18 / transformers 5.12.1 pinned by /tmp/opencode/constraints.txt).
+    Flip procedure for the live server: stop server, then
+    /root/sglang/.venv/bin/python3 -m pip install -e "/root/sglang/sglang/python[diffusion]"
+    -c /tmp/opencode/constraints.txt; refresh .venv2 after the flip.
+    [diffusion] pulls st_attn/vsa/modelopt and makes serve --help render the
+    Diffusion section -- that is expected, not a bug.
+
+  * Run test files PER FILE, the way CI does -- one process over a directory
+    lets published/reset contexts leak between files in both directions.
+
+  * Known-failing at tip a75c368f1e, NOT caused by this stack (54-file CPU
+    battery, green modulo environment):
+      - test/registered/unit/layers/quantization/: 13F pre-existing on SM120
+        (mm_fp4 has no 'trtllm' backend; trtllm/cutedsl kernels fail to
+        JIT-build) -- identical on upstream main.
+      - test_qsa_indexer.py: 25F with CUDA masked (20x ModuleNotFoundError
+        vllm via MRotaryEmbedding fallback + 5x No-CUDA) -- GPU-gated CI file
+        with no CPU skip guards; pre-existing signature.
+      - kernels-dir GPU-gated files fail with 'No CUDA GPUs are available':
+        test_fp8_kv_compressed_pack 15F, fast_topk 10F, hc_mix 18F, qsa 2F,
+        qsa_hicache 6E, #33778's test_gdn_replayssm_spec_fold 5F.
+      - test_hicache_storage_file_backend.py: 3F -- server-boot classes
+        degrade on CPU; REPRODUCED IDENTICALLY at pre-append 33cef80e32 (only
+        the deleted-class hunk changed; CPU-verified at pick time).
+      - test_qsa_strided_zero_fill.py: OOMs when a live server holds the GPUs
+        (wants 2 GiB free). Environmental.
+
+==============================================================================
+REBUILDING FROM SCRATCH
+==============================================================================
+
+  git checkout -B qwennext-stack 7ad55e4386      # upstream main at stack base
+  # All PR heads are already fetched as local branches pr36787 pr37275 pr38144
+  # pr38209 pr36644 pr39862 pr39809 pr39893 pr39614 pr39978 pr40002 pr39065
+  # pr40501 pr40175 pr40362 pr39391 pr37061 pr39333 pr33778 pr38977 pr39977
+  # pr40480 pr39880 pr40235 (branch prev-stack-36644 holds the old stack's
+  # local shas). Heads move -- re-fetch origin pull/N/head before trusting.
+  for each PR block above, in entry order 1-62:
+      git cherry-pick -x <its upstream shas, listed under each entry>
+  # Local commits (17, 19, 23-31, 37, 52, 62) are this stack's own -- they are
+  # on branch prev-stack-36644 under the old shas where noted, except 52/62
+  # which are 09-21-authored; re-author them or cherry-pick from the current
+  # qwennext-stack branch itself (it is the reference build).
+  # Known conflict points (all resolved in this build -- reuse the resolutions):
+  #   qwen_sparse_attn_backend.py        #39333 (auto-merge, verify FP8 kwargs)
+  #   test dir kernels/ vs kernel/       #38977 entry 56 (use plural)
+  #   models/deepseek_v4.py              #39977 entry 57 (union: #39065 gate +
+  #                                      wrapper import)
+  #   test_hicache_storage_file_backend  #39880 (keep new DirectIO class ONLY,
+  #                                      drop upstream-deleted Accuracy)
+  #   models/qwen4_exp.py                #40235 entry 61 (9-way union: PP
+  #                                      stage-local has_ple + _is_capturing
+  #                                      prefetch dual-path + _pinned_buffer
+  #                                      line + staging block; then entry 62)
+  # Post-build CPU battery (54 files) expectations are in CAVEATS/known-
+  # failing; anything NOT on that list is a real regression.
