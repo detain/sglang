@@ -882,14 +882,7 @@ class QwenSparseAttnBackend(AttentionBackend):
         prefill_compressed_scratch = None
         prefill_all_visible = False
         prefill_all_visible_scratch = None
-        if (
-            (
-                self.qsa_profile is None
-                or self.qsa_profile.variant == QSA_VARIANT_COMPRESSED
-            )
-            and not speculative_paged
-            and not forward_batch.forward_mode.is_decode()
-        ):
+        if not speculative_paged and not forward_batch.forward_mode.is_decode():
             num_sequences = int(sequence_lengths.numel())
             if seq_lens_cpu is None or len(seq_lens_cpu) < num_sequences:
                 raise ValueError(
