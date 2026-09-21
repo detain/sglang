@@ -678,6 +678,24 @@ STACK, IN BUILD ORDER (bottom first)
       # cute-DSL compile error -- both pre-existing environmental failures,
       # NOT introduced here; worth a future local fixup). Probe/GPUs 0-1
       # untouched.
+         77. ab7054df29  perf(qsa): drop the per-layer max_q device read in chunk prefill
+      # Phase C (item 2), step 2 of 3. The single prefix-branch call site in
+      # qwen_sparse_attn_backend.forward_extend now passes
+      # max_q=max(extend_lens, default=1), the host value the branch already
+      # computes at :1552; equivalence to the removed device read proven by
+      # construction (cu_seqlens_q = padded cumsum of extend_seq_lens at
+      # :1557-1560) and by two independent randomized checks (worker 12
+      # cases, reviewer 28 cases incl. single-request/zero-length/all-zero)
+      # -- 0 mismatches. default=1 is strictly safer than the old .max()
+      # raise on empty batches. 12 QSA layers x 245 chunk steps at cp4096 ->
+      # ~2,940 pipeline drains per cold 1 M-token prefill removed. One
+      # keyword added; S06 fallback in sparse_attn.py kept (last remaining
+      # .item() at :555, by design). qsa dir: 7F/155P/3S identical to the
+      # known baseline; targeted prefill test 39/39. NOTE discovered here:
+      # torch 2.13 cumsum widens int32 CUDA input to int64, so cu_seqlens_q
+      # is int64 despite the explicit .to(torch.int32) -- harmless (values
+      # equal, overflow margin better), flagged for the reader's accuracy,
+      # untouched by this commit.
 
 
 ==============================================================================
