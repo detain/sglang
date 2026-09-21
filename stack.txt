@@ -660,6 +660,25 @@ STACK, IN BUILD ORDER (bottom first)
       #   9.17 GB free at "Memory pool end"). Keep expandable_segments ON --
       #   it is load-bearing at that memory pressure.
 
+  (tag: plan_updates_perf) ==================================================
+  PERF: PLAN_UPDATES.MD WINS -- 2026-09-21+ (LOCAL commits, no upstream
+  provenance; execution of plan_updates.md, one entry per landed step)
+  ============================================================================
+         76. f7db349fb7  perf(qsa): allow the chunk-prefill wrapper to take a host-side max_q
+      # Phase C (item 2). sparse_gqa_fwd_interface_triton_ck computed its
+      # launch-grid bound with an unconditional .item() device read -- 12 QSA
+      # layers x chunk steps per cold 1 M prefill (~2,940 pipeline drains at
+      # cp=4096). New keyword-only `max_q: Optional[int] = None`; the device
+      # read survives verbatim as the fallback for callers that do not supply
+      # it, so behavior is bit-identical for every existing caller. No caller
+      # changed yet (S07 does that); verified via grep of all 9 call sites.
+      # qsa kernel dir: 39/39 in the targeted prefill test; full-dir 7
+      # failed/155 passed/3 skipped IDENTICAL to base 549928595b (6x
+      # test_qsa_hicache L2TransferEngine kwarg drift + 1x flash_attn sm120
+      # cute-DSL compile error -- both pre-existing environmental failures,
+      # NOT introduced here; worth a future local fixup). Probe/GPUs 0-1
+      # untouched.
+
 
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
