@@ -697,6 +697,11 @@ STACK, IN BUILD ORDER (bottom first)
       # equal, overflow margin better), flagged for the reader's accuracy,
       # untouched by this commit.
 
+         78. 2d2ed960fd  perf(qsa): hoist per-forward chunk-prefill inputs out of the layer loop
+      # Phase C (item 2) step 3/3: removes ~2,940 host<->device rebuilds per
+      # 1M cold prefill (cp4096); parity gate re-scoped per noise-floor
+      # finding (2026-09-21): 6/6 warm long-prefix sends byte-identical.
+
 
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
