@@ -1,13 +1,13 @@
 # stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
 #
-# STACK: qwennext-stack-89-2026-09-22
+# STACK: qwennext-stack-91-2026-09-22
 #   main+pr36787+pr37275+pr38144+pr38209+pr36644+pr39862+pr39809+pr39893+local_hicache_qsa_fixes
 #   +pr39614+pr39978+pr40002+pr39065+pr40501+pr40175+pr40362+pr39391+pr37061+pr39333+pr33778
 #   +pr38977+pr39977+pr40480+pr39880+pr40235+pr39807+cpu-triage+boot-fix+plan_updates_perf
-#   +pr40626+pr40778   (89 commits, 27 PR blocks, 36 local commits -- stack.txt/doc
-#   commits excluded)
+#   +pr40626+pr40778+pr40748   (91 commits, 28 PR blocks, 37 local commits --
+#   stack.txt/doc commits excluded)
 # branch : qwennext-stack
-# tip    : ff527878d0   (the stack.txt commit sits above it)
+# tip    : 82cb963b10   (the stack.txt commit sits above it)
 # base   : upstream sgl-project/sglang main @ 7ad55e4386 ([HiCache] TMA-staged
 #          host<->device KV transfer kernel (sm_90+) (#40278), 2026-09-21)
 # updated: 2026-09-22 (09-21: full rebuild on the 09-21 main tip + 7 newly-mined PRs
@@ -15,7 +15,7 @@
 #          erroneously-dropped #39807 restored as 63-65, then CPU-battery
 #          skip-guard triage entries 66-72; 09-22: boot-fix entries 73-75,
 #          plan_updates perf entries 76-79/81-88, #40626 as entry 80, #40778
-#          as entry 89)
+#          as entry 89, #40748 as entry 90 + its test follow-up 91)
 #
 # Target: Qwen3.8-Flash-Next (Qwen4ExpForConditionalGeneration), 4x RTX PRO 6000
 # Blackwell Max-Q, compute capability 12.0 (SM120), 96 GB each, PCIe only -- no
@@ -24,7 +24,7 @@
 #
 # PROVENANCE: every picked commit is `git cherry-pick -x`, so it carries
 # '(cherry picked from commit <full-sha>)' -- no Upstream-PR trailers are used.
-# All 27 PRs verified OPEN (heads not ancestors of base) as of 2026-09-22.
+# All 28 PRs verified OPEN (heads not ancestors of base) as of 2026-09-22.
 # PR heads MOVE on this repo -- re-fetch before quoting shas.
 
 ==============================================================================
@@ -837,6 +837,41 @@ STACK, IN BUILD ORDER (bottom first)
       # test_serving_responses_stream 13P, test_template_manager 51P --
       # 0 failures before and after.
 
+  PR #40748  [open]  @huangtingwei9988
+      https://github.com/sgl-project/sglang/pull/40748
+      [HiCache] Avoid over-eviction by reclaiming only allocation shortfalls
+         90. e3ccc45aff  fix(hicache): reclaim only allocation shortfalls on host and device
+             <- 022dff56762b7b412ebfb33d4ac33393b6cdf8ab
+      # When a host/device allocation failed, HiCache evicted the FULL request
+      # size regardless of free capacity, discarding cached prefixes for
+      # nothing. Now evicts only need - available_size(), and skips eviction
+      # when the pool already has room. Our path: UnifiedRadixCache + MAMBA
+      # (HostPoolGroup.alloc, MambaComponent.alloc_prefetch_staging, L3
+      # prefetch host alloc, retraction backup); the SWA and legacy HiRadix
+      # hunks are inert here. Author A/B (GLM-4.7-Flash, H20): eviction
+      # 12,288 -> 4,096 tokens, next-request TTFT 1,145 -> 95 ms.
+      # Safe by construction: every host pool's alloc(n) returns None iff
+      # n > available_size(), so a failed alloc always has shortfall > 0.
+      # Picked the PR's single real commit; its "Merge branch 'main'"
+      # (e3ecb991fd) skipped. Clean cherry-pick -x, no conflicts. The PR
+      # ships no tests (author removed them) and breaks one existing test
+      # -> entry 91.
+         91. 82cb963b10  [HiCache] Retarget the SWA staging-exhausted test to shortfall-sized reclaim
+      # Test-only follow-up (same pattern as 81). test_prepare_prefetch_swa_
+      # pool_exhausted mocked alloc()->None but left available_size() real,
+      # so the pool looked free and evict_host was correctly skipped under 90.
+      # Now also mocks available_size()=0; still pins "retry evicts SWA, not
+      # FULL" and passes on pre-90 code too. Upstream CI will hit the same
+      # failure on the PR as-is.
+      # Verified (.venv2, live server holding all 4 GPUs): 122-file battery
+      # (unit/mem_cache/* + hisparse_unit + stat_loggers_di) per-file
+      # results IDENTICAL before/after. test_unified_radix_cache_unittest.py
+      # under xdist -n 6 --max-worker-restart: base 1130P/128F -> after
+      # 1135P/123F, after-failures a strict subset of base (all the
+      # cudaMemcpyBatchAsync segfault, see CAVEATS). Scratch CPU check of the
+      # real HostPoolGroup.alloc / MambaComponent.alloc_prefetch_staging
+      # with fake pools: reclaims 7 of 10 / 7 of 12, 0 when already free.
+
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
 ==============================================================================
@@ -869,6 +904,19 @@ EVALUATED AND DELIBERATELY NOT INCLUDED
       Issues: #39570 (crash only at ~4000 concurrent reqs; we cap at 96),
       #40558 (trtllm fmha -- not our backend).
 
+  Mining pass 2026-09-22 (PRs created 09-21 21:38Z .. 09-22 21:38Z, 139
+  PRs; checked against run_sglang_qwenflashnext7.sh (tp4) AND
+  run_sglang_qwenflashnext8.sh (tp2) -- tp2 changes none of the verdicts):
+      picked #40778 (89), #40748 (90). Skipped as not reaching our config:
+      #40741 (dup of #40778), #40742 (MiMo QK192/V128 page-1 triton shape
+      only), #40754 (AMD aiter, text-only Qwen3_5MoeForCausalLM), #40680
+      (merged; write_back only -- we run write_through), #40656 (SM100 GDN
+      verify; ours is triton), #40672/#40643/#40668 (DP-attn / CP gather
+      only), #40648/#40649 (memory-saver / DP-attn NCCL), #40734 (SM90),
+      #40762 (FA backend), #40771 (ROCm QuickReduce), #40775/#40780
+      (radix-tree cleanups -- rebase conflicts only), AMD/NPU/XPU/
+      diffusion/router/RL/PD.
+
 ==============================================================================
 WATCH LIST (re-evaluate before next sync)
 ==============================================================================
@@ -878,6 +926,11 @@ WATCH LIST (re-evaluate before next sync)
     rely on PP+NEXTN accuracy on this stack until these land/are picked.
   * #40499 -- (carried from the 09-21 watch list; no further notes this
     session -- re-check before acting).
+  * #40709  FlashInfer 0.6.18 -> 0.7.0 bump -- flashinfer is our attention AND
+    GDN decode backend; base CI red at mining time. Take as its own A/B.
+  * #40718  prefill CUDA graph for GDN/Mamba -- only if enabling prefill
+    graphs (disabled in both run scripts); conflicts
+    prefill_cuda_graph_runner.py, touches replayssm buffers.
   * #40143  QSA ring>1 compression group -- only if raising
     --speculative-num-draft-tokens above 4; conflicts qsa/metadata +
     qsa_indexer + kv pool vs #39614/#39809.
@@ -977,6 +1030,15 @@ CAVEATS
       - test_hicache_storage_file_backend.py: 3F -- server-boot classes
         degrade on CPU; REPRODUCED IDENTICALLY at pre-append 33cef80e32 (only
         the deleted-class hunk changed; CPU-verified at pick time).
+      - HiCache host<->device transfer tests SEGFAULT in cudaMemcpyBatchAsync
+        while a live server holds the GPUs (test_unified_radix_cache_unittest
+        ~123-128 cases, test_minimax_sparse_pool_host_unit 1 case); one crash
+        kills the whole file, so run them with pytest-xdist (installed in
+        .venv2 on 09-22): -n 6 --max-worker-restart 500, and diff FAILED
+        name sets -- crash victims shuffle a few names run to run.
+      - test_hicache_nixl_storage / test_umbp_store: import error (optional
+        backends absent); test_rust_unified_radix_cache_{bench,unittest}:
+        collect nothing (rust tree extension not built). Environmental.
       - test_qsa_strided_zero_fill.py: OOMs when a live server holds the GPUs
         (wants 2 GiB free). Environmental.
 
@@ -988,7 +1050,7 @@ REBUILDING FROM SCRATCH
   # All PR heads are already fetched as local branches pr36787 pr37275 pr38144
   # pr38209 pr36644 pr39862 pr39809 pr39893 pr39614 pr39978 pr40002 pr39065
   # pr40501 pr40175 pr40362 pr39391 pr37061 pr39333 pr33778 pr38977 pr39977
-  # pr40480 pr39880 pr40235 pr39807 pr40778 (pr40626 is a remote,
+  # pr40480 pr39880 pr40235 pr39807 pr40778 pr40748 (pr40626 is a remote,
   # not a local branch; branch prev-stack-36644 holds the old
   # stack's local shas). Heads move -- re-fetch origin pull/N/head before
   # trusting. pr39807's branch head commits (72969d00c5/029e2f4567/6e4eef4680)
