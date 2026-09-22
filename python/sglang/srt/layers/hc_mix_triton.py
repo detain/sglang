@@ -5,8 +5,9 @@ The launch grid is capped at the device SM count, keeping every CTA resident,
 so the software grid barrier cannot deadlock;
 the last CTA to finish resets the barrier counters,
 so a captured CUDA graph replays with them in their initial state.
-SM120 uses tuned launch geometry through 64 rows; other devices keep the
-16-row limit. Larger row counts stay on the torch.compile path.
+SM120 keeps the 16-row limit: on the 188-SM RTX PRO 6000 Blackwell Max-Q the
+tuned 17-64 row geometry lost to torch.compile (see _SM120_FUSED_MIX_MAX_ROWS).
+Larger row counts stay on the torch.compile path.
 """
 
 from __future__ import annotations
@@ -19,7 +20,18 @@ import triton
 import triton.language as tl
 
 _FUSED_MIX_MAX_ROWS = 16
-_SM120_FUSED_MIX_MAX_ROWS = 64
+# 16, not 64: on 188-SM SM120 parts (RTX PRO 6000 Blackwell Max-Q) the 17-64
+# row config below ran with num_ctas = min(80, sm_count) = 80, idling 57% of
+# the GPU. Measured with CUDA graphs (2026-09-22), Triton lost to
+# torch.compile by +29.0/+18.4/+41.8/+27.5% at 24/32/48/64 rows, and a
+# 240-combination retune sweep (bench/hc_mix_tune.md) found no rows_pad=64
+# config that beats torch.compile anywhere in the bucket (best: +0.1% slower
+# at 32 rows). So rows 17-64 get None from _select_hc_mix_config,
+# fused_hc_mix_supported() is False, and GatedResidual.mix takes the faster
+# torch.compile path -- that is the intended behaviour. The branch below is
+# unreachable with this cap; it is left in place for SM120 parts whose SM
+# count matches its grid geometry.
+_SM120_FUSED_MIX_MAX_ROWS = 16
 
 
 @dataclass(frozen=True)
