@@ -711,6 +711,26 @@ STACK, IN BUILD ORDER (bottom first)
       # 256 B/token/tensor in fp8 -- 512 B is the K+V COMBINED figure per
       # rank. Old claim was 2x high; comment corrected, code untouched.
 
+         80. 868fe1d8d2  [Qwen4-Exp] Pin the PLE host table at its exact size (PR #40626, open, konamgil)
+      # PR #40626: the pinned PLE table went through
+      # torch.empty(pin_memory=True), which rounds up to the next power of
+      # two -- the 47.7 GiB fp8 table locked 64 GiB of host memory (a 48
+      # GiB class of waste, OOM risk at load). Fix: mmap the exact size and
+      # cudaHostRegister it. Landed as cherry-pick -x of a38233de27,
+      # composed with the stack's 2a530fd5d4: the exact-size allocator
+      # helpers relocated to srt/utils/numa_utils.py and
+      # allocate_interleaved_pinned_table's plain() node-local fallback now
+      # pins through them; the multi-NUMA interleave path is unchanged.
+      # PR's RSS + triton gather tests pass unmodified (23P/1S).
+
+         81. 8bd8792315  [PLE] Retarget interleave-fallback unit tests to the exact-size plain allocator
+      # Test-only follow-up to 868fe1d8d2: test_interleaved_pinned_table.py
+      # mocked numa_utils.torch.empty expecting the old plain() shape, so
+      # 3/12 of its cases broke by design when plain() stopped calling
+      # torch.empty(pin_memory=True). Mocks retargeted to the exact-size
+      # allocator; restores the unit/models suite to its pre-existing
+      # baseline (8F/492P/7S, all unrelated env failures).
+
 
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
