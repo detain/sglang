@@ -10,7 +10,7 @@ import logging
 import math
 from copy import copy
 from functools import lru_cache
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import msgspec
 import torch
@@ -237,6 +237,17 @@ class QwenSparseAttnBackend(AttentionBackend):
         self.req_to_token = getattr(req_pool, "req_to_token", None)
         self.req_to_token_pool = req_pool
         self.forward_metadata: Optional[QwenSparseAttnMetadata] = None
+        # Single-entry per-forward hoist for the chunk-prefill inputs that are
+        # identical across all QSA layers of one forward.  Keyed on the
+        # ForwardBatch object identity (held by strong reference, which is
+        # also the liveness anchor -- no id-reuse aliasing) plus the
+        # ModelRunner forward_pass_id as a second guard.  Every forward --
+        # including every chunk step of a chunked prefill -- builds a fresh
+        # ForwardBatch (ForwardBatch.init_new in tp_worker), so a stale entry
+        # can never be served to a later forward.
+        self._chunk_prefill_shared: Optional[
+            Tuple[object, Optional[int], Dict[str, Any]]
+        ] = None
         self._cuda_graph_metadata: Dict[
             Tuple[ForwardMode, int], QwenSparseAttnMetadata
         ] = {}
@@ -1549,15 +1560,30 @@ class QwenSparseAttnBackend(AttentionBackend):
             return self._pad_extend_output(output, num_output_rows)
 
         topk_indices = topk_indices.to(torch.int32).contiguous()
-        extend_lens = [int(x) for x in forward_batch.extend_seq_lens_cpu]
-        sequence_lens = [int(x) for x in forward_batch.seq_lens_cpu]
-        prefix_lens = [
-            sequence_lens[i] - extend_lens[i] for i in range(len(extend_lens))
-        ]
-        cu_seqlens_q = F.pad(
-            forward_batch.extend_seq_lens.to(q.device, dtype=torch.int32).cumsum(0),
-            (1, 0),
-        ).contiguous()
+        # Hoist the per-forward batch-level values out of the 12x-per-forward
+        # layer loop.  See ``__init__._chunk_prefill_shared`` for the keying
+        # safety argument.
+        pass_id = getattr(getattr(self, "runner", None), "forward_pass_id", None)
+        shared = getattr(self, "_chunk_prefill_shared", None)
+        if shared is not None and shared[0] is forward_batch and shared[1] == pass_id:
+            shared = shared[2]
+        else:
+            shared = {}
+            self._chunk_prefill_shared = (forward_batch, pass_id, shared)
+        if "extend_lens" not in shared:
+            shared["extend_lens"] = [int(x) for x in forward_batch.extend_seq_lens_cpu]
+            shared["sequence_lens"] = [int(x) for x in forward_batch.seq_lens_cpu]
+            shared["prefix_lens"] = [
+                shared["sequence_lens"][i] - shared["extend_lens"][i]
+                for i in range(len(shared["extend_lens"]))
+            ]
+            shared["cu_seqlens_q"] = F.pad(
+                forward_batch.extend_seq_lens.to(q.device, dtype=torch.int32).cumsum(0),
+                (1, 0),
+            ).contiguous()
+        sequence_lens = shared["sequence_lens"]
+        prefix_lens = shared["prefix_lens"]
+        cu_seqlens_q = shared["cu_seqlens_q"]
         if not any(prefix_lens):
             output = sparse_gqa_fwd_interface_triton(
                 q.contiguous(),
@@ -1579,6 +1605,40 @@ class QwenSparseAttnBackend(AttentionBackend):
         if is_fp8_kv_dtype(k_buffer.dtype):
             k_scale, v_scale = self._kv_descales(layer, k_buffer.dtype)
             scale_kwargs = {"k_scale": k_scale, "v_scale": v_scale}
+        if "gather_index" not in shared:
+            self._build_chunk_prefill_shared(shared, forward_batch, q.device)
+        gather_index = shared["gather_index"]
+        sequence_lens_tensor = shared["sequence_lens_tensor"]
+        cu_seqlens_k = shared["cu_seqlens_k"]
+        max_q = shared["max_q"]
+        output = sparse_gqa_fwd_interface_triton_ck(
+            q.contiguous(),
+            k_buffer.index_select(0, gather_index),
+            v_buffer.index_select(0, gather_index),
+            topk_indices,
+            cu_seqlens_q,
+            cu_seqlens_k,
+            sequence_lens_tensor,
+            layer.scaling,
+            **scale_kwargs,
+            max_q=max_q,
+        )
+        return self._pad_extend_output(output, num_output_rows)
+
+    def _build_chunk_prefill_shared(
+        self, shared: Dict[str, Any], forward_batch, device: torch.device
+    ) -> None:
+        """Fill the heavy chunk-prefill fields of the per-forward cache.
+
+        Called at most once per forward (guarded by the
+        ``_chunk_prefill_shared`` identity check in ``forward_extend``); all
+        these values are pure functions of per-forward batch state, so the
+        remaining QSA layers of the same forward reuse them instead of
+        rebuilding -- notably the device->host sync on req_pool_indices and
+        the full-context gather index -- 12 times per forward.
+        """
+        sequence_lens = shared["sequence_lens"]
+        extend_lens = shared["extend_lens"]
         req_to_token = self.req_to_token_pool.req_to_token
         req_indices = forward_batch.req_pool_indices.tolist()
         # Join the gather INDICES, not the gathered K/V.  An index row is 8 B
@@ -1605,22 +1665,14 @@ class QwenSparseAttnBackend(AttentionBackend):
             gather_index[0] if len(gather_index) == 1 else torch.cat(gather_index)
         )
         sequence_lens_tensor = torch.tensor(
-            sequence_lens, dtype=torch.int32, device=q.device
+            sequence_lens, dtype=torch.int32, device=device
         )
-        cu_seqlens_k = F.pad(sequence_lens_tensor.cumsum(0), (1, 0)).contiguous()
-        output = sparse_gqa_fwd_interface_triton_ck(
-            q.contiguous(),
-            k_buffer.index_select(0, gather_index),
-            v_buffer.index_select(0, gather_index),
-            topk_indices,
-            cu_seqlens_q,
-            cu_seqlens_k,
-            sequence_lens_tensor,
-            layer.scaling,
-            **scale_kwargs,
-            max_q=max(extend_lens, default=1),
-        )
-        return self._pad_extend_output(output, num_output_rows)
+        shared["gather_index"] = gather_index
+        shared["sequence_lens_tensor"] = sequence_lens_tensor
+        shared["cu_seqlens_k"] = F.pad(
+            sequence_lens_tensor.cumsum(0), (1, 0)
+        ).contiguous()
+        shared["max_q"] = max(extend_lens, default=1)
 
     @staticmethod
     def _pad_extend_output(output: torch.Tensor, num_rows: int) -> torch.Tensor:
