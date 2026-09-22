@@ -159,6 +159,34 @@ def _qsa_prefill_geometry() -> str:
     return geometry
 
 
+_QSA_CHUNK_PREFILL_KV_SOURCES = {"auto", "packed", "paged"}
+
+
+@lru_cache(maxsize=1)
+def _resolve_chunk_prefill_kv_source() -> str:
+    """Read the QSA chunked-prefill KV source, resolving ``auto``.
+
+    Cached so a boot log names the live path once per process; callers that
+    flip the env var (tests) must call ``cache_clear`` to re-resolve.
+    """
+    source = envs.SGLANG_QSA_CHUNK_PREFILL_KV_SOURCE.get().strip().lower()
+    if source not in _QSA_CHUNK_PREFILL_KV_SOURCES:
+        choices = ", ".join(sorted(_QSA_CHUNK_PREFILL_KV_SOURCES))
+        raise ValueError(
+            f"SGLANG_QSA_CHUNK_PREFILL_KV_SOURCE must be one of {choices}; "
+            f"got {source!r}"
+        )
+    # The paged kernel is unproven end-to-end; auto must not activate it yet.
+    resolved = "packed" if source == "auto" else source
+    logger.info(
+        "SGLANG_QSA_CHUNK_PREFILL_KV_SOURCE=%s; using the %s chunked-prefill "
+        "KV source for this process",
+        source,
+        resolved,
+    )
+    return resolved
+
+
 def _get_prefill_config(
     total_q: int,
     group_size: int,
