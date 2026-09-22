@@ -1995,7 +1995,7 @@ class Qwen4ExpModel(Qwen3_5ForCausalLM):
                 # Graph runners pad every DP rank to the captured local token
                 # count before setting global_dp_buffer_len. The sum therefore
                 # cannot exceed the local capture size times attention DP.
-                lookup_tokens *= get_attention_dp_size()
+                lookup_tokens *= get_parallel().attn_dp_size
             module.prepare_cuda_graph_prefetch_buffer(
                 lookup_tokens, torch.device(model_runner.device)
             )
