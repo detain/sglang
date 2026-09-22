@@ -784,6 +784,16 @@ STACK, IN BUILD ORDER (bottom first)
       # deletions). qsa dir 7F/166P/3S -- baseline 7 names, +11 passes.
       # NOT wired: backend untouched (S22 selector, S23 layout guard).
 
+         87. f5f71feebb  [QSA] Add SGLANG_QSA_CHUNK_PREFILL_KV_SOURCE selector
+       # S22 Phase G (plan_updates). Selection config only: EnvStr("auto")
+       # in the environ.py QSA block + lru_cache'd resolver in sparse_attn.py
+       # beside _qsa_prefill_geometry -- reads via .get(), ValueError names
+       # auto/packed/paged, one-shot logger.info of the live path; auto ->
+       # packed so the unproven paged kernel stays dark until S24 measures
+       # it. No backend wiring (S23). Cache_clear hook proven by the CPU
+       # test (7P/2-sub, green with no GPU visible). Unit attention dir
+       # 2F/202P/13S (baseline +7, same 2 FA3 fails); qsa ops dir
+       # 7F/166P/3S = baseline exact.
 
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
