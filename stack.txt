@@ -1,18 +1,21 @@
 # stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
 #
-# STACK: qwennext-stack-72-2026-09-21
+# STACK: qwennext-stack-89-2026-09-22
 #   main+pr36787+pr37275+pr38144+pr38209+pr36644+pr39862+pr39809+pr39893+local_hicache_qsa_fixes
 #   +pr39614+pr39978+pr40002+pr39065+pr40501+pr40175+pr40362+pr39391+pr37061+pr39333+pr33778
-#   +pr38977+pr39977+pr40480+pr39880+pr40235+pr39807+cpu-triage   (72 commits,
-#   25 PR blocks, 21 local commits -- stack.txt/doc commits excluded)
+#   +pr38977+pr39977+pr40480+pr39880+pr40235+pr39807+cpu-triage+boot-fix+plan_updates_perf
+#   +pr40626+pr40778   (89 commits, 27 PR blocks, 36 local commits -- stack.txt/doc
+#   commits excluded)
 # branch : qwennext-stack
-# tip    : a789b826dd   (the stack.txt commit sits above it)
+# tip    : ff527878d0   (the stack.txt commit sits above it)
 # base   : upstream sgl-project/sglang main @ 7ad55e4386 ([HiCache] TMA-staged
 #          host<->device KV transfer kernel (sm_90+) (#40278), 2026-09-21)
-# updated: 2026-09-21 (full rebuild on the 09-21 main tip + 7 newly-mined PRs
+# updated: 2026-09-22 (09-21: full rebuild on the 09-21 main tip + 7 newly-mined PRs
 #          appended #39333 #33778 #38977 #39977 #40480 #39880 #40235, the
 #          erroneously-dropped #39807 restored as 63-65, then CPU-battery
-#          skip-guard triage entries 66-72)
+#          skip-guard triage entries 66-72; 09-22: boot-fix entries 73-75,
+#          plan_updates perf entries 76-79/81-88, #40626 as entry 80, #40778
+#          as entry 89)
 #
 # Target: Qwen3.8-Flash-Next (Qwen4ExpForConditionalGeneration), 4x RTX PRO 6000
 # Blackwell Max-Q, compute capability 12.0 (SM120), 96 GB each, PCIe only -- no
@@ -21,7 +24,7 @@
 #
 # PROVENANCE: every picked commit is `git cherry-pick -x`, so it carries
 # '(cherry picked from commit <full-sha>)' -- no Upstream-PR trailers are used.
-# All 25 PRs verified OPEN (heads not ancestors of base) as of 2026-09-21.
+# All 27 PRs verified OPEN (heads not ancestors of base) as of 2026-09-22.
 # PR heads MOVE on this repo -- re-fetch before quoting shas.
 
 ==============================================================================
@@ -814,6 +817,26 @@ STACK, IN BUILD ORDER (bottom first)
       # reproduces in the identical-code control or never touches the
       # prefix branch (S08 method; cold first-sends informational).
 
+  PR #40778  [open]  @he-yufeng
+      https://github.com/sgl-project/sglang/pull/40778
+      fix(parser): keep trailing visible text in qwen3_coder one-shot parsing
+         89. ff527878d0  fix(parser): keep trailing visible text in qwen3_coder one-shot parsing
+             <- b942209c7152d31f16e0218b376831ffb6eaeb19
+      # Fixes #40739. Qwen3CoderDetector.detect_and_parse built normal_text
+      # from text[:start_idx] only, so "before<tool_call>...</tool_call>after"
+      # returned content "before" non-streaming but "beforeafter" streaming.
+      # Now carves complete <tool_call> blocks out and keeps text before,
+      # between and after calls; an unclosed trailing block / partial tag is
+      # still cut (matches the streaming state machine). Relevant here: the
+      # qwen3_coder tool parser is the one used for Qwen-family serving.
+      # Clean cherry-pick -x, no conflicts (2 files: qwen3_coder_detector.py
+      # + test_function_call_parser.py).
+      # Verified (.venv2, per file): test_function_call_parser.py 252P ->
+      # 255P (the PR's 3 new parity tests), unit/function_call/ 594P,
+      # test_serving_chat 140P, test_serving_responses 65P,
+      # test_serving_responses_stream 13P, test_template_manager 51P --
+      # 0 failures before and after.
+
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
 ==============================================================================
@@ -965,7 +988,8 @@ REBUILDING FROM SCRATCH
   # All PR heads are already fetched as local branches pr36787 pr37275 pr38144
   # pr38209 pr36644 pr39862 pr39809 pr39893 pr39614 pr39978 pr40002 pr39065
   # pr40501 pr40175 pr40362 pr39391 pr37061 pr39333 pr33778 pr38977 pr39977
-  # pr40480 pr39880 pr40235 pr39807 (branch prev-stack-36644 holds the old
+  # pr40480 pr39880 pr40235 pr39807 pr40778 (pr40626 is a remote,
+  # not a local branch; branch prev-stack-36644 holds the old
   # stack's local shas). Heads move -- re-fetch origin pull/N/head before
   # trusting. pr39807's branch head commits (72969d00c5/029e2f4567/6e4eef4680)
   # are the ones picked for entries 63-65; skip its two merge commits.
