@@ -35,6 +35,7 @@ from sglang.srt.layers.attention.qsa.metadata import (
     compressed_decode_view,
 )
 from sglang.srt.layers.attention.qsa.sparse_attn import (
+    _resolve_chunk_prefill_kv_source,
     is_fp8_kv_dtype,
     qsa_sparse_decode_triton,
     qwen_sparse_fa2_cu_seqlens_triton,
@@ -42,8 +43,10 @@ from sglang.srt.layers.attention.qsa.sparse_attn import (
     qwen_sparse_valid_counts_triton,
     sparse_gqa_fwd_interface_triton,
     sparse_gqa_fwd_interface_triton_ck,
+    sparse_gqa_fwd_interface_triton_paged,
 )
 from sglang.srt.model_executor.forward_batch_info import ForwardMode
+from sglang.srt.runtime_context import get_memory
 
 logger = logging.getLogger(__name__)
 
@@ -248,6 +251,10 @@ class QwenSparseAttnBackend(AttentionBackend):
         self._chunk_prefill_shared: Optional[
             Tuple[object, Optional[int], Dict[str, Any]]
         ] = None
+        # One-shot latch for the paged-path layout-guard fallback warning
+        # (see ``_chunk_prefill_kv_path``); the guard inputs are static per
+        # process, so without the latch the fallback would warn per layer.
+        self._paged_kv_guard_warned = False
         self._cuda_graph_metadata: Dict[
             Tuple[ForwardMode, int], QwenSparseAttnMetadata
         ] = {}
@@ -1596,8 +1603,10 @@ class QwenSparseAttnBackend(AttentionBackend):
             )
             return self._pad_extend_output(output, num_output_rows)
 
-        # The validated chunk-prefill kernel consumes tightly packed full-context
-        # K/V. Current-chunk K/V has already been committed to the cache above.
+        # The packed chunk-prefill kernel consumes tightly packed full-context
+        # K/V (the paged one reads these same pool tensors in place); either
+        # way the buffers come from the cache, which already holds the
+        # current chunk's K/V committed above.
         pool = self.token_to_kv_pool
         k_buffer = pool.get_key_buffer(layer.layer_id)
         v_buffer = pool.get_value_buffer(layer.layer_id)
@@ -1605,8 +1614,34 @@ class QwenSparseAttnBackend(AttentionBackend):
         if is_fp8_kv_dtype(k_buffer.dtype):
             k_scale, v_scale = self._kv_descales(layer, k_buffer.dtype)
             scale_kwargs = {"k_scale": k_scale, "v_scale": v_scale}
+        kv_path = self._chunk_prefill_kv_path()
+        if kv_path == "paged":
+            # Read the pool through req_to_token; no full-context gather is
+            # materialised.  The per-forward cache still holds every other
+            # hoisted tensor, and the pool tensors go to the kernel directly.
+            if "sequence_lens_tensor" not in shared:
+                self._build_chunk_prefill_shared(
+                    shared, forward_batch, q.device, need_gather=False
+                )
+            output = sparse_gqa_fwd_interface_triton_paged(
+                q.contiguous(),
+                k_buffer,
+                v_buffer,
+                self.req_to_token_pool.req_to_token,
+                forward_batch.req_pool_indices,
+                topk_indices,
+                cu_seqlens_q,
+                shared["cu_seqlens_k"],
+                shared["sequence_lens_tensor"],
+                layer.scaling,
+                **scale_kwargs,
+                max_q=shared["max_q"],
+            )
+            return self._pad_extend_output(output, num_output_rows)
         if "gather_index" not in shared:
-            self._build_chunk_prefill_shared(shared, forward_batch, q.device)
+            self._build_chunk_prefill_shared(
+                shared, forward_batch, q.device, need_gather=True
+            )
         gather_index = shared["gather_index"]
         sequence_lens_tensor = shared["sequence_lens_tensor"]
         cu_seqlens_k = shared["cu_seqlens_k"]
@@ -1625,8 +1660,82 @@ class QwenSparseAttnBackend(AttentionBackend):
         )
         return self._pad_extend_output(output, num_output_rows)
 
+    def _paged_kv_source_supported(self) -> Tuple[bool, Optional[str]]:
+        """Whether the paged chunk-prefill kernel's addressing assumptions hold.
+
+        The paged kernel resolves each selected token as ``slot =
+        req_to_token[req_idx[batch], token]`` and reads ``k_buffer[slot]`` /
+        ``v_buffer[slot]`` straight out of the token-to-KV pool, so it is only
+        correct when ``get_key_buffer``/``get_value_buffer`` return the live
+        pool in a token-major 3-D layout.  Two live configurations break that:
+
+        1. the page-major KV envelope (``--enable-page-major-kv-layout``,
+           implied by ``--enable-unified-memory``; the same flag GDN consults
+           at gdn_backend.py:160/195);
+        2. a quant method that serves plain reads through a whole-layer
+           dequantised temporary -- the pool's own predicate
+           ``is_quantized_kv_cache and quant_method.needs_plain_kv_dequant_read()``
+           (MHATokenToKVPool._get_key_buffer, memory_pool.py:2527-2542,
+           method defined at fp4_kv_cache_quant_method.py:204).  Slot indices
+           do not address those temporaries.
+
+        Returns ``(supported, reason)``; ``reason`` is None when supported.
+        The packed gather path is structurally immune to both, so callers
+        fall back to it -- never crash and never silently corrupt output.
+        """
+        if get_memory().enable_page_major_kv_layout:
+            return False, (
+                "page-major KV layout is enabled (--enable-page-major-kv-layout"
+                "); the paged kernel needs the token-major pool layout"
+            )
+        pool = self.token_to_kv_pool
+        # Mirror the pool's own guard order; a quant method without the
+        # predicate never takes the dequant branch in _get_key_buffer either.
+        if (
+            getattr(pool, "is_quantized_kv_cache", False)
+            and getattr(
+                pool.quant_method, "needs_plain_kv_dequant_read", lambda: False
+            )()
+        ):
+            return False, (
+                f"{type(pool).__name__} serves get_key_buffer/get_value_buffer "
+                "as whole-layer dequantised temporaries "
+                "(quant_method.needs_plain_kv_dequant_read()); pool slot "
+                "indices do not address them"
+            )
+        return True, None
+
+    def _chunk_prefill_kv_path(self) -> str:
+        """Resolve the chunked-prefill-with-prefix KV path for this forward.
+
+        ``auto`` and ``packed`` select the existing dense-gather path.
+        ``paged`` selects the paged kernel only while the layout guard holds;
+        if it fails, warn once (the guard inputs are static per process) and
+        fall back to packed -- raising here would turn a mere configuration
+        combination into a crash.
+        """
+        if _resolve_chunk_prefill_kv_source() != "paged":
+            return "packed"
+        supported, reason = self._paged_kv_source_supported()
+        if not supported:
+            if not self._paged_kv_guard_warned:
+                self._paged_kv_guard_warned = True
+                logger.warning(
+                    "SGLANG_QSA_CHUNK_PREFILL_KV_SOURCE=paged is not supported "
+                    "for this deployment: %s; falling back to the packed "
+                    "chunked-prefill KV path",
+                    reason,
+                )
+            return "packed"
+        return "paged"
+
     def _build_chunk_prefill_shared(
-        self, shared: Dict[str, Any], forward_batch, device: torch.device
+        self,
+        shared: Dict[str, Any],
+        forward_batch,
+        device: torch.device,
+        *,
+        need_gather: bool,
     ) -> None:
         """Fill the heavy chunk-prefill fields of the per-forward cache.
 
@@ -1636,9 +1745,25 @@ class QwenSparseAttnBackend(AttentionBackend):
         remaining QSA layers of the same forward reuse them instead of
         rebuilding -- notably the device->host sync on req_pool_indices and
         the full-context gather index -- 12 times per forward.
+
+        The length/cumsum/max_q tensors serve BOTH prefix paths.  The dense
+        ``gather_index`` is packed-only: the paged kernel addresses the pool
+        through ``req_to_token`` directly, so building the O(ctx) index (and
+        paying the ``req_pool_indices.tolist()`` host sync to make it) would
+        be pure overhead there -- ``need_gather=False`` skips it.
         """
         sequence_lens = shared["sequence_lens"]
         extend_lens = shared["extend_lens"]
+        sequence_lens_tensor = torch.tensor(
+            sequence_lens, dtype=torch.int32, device=device
+        )
+        shared["sequence_lens_tensor"] = sequence_lens_tensor
+        shared["cu_seqlens_k"] = F.pad(
+            sequence_lens_tensor.cumsum(0), (1, 0)
+        ).contiguous()
+        shared["max_q"] = max(extend_lens, default=1)
+        if not need_gather:
+            return
         req_to_token = self.req_to_token_pool.req_to_token
         req_indices = forward_batch.req_pool_indices.tolist()
         # Join the gather INDICES, not the gathered K/V.  An index row is 8 B
@@ -1666,15 +1791,7 @@ class QwenSparseAttnBackend(AttentionBackend):
         gather_index = (
             gather_index[0] if len(gather_index) == 1 else torch.cat(gather_index)
         )
-        sequence_lens_tensor = torch.tensor(
-            sequence_lens, dtype=torch.int32, device=device
-        )
         shared["gather_index"] = gather_index
-        shared["sequence_lens_tensor"] = sequence_lens_tensor
-        shared["cu_seqlens_k"] = F.pad(
-            sequence_lens_tensor.cumsum(0), (1, 0)
-        ).contiguous()
-        shared["max_q"] = max(extend_lens, default=1)
 
     @staticmethod
     def _pad_extend_output(output: torch.Tensor, num_rows: int) -> torch.Tensor:
