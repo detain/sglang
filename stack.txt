@@ -702,6 +702,15 @@ STACK, IN BUILD ORDER (bottom first)
       # 1M cold prefill (cp4096); parity gate re-scoped per noise-floor
       # finding (2026-09-21): 6/6 warm long-prefix sends byte-identical.
 
+         79. 463b35fc31  docs(qsa): correct the KV-head byte count in the chunk-prefill gather comment
+      # S09 comment-only fix. The gather comment (propagated from commit
+      # 8e831dc8a6's message) claimed 2 KV heads x head_dim 256 = 512 B per
+      # token per K or V tensor; but get_num_kv_heads = max(1, total_kv_heads
+      # // tp_size) (configs/model_config.py:1503-1514) with 2 total heads
+      # gives 1 KV head PER RANK at both TP2 and TP4, so a K (or V) row is
+      # 256 B/token/tensor in fp8 -- 512 B is the K+V COMBINED figure per
+      # rank. Old claim was 2x high; comment corrected, code untouched.
+
 
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
