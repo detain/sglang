@@ -1642,8 +1642,10 @@ class QwenSparseAttnBackend(AttentionBackend):
         req_to_token = self.req_to_token_pool.req_to_token
         req_indices = forward_batch.req_pool_indices.tolist()
         # Join the gather INDICES, not the gathered K/V.  An index row is 8 B
-        # per token; a K (or V) row is tp_kv_head_num * head_dim bytes -- 512 B
-        # per token on Qwen3.8-Flash-Next (2 KV heads x head_dim 256, fp8).
+        # per token; a K (or V) row is tp_kv_head_num * head_dim bytes -- 256 B
+        # per token per tensor on Qwen3.8-Flash-Next (512 B for K+V combined,
+        # per rank): get_num_kv_heads = max(1, 2 // tp_size) gives 1 KV head
+        # per rank at BOTH TP2 and TP4, head_dim 256, fp8 1 B/elem.
         # Gathering per request and then torch.cat-ing the results materialised
         # a SECOND full-context copy of each of K and V purely to concatenate
         # it, so this path peaked at 4x the packed size instead of 2x.  One
