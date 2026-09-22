@@ -731,6 +731,23 @@ STACK, IN BUILD ORDER (bottom first)
       # allocator; restores the unit/models suite to its pre-existing
       # baseline (8F/492P/7S, all unrelated env failures).
 
+         82. 8a533cd1b9  perf(hc-mix): stop routing 17-64 row mixes to the 80-CTA SM120 config
+      # S11 Phase D (plan_updates item 3). S10 bench: the old SM120 17-64-row
+      # bucket (num_ctas=min(80,sm)=80 of 188 SMs) LOST 18-42% vs
+      # torch.compile at 24/32/48/64 rows (S08-era noise-floor-corrected
+      # CUDA-graph bench); S11's 240-config sweep found no retune clearing
+      # >10% at all four rows, so those rows now return None -> compiled path
+      # (17+). On this (12,0) box the JIT hc_mix is disabled (needs cap
+      # major==10, hyperconnection.py), so fused serves <=16 rows only
+      # (unchanged winners) and 17-64 compile. Rows>64 behavior unchanged.
+
+         83. d35e0eb5de  test(hc-mix): retarget SM120 bucket tests to the 16-row fused cap
+      # S12 test-only. Pins the removed bucket: gate-rejects the 17-64
+      # configs, dispatch returns None for them, and the new
+      # test_sm120_mix_bucket_excludes_mid_row_counts guards the boundary.
+      # Suite 26/26 green; teeth proven by rerunning the tests against the
+      # old-cap module (they fail without the fix).
+
 
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
