@@ -758,6 +758,16 @@ STACK, IN BUILD ORDER (bottom first)
       # bs~2, where rows 8-12 tie or small-lose. Revert 5da784ac40 to
       # remove.
 
+         85. fec708ad07  bench(qsa): repair the sparse-prefill harness against the fp8-KV kernel
+      # S19 Phase G (plan_updates). Bench-only repair: raw launches re-
+      # matched to post-fp8-KV signatures (scale,k_scale,v_scale,topk + 15
+      # strides + KV_IS_FP8; 25/27 positionals verified by reviewer); tuned
+      # provider now routed through the public wrappers, raw kept only for
+      # geometry sweeps/sanitizer; --kv-dtype {bf16,fp8_e4m3} added;
+      # _sanitizer_case arity fixed; SM120 flash-attn external comparator
+      # tolerated as skip (in-file torch golden still gates correctness).
+      # Smoke+bench+sanitize green both dtypes; probe untouched.
+
 
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
