@@ -785,15 +785,34 @@ STACK, IN BUILD ORDER (bottom first)
       # NOT wired: backend untouched (S22 selector, S23 layout guard).
 
          87. f5f71feebb  [QSA] Add SGLANG_QSA_CHUNK_PREFILL_KV_SOURCE selector
-       # S22 Phase G (plan_updates). Selection config only: EnvStr("auto")
-       # in the environ.py QSA block + lru_cache'd resolver in sparse_attn.py
-       # beside _qsa_prefill_geometry -- reads via .get(), ValueError names
-       # auto/packed/paged, one-shot logger.info of the live path; auto ->
-       # packed so the unproven paged kernel stays dark until S24 measures
-       # it. No backend wiring (S23). Cache_clear hook proven by the CPU
-       # test (7P/2-sub, green with no GPU visible). Unit attention dir
-       # 2F/202P/13S (baseline +7, same 2 FA3 fails); qsa ops dir
-       # 7F/166P/3S = baseline exact.
+      # S22 Phase G (plan_updates). Selection config only: EnvStr("auto")
+      # in the environ.py QSA block + lru_cache'd resolver in sparse_attn.py
+      # beside _qsa_prefill_geometry -- reads via .get(), ValueError names
+      # auto/packed/paged, one-shot logger.info of the live path; auto ->
+      # packed so the unproven paged kernel stays dark until S24 measures
+      # it. No backend wiring (S23). Cache_clear hook proven by the CPU
+      # test (7P/2-sub, green with no GPU visible). Unit attention dir
+      # 2F/202P/13S (baseline +7, same 2 FA3 fails); qsa ops dir
+      # 7F/166P/3S = baseline exact.
+
+         88. ac8968c29c  [QSA] Route chunk prefill through the paged kernel behind the KV-source selector
+      # S23 Phase G (plan_updates). Wiring + guard: the prefix branch of
+      # forward_extend dispatches on _resolve_chunk_prefill_kv_source();
+      # paged feeds pool k/v + req_to_token/req_pool_indices to the S21
+      # kernel and skips the O(ctx) dense gather -- the build is now
+      # gated by need_gather (packed-only) while lens/cumsum/max_q stay
+      # hoisted once per forward for both paths. Guard
+      # _paged_kv_source_supported rejects get_memory().
+      # enable_page_major_kv_layout and the pool's own
+      # is_quantized_kv_cache + quant_method.needs_plain_kv_dequant_read
+      # predicate (the _get_key_buffer dequant-temp branch); guard-fail
+      # -> one-shot WARNING naming the reason + packed fallback, never
+      # raises; auto stays packed, packed call sites byte-identical.
+      # CPU dispatch/guard tests +8 (selector file now 15P/2-sub).
+      # Warm-long 3-arm greedy parity on the probe: 6/6 long prompts
+      # byte-identical auto/packed/paged; every short/medium diff
+      # reproduces in the identical-code control or never touches the
+      # prefix branch (S08 method; cold first-sends informational).
 
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
