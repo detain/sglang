@@ -87,19 +87,22 @@ def test_fused_hc_mix_no_less_accurate_than_eager():
 
 
 @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
-@pytest.mark.parametrize("num_tokens", [17, _SM120_FUSED_MIX_MAX_ROWS])
+@pytest.mark.parametrize("num_tokens", [_SM120_FUSED_MIX_MAX_ROWS + 1, 64])
 @requires_cuda
-def test_sm120_fused_hc_mix_matches_reference(dtype, num_tokens):
+def test_sm120_fused_hc_mix_gate_rejects_old_mid_bucket(dtype, num_tokens):
     if torch.cuda.get_device_capability() != (12, 0):
         pytest.skip("SM120-specific row range")
+    # S11 capped the SM120 fused bucket at _SM120_FUSED_MIX_MAX_ROWS (16): on
+    # 188-SM parts the 80-CTA 17-64-row config lost to torch.compile by
+    # 18-42%, so these rows must report unsupported and let
+    # GatedResidual.mix fall back to the compiled path. 64 is the old bucket
+    # bound (a row-count probe below the torch.compile prefill sizes, not a
+    # structural constant).
     x, w_down, w_up = _make_inputs(num_tokens, dtype)
-    assert fused_hc_mix_supported(x, w_down, w_up)
-    out = fused_hc_mix(x, w_down, w_up, HC_COUNT, HIDDEN_SIZE)
-    ref = _reference_mix(x, w_down, w_up, HC_COUNT, HIDDEN_SIZE)
-    torch.testing.assert_close(out.to(torch.float64), ref, **_TOLERANCES[dtype])
+    assert not fused_hc_mix_supported(x, w_down, w_up)
 
 
-@pytest.mark.parametrize("num_tokens", [1, 16, _SM120_FUSED_MIX_MAX_ROWS])
+@pytest.mark.parametrize("num_tokens", [1, _SM120_FUSED_MIX_MAX_ROWS])
 @requires_cuda
 def test_sm120_fused_hc_mix_graph_replay_stability(num_tokens):
     if torch.cuda.get_device_capability() != (12, 0):
@@ -143,21 +146,41 @@ def test_fused_hc_mix_deterministic_inference_fallback(monkeypatch):
     [
         (1, 1, 16, 80, 256, 4),
         (2, 16, 16, 80, 256, 4),
-        (16, 16, 16, 80, 256, 4),
-        (17, 64, 64, 80, 128, 8),
-        (64, 64, 64, 80, 128, 8),
+        (_SM120_FUSED_MIX_MAX_ROWS, 16, 16, 80, 256, 4),
+        # S11 removed the old 17-64 bucket (max_rows=rows_pad=64, block_k=128,
+        # num_warps=8): its 80-CTA grid lost to torch.compile by 18-42% on
+        # 188-SM parts. Rows above the cap select no config and fall through
+        # to the compiled path. 64 = old bucket bound, kept as a row probe.
+        (_SM120_FUSED_MIX_MAX_ROWS + 1, None, None, None, None, None),
+        (64, None, None, None, None, None),
     ],
 )
 def test_sm120_hc_mix_dispatch_buckets(
     num_rows, max_rows, rows_pad, num_ctas, block_k, num_warps
 ):
     config = _select_hc_mix_config(num_rows, (12, 0), 188)
+    if max_rows is None:
+        assert config is None
+        return
     assert config is not None
     assert config.max_rows == max_rows
     assert config.rows_pad == rows_pad
     assert config.num_ctas == num_ctas
     assert config.block_k == block_k
     assert config.num_warps == num_warps
+
+
+def test_sm120_mix_bucket_excludes_mid_row_counts():
+    # No GPU needed: _select_hc_mix_config is pure (capability and sm_count
+    # are arguments). Pins S11's decision so nobody silently re-widens the
+    # bucket: on 188-SM SM120 parts the 80-CTA persistent config lost to
+    # torch.compile by 18-42% at 24/32/48/64 rows (measured 2026-09-22 on
+    # RTX PRO 6000 Blackwell Max-Q). Rows 17-64 must fall through to the
+    # compiled path.
+    for rows in (_SM120_FUSED_MIX_MAX_ROWS + 1, 24, 32, 48, 64):
+        assert _select_hc_mix_config(rows, (12, 0), 188) is None
+    for rows in (1, 8, _SM120_FUSED_MIX_MAX_ROWS):
+        assert _select_hc_mix_config(rows, (12, 0), 188) is not None
 
 
 def test_hc_mix_dispatch_keeps_other_devices_unchanged():
