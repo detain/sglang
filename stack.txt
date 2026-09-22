@@ -768,6 +768,22 @@ STACK, IN BUILD ORDER (bottom first)
       # tolerated as skip (in-file torch golden still gates correctness).
       # Smoke+bench+sanitize green both dtypes; probe untouched.
 
+         86. 68369797ef  [QSA] Add a paged chunk-prefill kernel that reads K/V via req_to_token
+      # S21 Phase G (plan_updates). Kernel-only: new
+      # _sparse_gqa_chunk_prefill_paged + wrapper
+      # sparse_gqa_fwd_interface_triton_paged mirror the packed ck path;
+      # per K-token slot = req_to_token[req_idx[batch], token] (per-token
+      # table, no page arithmetic), pool K/V read directly -- the per-layer
+      # C x 520 B gather transient this removes lands in S23/S24. Slot
+      # offsets int64; 8.4M-slot fp8 pool test proves it (max flat index
+      # 2,150,399,999 > 2**31-1; int32 variant trips an illegal access on
+      # the same fixture -- tooth-checked out of tree). Oracle = packed
+      # path, torch.equal EXACT: 11 new tests (single/ragged/zero-prefix/
+      # scattered/page64/page128 x bf16+fp8 + int64 case). Original
+      # _sparse_gqa_chunk_prefill byte-unchanged (diff: 243 insertions, 0
+      # deletions). qsa dir 7F/166P/3S -- baseline 7 names, +11 passes.
+      # NOT wired: backend untouched (S22 selector, S23 layout guard).
+
 
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
