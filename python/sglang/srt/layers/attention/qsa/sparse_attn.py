@@ -605,6 +605,249 @@ def sparse_gqa_fwd_interface_triton_ck(
 
 
 @triton.jit
+def _sparse_gqa_chunk_prefill_paged(
+    q,
+    k,
+    v,
+    out,
+    req_to_token,
+    req_idx,
+    indices,
+    cu_q,
+    cu_k,
+    kv_lens,
+    scale,
+    k_scale,
+    v_scale,
+    topk,
+    sq_m: tl.constexpr,
+    sq_h: tl.constexpr,
+    sq_d: tl.constexpr,
+    sk_n: tl.constexpr,
+    sk_h: tl.constexpr,
+    sk_d: tl.constexpr,
+    sv_n: tl.constexpr,
+    sv_h: tl.constexpr,
+    sv_d: tl.constexpr,
+    so_m: tl.constexpr,
+    so_h: tl.constexpr,
+    so_d: tl.constexpr,
+    si_m: tl.constexpr,
+    si_g: tl.constexpr,
+    si_n: tl.constexpr,
+    sr_m: tl.constexpr,
+    sr_n: tl.constexpr,
+    NUM_KV_HEADS: tl.constexpr,
+    GROUP_SIZE: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    HEAD_DIM: tl.constexpr,
+    KV_IS_FP8: tl.constexpr,
+):
+    """Chunk-prefill attention reading K/V directly from the paged pool.
+
+    Identical math to ``_sparse_gqa_chunk_prefill``; only the K/V addressing
+    differs.  The packed kernel walks a densified buffer at row
+    ``k_start + token``; this kernel resolves each selected token through the
+    per-token slot table, ``slot = req_to_token[req_idx[batch], token]``, and
+    reads ``k[slot]`` / ``v[slot]`` from the live pool, so no full-context
+    gather is materialised.  ``req_to_token`` is a per-TOKEN table
+    (``memory_pool.ReqToTokenPool.req_to_token``), not a page table: there is
+    deliberately no page arithmetic here.  ``cu_k`` keeps its packed meaning
+    for signature parity but is not dereferenced -- the slot table replaces
+    the packed row base.
+    """
+    query_relative = tl.program_id(0).to(tl.int64)
+    batch_group = tl.program_id(1)
+    group = batch_group % NUM_KV_HEADS
+    batch = batch_group // NUM_KV_HEADS
+    q_start = tl.load(cu_q + batch)
+    q_end = tl.load(cu_q + batch + 1)
+    query = (q_start + query_relative).to(tl.int64)
+    if query >= q_end:
+        return
+    kv_len = tl.load(kv_lens + batch).to(tl.int64)
+    visible = query_relative + kv_len - (q_end - q_start) + 1
+    row_topk = tl.minimum(topk, visible)
+    row_limit = tl.minimum(topk, ((row_topk + BLOCK_N - 1) // BLOCK_N) * BLOCK_N)
+    offs_h = tl.arange(0, BLOCK_M)
+    offs_d = tl.arange(0, HEAD_DIM)
+    q_values = tl.load(
+        q
+        + query * sq_m
+        + (group * GROUP_SIZE + offs_h[:, None]) * sq_h
+        + offs_d[None, :] * sq_d,
+        mask=(offs_h < GROUP_SIZE)[:, None],
+        other=0.0,
+    )
+    q_values = (q_values * scale * 1.4426950408).to(q_values.dtype)
+    # int64: the physical slot times the pool row stride passes 2**31 once the
+    # pool holds more slots than 2**31 / stride, and Triton keeps the whole
+    # offset expression in the width of its operands (same hazard documented
+    # in ``_qsa_sparse_decode``).
+    request_offset = tl.load(req_idx + batch).to(tl.int64) * sr_m
+    k_base = k + group * sk_h
+    v_base = v + group * sv_h
+    idx_row = indices + query * si_m + group * si_g
+    max_value = tl.full([BLOCK_M], -float("inf"), tl.float32)
+    normalizer = tl.zeros([BLOCK_M], tl.float32)
+    accumulator = tl.zeros([BLOCK_M, HEAD_DIM], tl.float32)
+    offs_n = tl.arange(0, BLOCK_N)
+    for start in range(0, row_limit, BLOCK_N):
+        current = start + offs_n
+        token = tl.load(idx_row + current * si_n, mask=current < topk, other=-1)
+        # Same bound as the packed kernel: kv_len is this request's logical
+        # sequence length, so an index at or past it is not this request's.
+        valid = (token >= 0) & (token < kv_len)
+        logical_offset = tl.where(valid, token, 0).to(tl.int64) * sr_n
+        slots = tl.load(
+            req_to_token + request_offset + logical_offset,
+            mask=valid,
+            other=0,
+        ).to(tl.int64)
+        keys = tl.load(
+            k_base + slots[None, :] * sk_n + offs_d[:, None] * sk_d,
+            mask=valid[None, :],
+            other=0.0,
+        )
+        if KV_IS_FP8:
+            keys = keys.to(q_values.dtype)
+        values = tl.load(
+            v_base + slots[:, None] * sv_n + offs_d[None, :] * sv_d,
+            mask=valid[:, None],
+            other=0.0,
+        )
+        if KV_IS_FP8:
+            values = values.to(q_values.dtype)
+        scores = tl.dot(q_values, keys)
+        if KV_IS_FP8:
+            scores *= k_scale
+        scores = tl.where(valid[None, :], scores, -float("inf"))
+        has_values = tl.sum(valid.to(tl.int32), axis=0) > 0
+        block_max = tl.max(scores, axis=1)
+        next_max = tl.where(has_values, tl.maximum(max_value, block_max), max_value)
+        alpha = tl.where(has_values, tl.math.exp2(max_value - next_max), 1.0)
+        probabilities = tl.where(
+            valid[None, :], tl.math.exp2(scores - next_max[:, None]), 0.0
+        )
+        if KV_IS_FP8:
+            accumulator = (
+                accumulator * alpha[:, None]
+                + tl.dot(probabilities.to(values.dtype), values) * v_scale
+            )
+        else:
+            accumulator = tl.dot(
+                probabilities.to(values.dtype), values, accumulator * alpha[:, None]
+            )
+        normalizer = normalizer * alpha + tl.sum(probabilities, 1)
+        max_value = next_max
+    output = tl.where(
+        normalizer[:, None] > 0,
+        accumulator / normalizer[:, None],
+        0.0,
+    )
+    tl.store(
+        out
+        + query * so_m
+        + (group * GROUP_SIZE + offs_h[:, None]) * so_h
+        + offs_d[None, :] * so_d,
+        output,
+        mask=(offs_h < GROUP_SIZE)[:, None],
+    )
+
+
+def sparse_gqa_fwd_interface_triton_paged(
+    q,
+    k_buffer,
+    v_buffer,
+    req_to_token,
+    req_idx,
+    indices,
+    cu_q,
+    cu_k,
+    kv_lens,
+    scale,
+    k_scale: Optional[float] = None,
+    v_scale: Optional[float] = None,
+    # Same host-side launch bound as sparse_gqa_fwd_interface_triton_ck: the
+    # backend knows max_q from extend_seq_lens_cpu; passing it avoids the
+    # per-layer device read in the fallback branch.
+    *,
+    max_q: Optional[int] = None,
+):
+    """Paged chunk-prefill entry point (exact oracle: the packed ``_ck`` path).
+
+    ``k_buffer``/``v_buffer`` are the live token-to-KV pool tensors for this
+    layer (``[num_slots, num_kv_heads, head_dim]``), read through
+    ``req_to_token`` (2-D int32 per-token slot table) via the per-request
+    ``req_idx`` vector (request-pool row index per batch entry).  No
+    densification happens here -- that is the whole point of this path.
+    """
+    k, v = k_buffer.contiguous(), v_buffer.contiguous()
+    kv_is_fp8 = _validate_sparse_gqa_dtypes(q, k, v)
+    total_q, num_q_heads, head_dim = q.shape
+    num_kv_heads = k.shape[1]
+    group_size = num_q_heads // num_kv_heads
+    if max_q is None:
+        # Fallback mirrors the packed wrapper: pay the device read only for
+        # callers that cannot supply the host-side bound.
+        max_q = int((cu_q[1:] - cu_q[:-1]).max().item())
+    block_m, block_n, warps, stages = _get_prefill_config(
+        total_q,
+        group_size,
+        cu_q.shape[0] - 1,
+        head_dim,
+        kernel="chunk",
+        topk=indices.shape[-1],
+        num_kv_heads=num_kv_heads,
+        max_q=max_q,
+    )
+    out = torch.empty_like(q)
+    _sparse_gqa_chunk_prefill_paged[(max_q, (cu_q.shape[0] - 1) * num_kv_heads)](
+        q,
+        k,
+        v,
+        out,
+        req_to_token,
+        req_idx,
+        indices,
+        cu_q,
+        cu_k,
+        kv_lens,
+        scale,
+        _unit_scale(k_scale),
+        _unit_scale(v_scale),
+        indices.shape[-1],
+        q.stride(0),
+        q.stride(1),
+        q.stride(2),
+        k.stride(0),
+        k.stride(1),
+        k.stride(2),
+        v.stride(0),
+        v.stride(1),
+        v.stride(2),
+        out.stride(0),
+        out.stride(1),
+        out.stride(2),
+        indices.stride(0),
+        indices.stride(1) if indices.ndim == 3 else 0,
+        indices.stride(2) if indices.ndim == 3 else indices.stride(1),
+        req_to_token.stride(0),
+        req_to_token.stride(1),
+        NUM_KV_HEADS=num_kv_heads,
+        GROUP_SIZE=group_size,
+        BLOCK_M=block_m,
+        BLOCK_N=block_n,
+        HEAD_DIM=head_dim,
+        KV_IS_FP8=kv_is_fp8,
+        num_warps=warps,
+        num_stages=stages,
+    )
+    return out
+
+
+@triton.jit
 def _qsa_sparse_decode(
     q,
     k,
