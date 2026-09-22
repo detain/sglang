@@ -23,6 +23,7 @@ import torch
 from sglang.srt.environ import envs
 from sglang.srt.utils.numa_utils import (
     InterleavedPinnedBuffer,
+    _allocate_pinned_table,
     allocate_interleaved_pinned_table,
     numa_memory_nodes,
     numa_page_counts,
@@ -160,7 +161,6 @@ class TestInterleavedPinnedTable(CustomTestCase):
         interleaved.assert_called_once()
 
     def test_interleaved_failure_falls_back_to_node_local_pinning(self):
-        sentinel = object()
         with (
             envs.SGLANG_PLE_OFFLOAD_NUMA_INTERLEAVE.override(True),
             patch("sglang.srt.utils.numa_utils.numa_memory_nodes", return_value=[0, 1]),
@@ -170,48 +170,61 @@ class TestInterleavedPinnedTable(CustomTestCase):
                 side_effect=RuntimeError("cudaHostRegister failed"),
             ),
             patch(
-                "sglang.srt.utils.numa_utils.torch.empty", return_value=sentinel
+                "sglang.srt.utils.numa_utils._allocate_pinned_table",
+                wraps=_allocate_pinned_table,
             ) as plain,
         ):
             tensor, buffer = allocate_interleaved_pinned_table(
                 (1024, _TABLE_DIM), torch.float8_e4m3fn, interleave=True
             )
 
-        self.assertIs(tensor, sentinel)
+        plain.assert_called_once_with((1024, _TABLE_DIM), torch.float8_e4m3fn)
         self.assertIsNone(buffer)
-        plain.assert_called_once()
+        self.assertEqual(tensor.shape, (1024, _TABLE_DIM))
+        self.assertEqual(tensor.dtype, torch.float8_e4m3fn)
+        self.assertTrue(tensor.is_pinned(), "fallback table is not page-locked")
 
     def test_permission_denied_uses_node_local_pinning(self):
-        sentinel = object()
         with (
             envs.SGLANG_PLE_OFFLOAD_NUMA_INTERLEAVE.override(True),
             patch("sglang.srt.utils.numa_utils.numa_memory_nodes", return_value=[0, 1]),
             patch("sglang.srt.utils.numa_utils._can_set_mempolicy", return_value=False),
             patch("sglang.srt.utils.numa_utils.InterleavedPinnedBuffer") as interleaved,
-            patch("sglang.srt.utils.numa_utils.torch.empty", return_value=sentinel),
+            patch(
+                "sglang.srt.utils.numa_utils._allocate_pinned_table",
+                wraps=_allocate_pinned_table,
+            ) as plain,
         ):
             tensor, buffer = allocate_interleaved_pinned_table(
                 (1024, _TABLE_DIM), torch.float8_e4m3fn, interleave=True
             )
 
-        self.assertIs(tensor, sentinel)
-        self.assertIsNone(buffer)
         interleaved.assert_not_called()
+        plain.assert_called_once_with((1024, _TABLE_DIM), torch.float8_e4m3fn)
+        self.assertIsNone(buffer)
+        self.assertEqual(tensor.shape, (1024, _TABLE_DIM))
+        self.assertEqual(tensor.dtype, torch.float8_e4m3fn)
+        self.assertTrue(tensor.is_pinned(), "fallback table is not page-locked")
 
     def test_non_sm120_policy_uses_node_local_pinning(self):
-        sentinel = object()
         with (
             envs.SGLANG_PLE_OFFLOAD_NUMA_INTERLEAVE.override(True),
             patch("sglang.srt.utils.numa_utils.InterleavedPinnedBuffer") as interleaved,
-            patch("sglang.srt.utils.numa_utils.torch.empty", return_value=sentinel),
+            patch(
+                "sglang.srt.utils.numa_utils._allocate_pinned_table",
+                wraps=_allocate_pinned_table,
+            ) as plain,
         ):
             tensor, buffer = allocate_interleaved_pinned_table(
                 (1024, _TABLE_DIM), torch.float8_e4m3fn, interleave=False
             )
 
-        self.assertIs(tensor, sentinel)
-        self.assertIsNone(buffer)
         interleaved.assert_not_called()
+        plain.assert_called_once_with((1024, _TABLE_DIM), torch.float8_e4m3fn)
+        self.assertIsNone(buffer)
+        self.assertEqual(tensor.shape, (1024, _TABLE_DIM))
+        self.assertEqual(tensor.dtype, torch.float8_e4m3fn)
+        self.assertTrue(tensor.is_pinned(), "fallback table is not page-locked")
 
     def test_single_node_placement_is_not_logged_as_interleaved(self):
         sentinel = object()
