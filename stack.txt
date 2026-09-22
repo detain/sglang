@@ -748,6 +748,16 @@ STACK, IN BUILD ORDER (bottom first)
       # Suite 26/26 green; teeth proven by rerunning the tests against the
       # old-cap module (they fail without the fix).
 
+         84. 5da784ac40  [Qwen4-Exp] Add a fused HC combine + grouped-RMSNorm kernel
+      # S16 Phase F (plan_updates). Kernel + wrapper + 59-test byte-parity
+      # suite: EXACT 0ulp both outputs (12 rows x 2 dtypes + 360-case
+      # adversarial battery). DORMANT -- NOT wired into dispatch: the S15
+      # pre-registered rule closed Phase F -- fused prefill measures
+      # 243.1 us vs the <=215 us bar, a win of -0.6 us against the -25 us
+      # threshold; the win band (33-48 rows) needs bs 7-10 while prod runs
+      # bs~2, where rows 8-12 tie or small-lose. Revert 5da784ac40 to
+      # remove.
+
 
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
