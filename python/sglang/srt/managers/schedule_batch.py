@@ -1754,18 +1754,31 @@ class Req(ReqDllmMixin):
         if self.sampling_params.ignore_eos:
             return False
 
+        # Some reasoning models emit their EOS token (e.g. Qwen im_end)
+        # mid-thinking; finishing on it truncates the reply with an empty
+        # answer (issue #24839). While the reasoning phase is still open, only
+        # user-provided stop_token_ids may finish; model eos_token_ids, the
+        # tokenizer eos and additional_stop_token_ids are suppressed.
+        # Reasoning state is advanced over the whole accepted run before this
+        # check, so a speculative run containing an EOS followed by a later
+        # think_end still finishes on the EOS (rare, accepted).
+        suppress_model_eos = self.require_reasoning and not self._is_reasoning_over
+
         # Check stop token ids
         matched_eos = False
 
         for i, token_id in enumerate(new_accepted_tokens):
             if self.sampling_params.stop_token_ids:
                 matched_eos |= token_id in self.sampling_params.stop_token_ids
-            if self.eos_token_ids:
-                matched_eos |= token_id in self.eos_token_ids
-            if self.tokenizer is not None:
-                matched_eos |= token_id == self.tokenizer.eos_token_id
-                if self.tokenizer.additional_stop_token_ids:
-                    matched_eos |= token_id in self.tokenizer.additional_stop_token_ids
+            if not suppress_model_eos:
+                if self.eos_token_ids:
+                    matched_eos |= token_id in self.eos_token_ids
+                if self.tokenizer is not None:
+                    matched_eos |= token_id == self.tokenizer.eos_token_id
+                    if self.tokenizer.additional_stop_token_ids:
+                        matched_eos |= (
+                            token_id in self.tokenizer.additional_stop_token_ids
+                        )
             if matched_eos:
                 self.finished_reason = FINISH_MATCHED_TOKEN(matched=token_id)
                 matched_pos = len(self.output_ids) - len(new_accepted_tokens) + i
