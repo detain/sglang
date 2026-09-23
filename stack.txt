@@ -1,21 +1,26 @@
 # stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
 #
-# STACK: qwennext-stack-91-2026-09-22
+# STACK: qwennext-stack-93-2026-09-22
 #   main+pr36787+pr37275+pr38144+pr38209+pr36644+pr39862+pr39809+pr39893+local_hicache_qsa_fixes
 #   +pr39614+pr39978+pr40002+pr39065+pr40501+pr40175+pr40362+pr39391+pr37061+pr39333+pr33778
 #   +pr38977+pr39977+pr40480+pr39880+pr40235+pr39807+cpu-triage+boot-fix+plan_updates_perf
-#   +pr40626+pr40778+pr40748   (91 commits, 28 PR blocks, 37 local commits --
-#   stack.txt/doc commits excluded)
+#   +pr40626+pr40778+pr40748+upstream-merge   (93 stack commits, 28 PR blocks --
+#   3 now merged upstream -- 39 local commits; stack.txt/doc commits and the
+#   upstream merge commit excluded)
 # branch : qwennext-stack
-# tip    : 82cb963b10   (the stack.txt commit sits above it)
+# tip    : db9d0720fb   (the stack.txt commit sits above it)
 # base   : upstream sgl-project/sglang main @ 7ad55e4386 ([HiCache] TMA-staged
 #          host<->device KV transfer kernel (sm_90+) (#40278), 2026-09-21)
+# synced : upstream main @ d34f7b2326 (#40780, 2026-09-22) MERGED IN as
+#          a87ae32c42 on top of entry 91 -- 113 upstream commits; see the
+#          UPSTREAM MERGE section after entry 91. Entry shas below stay valid.
 # updated: 2026-09-22 (09-21: full rebuild on the 09-21 main tip + 7 newly-mined PRs
 #          appended #39333 #33778 #38977 #39977 #40480 #39880 #40235, the
 #          erroneously-dropped #39807 restored as 63-65, then CPU-battery
 #          skip-guard triage entries 66-72; 09-22: boot-fix entries 73-75,
 #          plan_updates perf entries 76-79/81-88, #40626 as entry 80, #40778
-#          as entry 89, #40748 as entry 90 + its test follow-up 91)
+#          as entry 89, #40748 as entry 90 + its test follow-up 91, then the
+#          upstream-main merge a87ae32c42 + post-merge fixes 92-93)
 #
 # Target: Qwen3.8-Flash-Next (Qwen4ExpForConditionalGeneration), 4x RTX PRO 6000
 # Blackwell Max-Q, compute capability 12.0 (SM120), 96 GB each, PCIe only -- no
@@ -24,7 +29,8 @@
 #
 # PROVENANCE: every picked commit is `git cherry-pick -x`, so it carries
 # '(cherry picked from commit <full-sha>)' -- no Upstream-PR trailers are used.
-# All 28 PRs verified OPEN (heads not ancestors of base) as of 2026-09-22.
+# 25 of 28 PRs verified OPEN as of 2026-09-22; #40501, #40175 and #33778
+# MERGED upstream on 09-22 and arrived again through the upstream merge.
 # PR heads MOVE on this repo -- re-fetch before quoting shas.
 
 ==============================================================================
@@ -278,7 +284,7 @@ STACK, IN BUILD ORDER (bottom first)
       # SM120 uses for fp8 MoE weights under deep_gemm. Complements entries
       # 29/57 (same deep_gemm_wrapper surface; #39977 depends on this gate).
 
-  PR #40501  [open]  @zhangxiaolei (+ @Yangmin Li on entry 44)
+  PR #40501  [MERGED upstream 09-22 as 6fd98c98b9]  @zhangxiaolei (+ @Yangmin Li on entry 44)
       https://github.com/sgl-project/sglang/pull/40501
       [Qwen4-Exp] Pipeline-parallel serving, PP PD prefill with MTP, PP follow-ups
          42. 92da01dc03  feat(qwen4): support pipeline parallel serving
@@ -296,7 +302,7 @@ STACK, IN BUILD ORDER (bottom first)
       # bottleneck -- needs --pp sizing retune before use. PP+NEXTN aggregate
       # accuracy is gated on watchlist #39643/#40001 (GSM8K .980 -> .955).
 
-  PR #40175  [open]  @Emre Albayrak
+  PR #40175  [MERGED upstream 09-22 as 9d58189c12]  @Emre Albayrak
       https://github.com/sgl-project/sglang/pull/40175
       [diffusion] attention: add fp8_fa_sm120 FP8 backend for SM120 GPUs
          45. fd3bbb87f7  [diffusion] attention: add fp8_fa_sm120 FP8 backend for SM120 GPUs
@@ -363,7 +369,7 @@ STACK, IN BUILD ORDER (bottom first)
       # Ships no tests; regression: test_qsa_fp8_store_kv + 
       # test_qsa_sparse_prefill_config = 19P + 40 subtests (baseline).
 
-  PR #33778  [open]  @Vedant V Jhaveri
+  PR #33778  [MERGED upstream 09-22 as 9fdb71732a]  @Vedant V Jhaveri
       https://github.com/sgl-project/sglang/pull/33778
       Optimize GDN target verify QKV handling
          54. 0dc085431a  Optimize GDN target verify QKV handling
@@ -872,6 +878,48 @@ STACK, IN BUILD ORDER (bottom first)
       # real HostPoolGroup.alloc / MambaComponent.alloc_prefetch_staging
       # with fake pools: reclaims 7 of 10 / 7 of 12, 0 when already free.
 
+  (tag: upstream-merge) =====================================================
+  UPSTREAM MERGE -- 2026-09-22: main @ d34f7b2326 merged as a87ae32c42
+  ============================================================================
+  # safety tag before the merge: safety/pre-upstream-merge-1790117822 (=6685e69896)
+  # 113 upstream commits. #40501/#40175/#33778 landed upstream as merged;
+  # every line their upstream squashes add is present in the merged tree
+  # (checked line-by-line), so the picked entries stay and nothing doubles.
+  # Conflicts (4 files, all resolved as unions):
+  #   arg_groups/fields/memory.py, managers/cache_controller.py -- our
+  #     fast_file backend (#39880) + upstream's new tensorcast backend.
+  #   layers/attention/qsa/mqa.py -- keep SM120 Triton imports + fp8
+  #     _scoring_dtype; adopt upstream ROCm 16-wide head pad (#38875) + is_hip.
+  #   models/qwen4_exp.py -- 6 hunks, all stack-only additions (PLE host
+  #     staging, graph prewarm, replay prepare) vs upstream's final #40501;
+  #     merged file == pre-merge stack file.
+  # Dependency pins moved: xgrammar 0.2.1 -> 0.2.7, sgl-eval 0.1.0 -> 0.1.2.
+  #   xgrammar IS LOAD-BEARING: qwen3_coder structural-tag tool calling now
+  #   passes parallel_tool_calls= -- on 0.2.1 it raises TypeError (18 unit
+  #   failures, all gone on 0.2.7).
+         92. 40ef9667d2  fix(qwen4-exp): read attention DP size from the parallel context in PLE prewarm
+      # Latent since #36787 entry 11 (0eb412eba9), found by F821 lint during
+      # the merge: get_attention_dp_size() is defined nowhere in srt (getter
+      # retired upstream). Only reached with DP attention attn_dp_size > 1
+      # (gather_dp_tokens) -- never on our tp4/tp2 configs -- where it would
+      # NameError on first graph prewarm. Now get_parallel().attn_dp_size.
+         93. db9d0720fb  test(nvfp4): give the small-row fallback stub apply_router_weight_on_input
+      # Upstream #35504 made _run_flashinfer_cutlass read
+      # runner_config.apply_router_weight_on_input; the SimpleNamespace stub in
+      # test_nvfp4_smallm_dispatch (from #36787's small-row kernel) lacked it
+      # -> 4 AttributeErrors. Third instance of the stub-drift lesson (see the
+      # #39614 caveat). Production MoeRunnerConfig defaults it to False.
+      # Verified: full test/registered/unit battery, 761 files one process
+      # each (-P 6), pre-merge 6685e69896 vs post-merge, per-file diff:
+      #   worse after merge: 4 files -> 18 cases = old xgrammar (fixed by the
+      #   pin), 4 cases = stub drift (93). test_nvfp4_moe_backends /
+      #   test_nvfp4_linear_backends: same SM120 trtllm/cute-dsl mm_fp4
+      #   failures as base (base run of moe_backends had died mid-file;
+      #   re-run on base: identical 2F). 10 upstream-new files: all pass
+      #   except the two xgrammar ones, which pass on 0.2.7.
+      # Live venv refreshed 09-22: uv pip install -e python (plan: sglang +
+      # xgrammar only; torch/flashinfer/triton/sglang-kernel untouched).
+
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
 ==============================================================================
@@ -916,6 +964,18 @@ EVALUATED AND DELIBERATELY NOT INCLUDED
       #40762 (FA backend), #40771 (ROCm QuickReduce), #40775/#40780
       (radix-tree cleanups -- rebase conflicts only), AMD/NPU/XPU/
       diffusion/router/RL/PD.
+
+  PR #40790 / #33633 -- /v1/responses stream abort on reasoning.effort
+      xhigh/max/none. NOT APPLIED: already fixed in base by upstream #32689
+      (ResponsesResponse.from_request echoes only ECHOABLE_REASONING_EFFORTS,
+      so extended tiers echo null and never reach the SDK event models; guarded
+      by test_only_sdk_known_efforts_echoed_so_streaming_event_validates).
+      Verified in a worktree: xhigh/max/none streams complete with effort null
+      with or without #40790 -- its collapse hook runs after the value is
+      already None (dead code). #33633 would echo the real tier (reversing
+      upstream's deliberate choice); its other fix (array function_call_output)
+      is covered upstream by #38690. Generation uses the requested tier in all
+      variants. Local branches pr40790 / pr33633 kept for reference.
 
 ==============================================================================
 WATCH LIST (re-evaluate before next sync)
@@ -1005,12 +1065,25 @@ CAVEATS
     /root/sglang/.venv is editable to the OLD checkout /root/sglang/sglang.prev;
     THIS repo was verified via a hardlink clone at .venv2 -- see next caveat.)
 
-  * Verification venv for THIS repo: /root/sglang/sglang/.venv2 (pip install -e
-    python[diffusion] with torch 2.13.0+cu130 / triton 3.7.1 / flashinfer
-    0.6.18 / transformers 5.12.1 pinned by /tmp/opencode/constraints.txt).
-    Flip procedure for the live server: stop server, then
-    /root/sglang/.venv/bin/python3 -m pip install -e "/root/sglang/sglang/python[diffusion]"
-    -c /tmp/opencode/constraints.txt; refresh .venv2 after the flip.
+  * LIVE VENV (2026-09-22): /root/sglang/.venv is now editable to THIS repo
+    (sglang 0.5.21.dev550+gdb9d0720f). Refresh procedure with the server
+    stopped: source ~/sglang/.venv/bin/activate; cd /root/sglang/sglang;
+    uv pip install -e python --dry-run   # review: must not move torch/flashinfer
+    uv pip install -e python
+    /tmp/opencode/constraints.txt NO LONGER EXISTS (tmp cleaned) -- the
+    dry-run is now the guard. Pins in use: torch 2.13.0 / triton 3.7.1 /
+    flashinfer 0.6.18 / xgrammar 0.2.7.
+  * AOT sglang-kernel 0.4.7 is the wheel built on 09-17 from sglang.prev
+    (python/sglang/kernels/aot/dist/). Not rebuilt on 09-22: this tree's AOT
+    sources only DROP ops (speculative kernels moved to JIT, #40033) and add an
+    H200 GLM-5.2 w4a8 config (sm90); topk.cu matches. The old wheel is a
+    superset -- rebuild (python/sglang/kernels/aot/build.sh) only if a future
+    change adds or re-signs an AOT op. JIT kernels rebuild themselves on
+    first use when their sources change.
+  * Verification venv for THIS repo: /root/sglang/sglang/.venv2 (editable to
+    this repo; xgrammar 0.2.7 + sgl-eval 0.1.2 + pytest-xdist 3.8.0 added
+    09-22). Its recorded sglang metadata still says xgrammar==0.2.1 until the
+    next install -e -- pip check noise only.
     [diffusion] pulls st_attn/vsa/modelopt and makes serve --help render the
     Diffusion section -- that is expected, not a bug.
 
@@ -1075,5 +1148,7 @@ REBUILDING FROM SCRATCH
   #                                      stage-local has_ple + _is_capturing
   #                                      prefetch dual-path + _pinned_buffer
   #                                      line + staging block; then entry 62)
+  # After entry 91: git merge d34f7b2326 (resolutions in the UPSTREAM MERGE
+  # section), then entries 92-93.
   # Post-build CPU battery (54 files) expectations are in CAVEATS/known-
   # failing; anything NOT on that list is a real regression.
