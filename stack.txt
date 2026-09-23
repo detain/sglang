@@ -920,6 +920,26 @@ STACK, IN BUILD ORDER (bottom first)
       # Live venv refreshed 09-22: uv pip install -e python (plan: sglang +
       # xgrammar only; torch/flashinfer/triton/sglang-kernel untouched).
 
+         94. 1c5995342c  fix(schedule): do not finish on model EOS while reasoning phase is open
+      # Truncation-ops workstream (not merge follow-up). Root cause proven
+      # via opencode.db scan: model emits im_end mid-thinking -> 18 cuts/3d
+      # (finish=stop, empty content; upstream #24839 closed unfixed).
+      # Guard: while require_reasoning and not _is_reasoning_over, only user
+      # stop_token_ids may finish; model eos_token_ids, tokenizer eos and
+      # additional_stop_token_ids suppressed. _check_str_based_finish
+      # untouched (endoftext in stop_strs is by design). Ordering already
+      # safe: update_reasoning_tokens precedes update_finish_state on the
+      # normal and spec paths. Accepted edge: one spec-accept run with an EOS
+      # then a later think_end finishes on the EOS (reasoning state advances
+      # over the whole run first). New CPU test
+      # test/registered/unit/managers/test_eos_reasoning_guard.py 6/6
+      # (base-a-test-cpu); neighbors 26P and 18P. Live-verified: prod restart
+      # on fix build (pid 2923249 at 22:43:38Z), backtick+reasoning stream
+      # probe through proxy clean, T+60min cut-scan 0 rows vs 18/3d pre-fix
+      # baseline. Merge-safe patch kept at
+      # scratch_updates/truncation_causes/eos_reasoning_guard.patch (applies
+      # clean on base 5e6aa39da3). Not pushed (user decides push/PR).
+
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
 ==============================================================================
