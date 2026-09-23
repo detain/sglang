@@ -352,6 +352,7 @@ class TestSmallmRuntimeFallback(unittest.TestCase):
             gemm1_clamp_limit=None,
             swiglu_limit=None,
             routed_scaling_factor=None,
+            apply_router_weight_on_input=False,
         )
         dispatch = SimpleNamespace(
             hidden_states=x,
