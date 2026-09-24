@@ -92,6 +92,14 @@ def _get_speculative_output_stride(result: GenerationBatchResult) -> int:
     return stride
 
 
+def _logprob_rows_to_host(rows: List) -> List:
+    # Producers emit per-row mixed types: tensors for rows that were computed,
+    # [] placeholder lists for requests that did not request these logprobs
+    # (logprob_processor.get_token_ids_logprobs_raw None branches). copy_to_cpu
+    # passes both through; convert tensors only, mirroring managers/utils.py.
+    return [r.tolist() if torch.is_tensor(r) else r for r in rows]
+
+
 @dataclass(kw_only=True, slots=True, frozen=True)
 class SchedulerBatchResultProcessor:
     is_generation: bool
@@ -529,16 +537,16 @@ class SchedulerBatchResultProcessor:
                     logits_output.input_token_logprobs.tolist()
                 )
             if logits_output.next_token_top_logprobs_val:
-                logits_output.next_token_top_logprobs_val = [
-                    v.tolist() for v in logits_output.next_token_top_logprobs_val
-                ]
-                logits_output.next_token_top_logprobs_idx = [
-                    x.tolist() for x in logits_output.next_token_top_logprobs_idx
-                ]
+                logits_output.next_token_top_logprobs_val = _logprob_rows_to_host(
+                    logits_output.next_token_top_logprobs_val
+                )
+                logits_output.next_token_top_logprobs_idx = _logprob_rows_to_host(
+                    logits_output.next_token_top_logprobs_idx
+                )
             if logits_output.next_token_token_ids_logprobs_val:
-                logits_output.next_token_token_ids_logprobs_val = [
-                    v.tolist() for v in logits_output.next_token_token_ids_logprobs_val
-                ]
+                logits_output.next_token_token_ids_logprobs_val = _logprob_rows_to_host(
+                    logits_output.next_token_token_ids_logprobs_val
+                )
 
     def _apply_prefill_logprobs(
         self,
@@ -1102,17 +1110,17 @@ class SchedulerBatchResultProcessor:
         if batch.return_logprob:
             next_token_logprobs = logits_output.next_token_logprobs.tolist()
             if logits_output.next_token_top_logprobs_val:
-                logits_output.next_token_top_logprobs_val = [
-                    v.tolist() for v in logits_output.next_token_top_logprobs_val
-                ]
-                logits_output.next_token_top_logprobs_idx = [
-                    x.tolist() for x in logits_output.next_token_top_logprobs_idx
-                ]
+                logits_output.next_token_top_logprobs_val = _logprob_rows_to_host(
+                    logits_output.next_token_top_logprobs_val
+                )
+                logits_output.next_token_top_logprobs_idx = _logprob_rows_to_host(
+                    logits_output.next_token_top_logprobs_idx
+                )
 
             if logits_output.next_token_token_ids_logprobs_val:
-                logits_output.next_token_token_ids_logprobs_val = [
-                    v.tolist() for v in logits_output.next_token_token_ids_logprobs_val
-                ]
+                logits_output.next_token_token_ids_logprobs_val = _logprob_rows_to_host(
+                    logits_output.next_token_token_ids_logprobs_val
+                )
         return next_token_ids, next_token_logprobs
 
     def _apply_decode_logprobs(
