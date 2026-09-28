@@ -1332,9 +1332,7 @@ class Qwen4ExpPLELayer(nn.Module):
             ):
                 buffer = self._graph_prefetch_buffers.get(lookup_tokens)
                 if buffer is None:
-                    buffer = self._allocate_prefetch_buffer(
-                        lookup_tokens, device
-                    )
+                    buffer = self._allocate_prefetch_buffer(lookup_tokens, device)
                     self._graph_prefetch_buffers[lookup_tokens] = buffer
                 return buffer
             buffer = self._graph_prefetch_buffer
@@ -1943,8 +1941,8 @@ class Qwen4ExpModel(Qwen3_5ForCausalLM):
         quantization: Optional[str],
         qsa_compressed_dtype: Optional[torch.dtype] = None,
     ) -> None:
-        from sglang.kernels.ops.attention import qsa_indexer
-        from sglang.kernels.ops.elementwise import fast_topk, hc_combine
+        from sglang.kernels.ops.attention import fast_topk, qsa_indexer
+        from sglang.kernels.ops.elementwise import hc_combine
         from sglang.kernels.ops.layernorm import grouped_gemma_rmsnorm
         from sglang.srt.layers.attention.qsa.qsa_indexer import QSAIndexer
 
@@ -2704,9 +2702,9 @@ class Qwen4ExpForConditionalGeneration(Qwen3VLForConditionalGeneration):
                     if name.endswith(ignore_suffixes) and name not in params_dict:
                         continue
                     if name.endswith("_scale") and name not in params_dict:
-                        assert abs(loaded_weight.item() - 1.0) < 1e-6, (
-                            f"Expected 1.0, got {loaded_weight.item()} in skipped {name}"
-                        )
+                        assert (
+                            abs(loaded_weight.item() - 1.0) < 1e-6
+                        ), f"Expected 1.0, got {loaded_weight.item()} in skipped {name}"
                         continue
                     if name in params_dict:
                         param = params_dict[name]

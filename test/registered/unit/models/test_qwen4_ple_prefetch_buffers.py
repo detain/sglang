@@ -243,8 +243,8 @@ def test_model_prewarm_allocates_the_largest_sm120_capture_shape(monkeypatch, re
 def test_jit_prewarm_uses_runtime_eligible_specializations(monkeypatch):
     _require_cuda()
     calls = []
-    from sglang.kernels.ops.attention import qsa_indexer
-    from sglang.kernels.ops.elementwise import fast_topk, hc_combine
+    from sglang.kernels.ops.attention import fast_topk, qsa_indexer
+    from sglang.kernels.ops.elementwise import hc_combine
     from sglang.kernels.ops.gemm import fp8_blockwise_gemm
     from sglang.kernels.ops.layernorm import grouped_gemma_rmsnorm
 
@@ -322,8 +322,8 @@ def test_jit_prewarm_uses_runtime_eligible_specializations(monkeypatch):
 
 def test_jit_prewarm_skips_runtime_fallback_specializations(monkeypatch):
     _require_cuda()
-    from sglang.kernels.ops.attention import qsa_indexer
-    from sglang.kernels.ops.elementwise import fast_topk, hc_combine
+    from sglang.kernels.ops.attention import fast_topk, qsa_indexer
+    from sglang.kernels.ops.elementwise import hc_combine
     from sglang.kernels.ops.layernorm import grouped_gemma_rmsnorm
 
     indexer = QSAIndexer.__new__(QSAIndexer)
