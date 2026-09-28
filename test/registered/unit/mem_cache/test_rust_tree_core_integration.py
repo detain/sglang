@@ -928,7 +928,10 @@ def test_host_lock_refs_round_trip(swa, missing_receipt):
     assert not host_lock.component_lock_uuids
     assert not device_lock.component_host_lock_uuids
     if swa:
-        assert host_lock.component_host_lock_uuids == {ComponentType.SWA: None}
+        # The SWA leg has no window uuid below the sliding window; the Full
+        # leg carries the host-lock boundary uuid (#38480).
+        assert host_lock.component_host_lock_uuids[ComponentType.SWA] is None
+        assert host_lock.component_host_lock_uuids[ComponentType.FULL] is not None
     params = host_lock.to_dec_params()
     if missing_receipt:
         params.component_host_lock_uuids.clear()
