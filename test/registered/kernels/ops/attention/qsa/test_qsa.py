@@ -75,6 +75,39 @@ def test_qsa_write_plan_tracks_group_crossing_extend_prefix():
     assert prefix_members[:3].tolist() == [2, 0, 0]
 
 
+def test_qsa_write_plan_mixed_chunk_decode_tails():
+    """mix_with_running appends each running decode as a 1-token extend row
+    whose prefix is seq_len - 1: only the tail that completes a group plans a
+    write, and that group reads its three leading members from the ring."""
+    backend = QwenSparseAttnBackend.__new__(QwenSparseAttnBackend)
+    backend.token_to_kv_pool = SimpleNamespace(qsa_compress_ratio=COMPRESS_RATIO)
+    seq = [8, 1001, 1002, 1004]
+    ext = [8, 1, 1, 1]
+    forward_batch = SimpleNamespace(
+        forward_mode=ForwardMode.MIXED,
+        extend_seq_lens=torch.tensor(ext, dtype=torch.int32),
+        input_ids=torch.zeros(sum(ext), dtype=torch.int64),
+    )
+    # Slot 0 is the inert dump write; keep real slots away from it.
+    table = 4096 + torch.arange(len(seq) * 1024, dtype=torch.int32).view(len(seq), 1024)
+    write_locs, group_ends, rows, member_rows, prefix_members = (
+        backend._qsa_build_write_plan(
+            forward_batch=forward_batch,
+            speculative_paged=False,
+            token_slot_table=table,
+            sequence_lengths=torch.tensor(seq, dtype=torch.int32),
+            allow_unaligned_prefix=True,
+        )
+    )
+    planned = int((write_locs != 0).sum())
+    assert planned == 3  # two prefill groups + the tail ending at 1003
+    assert rows[:3].tolist() == [0, 0, 3]
+    assert group_ends[:3].tolist() == [3, 7, 1003]
+    # Tail 3 is packed row 10; its group [1000, 1004) starts 3 rows earlier.
+    assert member_rows[:3].tolist() == [0, 4, 7]
+    assert prefix_members[:3].tolist() == [0, 0, 3]
+
+
 def test_qsa_chunk_prefill_accepts_fp8_cached_prefix():
     if not torch.cuda.is_available() or torch.cuda.get_device_capability() < (8, 9):
         pytest.skip("FP8-capable CUDA GPU required")

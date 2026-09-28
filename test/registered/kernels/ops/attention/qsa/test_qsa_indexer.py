@@ -424,3 +424,125 @@ if __name__ == "__main__":
     import sys
 
     sys.exit(pytest.main([__file__, "-v", "-s"]))
+
+
+@pytest.mark.parametrize("fused", [True, False])
+@pytest.mark.parametrize("prefix_members", [1, 2, 3])
+def test_cross_prefix_group_matches_in_chunk_compress(fused, prefix_members, monkeypatch):
+    """A group crossing an unaligned extend prefix (a mixed-chunk decode tail,
+    a private chunk-cache tail) recompresses its prefix-side members from the
+    pending ring; the result must equal the same group compressed with every
+    member in one chunk. A second, aligned row in the batch is unaffected."""
+    from sglang.srt.layers.attention.qsa.metadata import (
+        build_group_ring_slots,
+        build_pending_ring_slots,
+        build_rope_position_matrix,
+    )
+
+    device = torch.device("cuda")
+    dtype = torch.bfloat16
+    torch.manual_seed(prefix_members)
+    rotary = _make_rotary([24, 20, 20], True, device, dtype)
+    indexer = _make_indexer(rotary, device, dtype)
+    if not fused:
+        monkeypatch.setattr(indexer, "_use_fused_compress", lambda pool: False)
+
+    # Row 0: request slot 1, group [36, 40) crosses its prefix; the current
+    # chunk is 4 - prefix_members tokens ending at the group end.
+    # Row 1: request slot 2, an aligned 8-token prefill (two groups).
+    group_start = 36
+    prefix = group_start + prefix_members
+    tail_len = RATIO - prefix_members
+    extend_lens = [tail_len, 8]
+    prefix_lens = [prefix, 0]
+    req_pool_indices = torch.tensor([1, 2], device=device)
+    keys = torch.randn(RATIO + 8, 1, HEAD_DIM, device=device, dtype=dtype)
+    group_keys, prefill_keys = keys[:RATIO], keys[RATIO:]
+    rope = torch.stack(
+        [
+            torch.arange(group_start, group_start + RATIO, device=device),
+            torch.arange(group_start, group_start + RATIO, device=device) + 7,
+            torch.arange(group_start, group_start + RATIO, device=device) + 11,
+        ]
+    )
+
+    pool = FakePool(64, 64, device, dtype)
+    # The earlier forwards left the prefix members pending in the ring.
+    ring = build_group_ring_slots(
+        req_pool_indices=req_pool_indices,
+        group_end_positions=torch.tensor([group_start + RATIO - 1], device=device),
+        sequence_ids=torch.tensor([0], device=device),
+        compress_ratio=RATIO,
+    )
+    pool.set_qsa_key_state_buffer(0, ring[0, :prefix_members], group_keys[:prefix_members])
+    pool.set_qsa_rope_position_buffer(ring[0, :prefix_members], rope[:, :prefix_members])
+
+    token_k = torch.cat([group_keys[prefix_members:], prefill_keys])
+    row_rope = torch.cat(
+        [rope[:, prefix_members:], torch.arange(8, device=device).expand(3, -1)], dim=1
+    )
+    logical = torch.cat(
+        [
+            torch.arange(prefix, prefix + tail_len, device=device),
+            torch.arange(8, device=device),
+        ]
+    )
+    token_to_batch_idx = torch.repeat_interleave(
+        torch.arange(2, device=device), torch.tensor(extend_lens, device=device)
+    )
+    seq_lens = torch.tensor(
+        [p + e for p, e in zip(prefix_lens, extend_lens)], device=device
+    )
+    write_locs = torch.tensor([9, 10, 11], dtype=torch.int32, device=device)
+    group_ends = torch.tensor([group_start + RATIO - 1, 3, 7], device=device)
+    seq_ids = torch.tensor([0, 1, 1], device=device)
+    metadata = SimpleNamespace(
+        token_to_kv_pool=pool,
+        token_to_batch_idx=token_to_batch_idx,
+        req_pool_indices=req_pool_indices,
+        sequence_lengths=seq_lens,
+        is_cuda_graph=False,
+        write_locs=write_locs,
+        compress_group_positions=group_ends,
+        compress_sequence_ids=seq_ids,
+        compress_member_rows=torch.tensor(
+            [-prefix_members, tail_len, tail_len + 4], device=device
+        ),
+        compress_prefix_members=torch.tensor([prefix_members, 0, 0], device=device),
+        has_cross_prefix_group=True,
+        compress_group_ring_locs=build_group_ring_slots(
+            req_pool_indices=req_pool_indices,
+            group_end_positions=group_ends,
+            sequence_ids=seq_ids,
+            compress_ratio=RATIO,
+        ),
+        extend_rope_matrix=build_rope_position_matrix(row_rope, token_k.shape[0]),
+    )
+    state_slots = build_pending_ring_slots(
+        token_to_batch_idx=token_to_batch_idx,
+        req_pool_indices=req_pool_indices,
+        sequence_lengths=seq_lens,
+        logical_positions=logical,
+        compress_ratio=RATIO,
+        is_extend=True,
+    )
+    indexer.update_key_state_and_compress(
+        token_k, logical, row_rope, metadata, state_slots=state_slots
+    )
+
+    # Reference: every member in one chunk, compressed by the same path.
+    ref_pool = FakePool(64, 64, device, dtype)
+    ref_pool.key_state[: RATIO + 8] = keys
+    ref_pool.qsa_rope_position_buffer[:RATIO] = rope.transpose(0, 1)
+    ref_pool.qsa_rope_position_buffer[RATIO : RATIO + 8] = torch.arange(
+        8, device=device
+    )[:, None].expand(-1, 3)
+    ref_locs = torch.arange(RATIO + 8, device=device, dtype=torch.int32).view(3, RATIO)
+    if fused:
+        indexer._fused_compress_store(ref_pool, ref_locs, write_locs)
+    else:
+        _eager_compress_reference(indexer, ref_pool, ref_locs, write_locs)
+
+    assert_bit_comparable(pool.compressed[9:12], ref_pool.compressed[9:12])
+    # The crossing group must not be the clamped main-pass result.
+    assert pool.compressed[9].abs().sum() > 0
