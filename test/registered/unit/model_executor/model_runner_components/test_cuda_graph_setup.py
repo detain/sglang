@@ -262,7 +262,7 @@ def test_capture_cuda_graphs_prewarms_before_prefill_capture(monkeypatch):
         "create_for_model_runner",
         lambda _: object(),
     )
-    monkeypatch.setattr(cuda_graph_setup, "EagerRunner", lambda _: eager_runner)
+    monkeypatch.setattr(cuda_graph_setup, "EagerRunner", lambda _, **__: eager_runner)
     monkeypatch.setattr(cuda_graph_setup, "_prewarm_model_cuda_graphs", prewarm)
     capture_prefill.return_value = prefill
     monkeypatch.setattr(cuda_graph_setup, "capture_prefill_graph", capture_prefill)
@@ -281,6 +281,32 @@ def test_capture_cuda_graphs_prewarms_before_prefill_capture(monkeypatch):
         ]
     finally:
         override.restore()
+
+
+def test_elastic_recapture_prewarms_before_decode_capture(monkeypatch):
+    # Elastic EP defers the decode capture of a scale joiner, so the recapture
+    # is the first place its decode JIT kernels can be compiled outside capture.
+    runner = SimpleNamespace(device="cuda", _kernel_warmed_up=True)
+    calls = MagicMock()
+    decode = cuda_graph_setup.GraphCapture(
+        runner=object(),
+        memory_phase="decode",
+        memory_usage_gb=0,
+        capture_time=0,
+    )
+    calls.capture_decode.return_value = decode
+    monkeypatch.setattr(
+        cuda_graph_setup, "refresh_deep_gemm_layout_memory_budget", lambda _: None
+    )
+    monkeypatch.setattr(cuda_graph_setup, "_prewarm_model_cuda_graphs", calls.prewarm)
+    monkeypatch.setattr(cuda_graph_setup, "capture_decode_graph", calls.capture_decode)
+    monkeypatch.setattr(cuda_graph_setup.current_platform, "synchronize", lambda: None)
+
+    assert cuda_graph_setup.recapture_elastic_cuda_graph(model_runner=runner) is decode
+    assert calls.mock_calls[:2] == [
+        call.prewarm(runner, capture_decode_cuda_graph=True),
+        call.capture_decode(model_runner=runner),
+    ]
 
 
 def test_cuda_graph_prewarm_skips_when_both_phases_are_disabled(monkeypatch, request):

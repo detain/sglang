@@ -552,8 +552,8 @@ class TestNvfp4MoeSm120(CustomTestCase):
                 return_value=(cutlass, object()),
             ),
             mock.patch(
-                "sglang.srt.layers.moe.moe_runner.flashinfer_cutlass.get_tp_group",
-                return_value=None,
+                "sglang.srt.layers.moe.moe_runner.flashinfer_cutlass.get_parallel",
+                return_value=mock.Mock(tp_group=None),
             ),
             mock.patch(
                 "sglang.srt.layers.moe.moe_runner.flashinfer_cutlass."
@@ -632,8 +632,8 @@ class TestNvfp4MoeSm120(CustomTestCase):
                 return_value=object(),
             ),
             mock.patch(
-                "sglang.srt.layers.moe.moe_runner.flashinfer_cutlass.get_tp_group",
-                return_value=None,
+                "sglang.srt.layers.moe.moe_runner.flashinfer_cutlass.get_parallel",
+                return_value=mock.Mock(tp_group=None),
             ),
             mock.patch(
                 "sglang.srt.layers.moe.moe_runner.flashinfer_cutlass."
@@ -756,8 +756,8 @@ class TestNvfp4MoeSm120(CustomTestCase):
                         ),
                         mock.patch(
                             "sglang.srt.layers.moe.moe_runner.flashinfer_cutlass."
-                            "get_tp_group",
-                            return_value=None,
+                            "get_parallel",
+                            return_value=mock.Mock(tp_group=None),
                         ),
                         mock.patch(
                             "sglang.srt.layers.moe.moe_runner.flashinfer_cutlass."
