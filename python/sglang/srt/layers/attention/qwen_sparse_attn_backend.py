@@ -854,7 +854,7 @@ class QwenSparseAttnBackend(AttentionBackend):
         extend_rope_matrix = None
         # Mixed-chunk decode tails (prefix = seq_len - 1) and private
         # chunk-cache tails leave an extend prefix mid-group.
-        extend_prefix_lens_cpu = forward_batch.extend_prefix_lens_cpu
+        extend_prefix_lens_cpu = getattr(forward_batch, "extend_prefix_lens_cpu", None)
         if extend_prefix_lens_cpu is None:
             has_cross_prefix_group = forward_batch.forward_mode.is_mixed()
         else:
