@@ -938,6 +938,60 @@ def _commit_ple_state_after_replayssm_verify(
     )
 
 
+def gdn_replayssm_circular_active(req_pool) -> bool:
+    """Whether GDN ReplaySSM spec-verify keeps committed history in the
+    circular ring (the cursor tensors exist only for that protocol)."""
+    mamba_pool = getattr(req_pool, "mamba_pool", None)
+    return (
+        mamba_pool is not None
+        and getattr(mamba_pool, "replayssm_cache_base", None) is not None
+        and not getattr(mamba_pool, "replayssm_is_kda", False)
+    )
+
+
+def fold_gdn_replayssm_history_for_extend(
+    req_pool, req_pool_indices: torch.Tensor
+) -> None:
+    """Fold pending circular GDN ReplaySSM history into ``temporal`` for rows
+    entering a plain extend forward.
+
+    Between verifies the circular protocol keeps ``temporal`` at the ring's
+    ``cache_base`` and the committed tail in the ring; the verify kernel
+    replays it, but the extend kernels read ``temporal`` directly. A running
+    request extended outside verify (a mixed-chunk decode tail) would resume
+    from a stale state, and the next verify would replay the ring on top of
+    the extended one. Rows with no pending history are left alone -- the BF16
+    checkpoint path folds on every commit, so there this is a no-op.
+    """
+    from sglang.kernels.ops.attention.fla.gdn_replayssm_spec_decode import (
+        commit_gdn_replayssm_circular,
+    )
+
+    mamba_pool = req_pool.mamba_pool
+    replay_indices = req_pool_indices.long()
+    is_flush = mamba_pool.replayssm_is_flush
+    pending = mamba_pool.replayssm_spec_write_pos[replay_indices] > 0
+    is_flush[replay_indices] = torch.where(
+        pending, torch.ones_like(is_flush[replay_indices]), is_flush[replay_indices]
+    )
+    spec_state = req_pool.get_speculative_mamba2_params_all_layers()
+    commit_gdn_replayssm_circular(
+        checkpoint_state=spec_state.temporal,
+        d_cache=spec_state.replayssm_d,
+        k_cache=spec_state.replayssm_k,
+        g_cache=spec_state.replayssm_g,
+        d_residual_cache=spec_state.replayssm_rawv,
+        k_residual_cache=spec_state.replayssm_rawk,
+        state_batch_indices=req_pool.get_mamba_indices(req_pool_indices),
+        replay_indices=req_pool_indices,
+        write_pos=mamba_pool.replayssm_spec_write_pos,
+        cache_base=mamba_pool.replayssm_cache_base,
+        is_flush=is_flush,
+        accept_lens=torch.zeros_like(replay_indices),
+        null_block_id=-1,
+    )
+
+
 def commit_mamba_states_after_verify(
     target_worker: TpModelWorker,
     batch: ScheduleBatch,

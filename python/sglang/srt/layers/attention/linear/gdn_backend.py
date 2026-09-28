@@ -19,9 +19,13 @@ from sglang.srt.layers.attention.linear.utils import (
 )
 from sglang.srt.layers.radix_linear_attention import RadixLinearAttention
 from sglang.srt.mem_cache.memory_pool import MambaPool
-from sglang.srt.model_executor.forward_batch_info import ForwardBatch
+from sglang.srt.model_executor.forward_batch_info import ForwardBatch, ForwardMode
 from sglang.srt.model_executor.model_runner import ModelRunner
 from sglang.srt.runtime_context import get_exec, get_memory, get_schedule
+from sglang.srt.speculative.spec_utils import (
+    fold_gdn_replayssm_history_for_extend,
+    gdn_replayssm_circular_active,
+)
 from sglang.srt.utils import is_cpu, is_cuda, is_hip, is_npu, is_xpu
 from sglang.srt.utils.common import rank0_log
 
@@ -521,6 +525,7 @@ class GDNAttnBackend(MambaAttnBackendBase):
         super().__init__(model_runner)
         self.enable_mis = get_exec().features.enable_mis
         self.mis_metadata: Optional[GDNMISMetadata] = None
+        self._replayssm_fold_req_pool_indices: Optional[torch.Tensor] = None
         self.conv_states_shape = (
             model_runner.req_to_token_pool.mamba_pool.mamba_cache.conv[0].shape
         )
@@ -555,6 +560,16 @@ class GDNAttnBackend(MambaAttnBackendBase):
     def init_forward_metadata(self, forward_batch: ForwardBatch):
         super().init_forward_metadata(forward_batch)
         self._init_target_verify_qkv_routing(forward_batch)
+        # Rows whose circular ReplaySSM history must reach `temporal` before
+        # this forward's first GDN layer; folded on the forward stream there.
+        self._replayssm_fold_req_pool_indices = (
+            forward_batch.req_pool_indices
+            if (
+                forward_batch.forward_mode in (ForwardMode.EXTEND, ForwardMode.MIXED)
+                and gdn_replayssm_circular_active(self.req_to_token_pool)
+            )
+            else None
+        )
         self.mis_metadata = None
         if forward_batch.multi_item_delimiter_indices is not None:
             if not self.enable_mis:
@@ -1098,6 +1113,13 @@ class GDNAttnBackend(MambaAttnBackendBase):
                     retrieve_parent_token=retrieve_parent_token,
                 )
         else:
+            if getattr(self, "_replayssm_fold_req_pool_indices", None) is not None:
+                # Once per forward (the fold covers every GDN layer), before
+                # any layer reads `temporal`.
+                fold_gdn_replayssm_history_for_extend(
+                    self.req_to_token_pool, self._replayssm_fold_req_pool_indices
+                )
+                self._replayssm_fold_req_pool_indices = None
             g, beta = fused_gdn_gating(layer.A_log, a, b, layer.dt_bias)
             core_attn_out, last_recurrent_state, h = self.kernel_dispatcher.extend(
                 q=query,
