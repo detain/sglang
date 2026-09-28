@@ -44,9 +44,11 @@ from sglang.srt.layers.attention.qsa.sparse_attn import (
     sparse_gqa_fwd_interface_triton,
     sparse_gqa_fwd_interface_triton_ck,
     sparse_gqa_fwd_interface_triton_paged,
+    sparse_gqa_packed_decode_triton,
 )
 from sglang.srt.model_executor.forward_batch_info import ForwardMode
 from sglang.srt.runtime_context import get_memory
+from sglang.srt.utils import is_hip
 
 logger = logging.getLogger(__name__)
 
@@ -2051,7 +2053,6 @@ class QwenSparseAttnBackend(AttentionBackend):
         if decode_backend != "flash_attn":
             raise RuntimeError(f"unsupported QSA decode backend {decode_backend!r}")
 
-        flash_attn_varlen_func = _resolve_flash_attn_varlen_func()
         batch, topk = topk_indices.shape
         sequence_lens = metadata.sequence_lengths
         if metadata.is_cuda_graph:
@@ -2108,6 +2109,26 @@ class QwenSparseAttnBackend(AttentionBackend):
             k_scale=k_scale,
             v_scale=v_scale,
         )
+        if is_hip():
+            relative_indices = torch.arange(
+                topk, dtype=torch.int32, device=q.device
+            ).expand(batch, -1)
+            relative_indices = relative_indices.masked_fill(
+                relative_indices >= valid_counts[:, None], -1
+            ).contiguous()
+            output = sparse_gqa_packed_decode_triton(
+                q.contiguous(),
+                packed_k,
+                packed_v,
+                relative_indices,
+                cu_seqlens_q,
+                cu_seqlens_k,
+                valid_counts,
+                layer.scaling,
+            )
+            return output.reshape(q.shape[0], -1)
+
+        flash_attn_varlen_func = _resolve_flash_attn_varlen_func()
         output = flash_attn_varlen_func(
             q=q,
             k=packed_k,
