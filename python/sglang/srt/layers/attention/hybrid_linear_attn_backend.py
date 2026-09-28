@@ -581,9 +581,9 @@ class MambaAttnBackendBase(AttentionBackend):
         return mask.cpu()
 
     def init_cuda_graph_state(self, max_bs: int, max_num_tokens: int):
-        assert max_num_tokens % max_bs == 0, (
-            f"max_num_tokens={max_num_tokens} must be divisible by max_bs={max_bs}"
-        )
+        assert (
+            max_num_tokens % max_bs == 0
+        ), f"max_num_tokens={max_num_tokens} must be divisible by max_bs={max_bs}"
         draft_token_num = max_num_tokens // max_bs
         # Per-bs static write-cursor / force-flush buffers, captured by pointer +
         # refreshed in-place each replay; sized like state_indices_list. None when off.
@@ -638,9 +638,9 @@ class MambaAttnBackendBase(AttentionBackend):
         )
 
     def init_cpu_graph_state(self, max_bs: int, max_num_tokens: int):
-        assert max_num_tokens % max_bs == 0, (
-            f"max_num_tokens={max_num_tokens} must be divisible by max_bs={max_bs}"
-        )
+        assert (
+            max_num_tokens % max_bs == 0
+        ), f"max_num_tokens={max_num_tokens} must be divisible by max_bs={max_bs}"
         for i in range(max_bs):
             self.state_indices_list.append(
                 torch.full(
@@ -773,9 +773,9 @@ class MambaAttnBackendBase(AttentionBackend):
         # [-num_decodes:], which on the full max_bs buffer binds the stale tail.
         track_buf = None
         if mamba_track_indices is not None:
-            assert len(mamba_track_indices) >= bs, (
-                f"{len(mamba_track_indices)=} < {bs=}"
-            )
+            assert (
+                len(mamba_track_indices) >= bs
+            ), f"{len(mamba_track_indices)=} < {bs=}"
             track_buf = self.mamba_track_indices_buf[:bs]
             track_buf.copy_(self._translate_mamba_indices(mamba_track_indices[:bs]))
         # Refresh the static write cursor in-place (mirrors the eager
@@ -1046,12 +1046,12 @@ class Mamba2AttnBackend(MambaAttnBackendBase):
         )
 
         if get_exec().mamba.enable_mamba_extra_buffer:
-            assert self.conv_states_shape[-1] < self.mamba_chunk_size, (
-                f"{self.conv_states_shape[-1]=} should be less than {self.mamba_chunk_size}"
-            )
-            assert get_exec().mamba.mamba_track_interval >= self.mamba_chunk_size, (
-                f"mamba_track_interval ({get_exec().mamba.mamba_track_interval}) must be >= mamba_chunk_size ({self.mamba_chunk_size})"
-            )
+            assert (
+                self.conv_states_shape[-1] < self.mamba_chunk_size
+            ), f"{self.conv_states_shape[-1]=} should be less than {self.mamba_chunk_size}"
+            assert (
+                get_exec().mamba.mamba_track_interval >= self.mamba_chunk_size
+            ), f"mamba_track_interval ({get_exec().mamba.mamba_track_interval}) must be >= mamba_chunk_size ({self.mamba_chunk_size})"
 
     def init_forward_metadata_out_graph(
         self,
@@ -1079,9 +1079,9 @@ class Mamba2AttnBackend(MambaAttnBackendBase):
             draft_token_num=draft_token_num,
         )
         # `forward` slices the track destinations from ([-num_decodes:])
-        assert self.forward_metadata.num_decodes == forward_batch.batch_size, (
-            f"{self.forward_metadata.num_decodes=} != {forward_batch.batch_size=}"
-        )
+        assert (
+            self.forward_metadata.num_decodes == forward_batch.batch_size
+        ), f"{self.forward_metadata.num_decodes=} != {forward_batch.batch_size=}"
 
     def init_forward_metadata(self, forward_batch: ForwardBatch):
         metadata = self._forward_metadata(forward_batch)
@@ -1554,49 +1554,76 @@ class HybridLinearAttnBackend(AttentionBackend):
         mamba_steps_to_track: Optional[torch.Tensor],
     ):
         """Roll the accepted per-step PLE side states into their main slots."""
-        req_to_token_pool = self.linear_attn_backend.req_to_token_pool
+        commit_ple_state_after_mtp_verify(
+            self.linear_attn_backend.req_to_token_pool,
+            state_indices_tensor,
+            last_correct_step_indices,
+            mamba_track_indices,
+            mamba_steps_to_track,
+        )
+
+
+def commit_ple_state_after_mtp_verify(
+    req_to_token_pool,
+    state_indices_tensor: torch.Tensor,
+    last_correct_step_indices: torch.Tensor,
+    mamba_track_indices: Optional[torch.Tensor],
+    mamba_steps_to_track: Optional[torch.Tensor],
+) -> None:
+    """Roll the accepted per-step PLE side states into their main slots.
+
+    Target verify writes the Qwen4 PLE short-conv and N-gram states only to
+    their per-step intermediate buffers. This copies the last accepted step
+    into the persistent slot (and the interval-crossing step into the track
+    slot). It only needs the request pool, so the ReplaySSM commit paths in
+    spec_utils, which skip update_mamba_state_after_mtp_verify, call it too.
+    No-op for pools without PLE side states.
+    """
+    if mamba_track_indices is not None:
+        assert mamba_steps_to_track is not None
+
+    state_pairs = []
+    short_conv_pool = getattr(req_to_token_pool, "short_conv_pool", None)
+    if (
+        short_conv_pool is not None
+        and short_conv_pool.conv_state is not None
+        and short_conv_pool.intermediate_conv_state is not None
+    ):
+        state_pairs.append(
+            (
+                short_conv_pool.conv_state,
+                short_conv_pool.intermediate_conv_state,
+            )
+        )
+
+    ngram_pool = getattr(req_to_token_pool, "ngram_pool", None)
+    if (
+        ngram_pool is not None
+        and ngram_pool.context is not None
+        and ngram_pool.intermediate_context is not None
+    ):
+        state_pairs.append(
+            (
+                ngram_pool.context.unsqueeze(0),
+                ngram_pool.intermediate_context.unsqueeze(0),
+            )
+        )
+
+    scatter = HybridLinearAttnBackend._scatter_speculative_state_with_mask
+    for state, intermediate_state in state_pairs:
+        scatter(
+            state,
+            intermediate_state,
+            state_indices_tensor,
+            last_correct_step_indices,
+        )
         if mamba_track_indices is not None:
-            assert mamba_steps_to_track is not None
-
-        state_pairs = []
-        short_conv_pool = req_to_token_pool.short_conv_pool
-        if (
-            short_conv_pool.conv_state is not None
-            and short_conv_pool.intermediate_conv_state is not None
-        ):
-            state_pairs.append(
-                (
-                    short_conv_pool.conv_state,
-                    short_conv_pool.intermediate_conv_state,
-                )
-            )
-
-        ngram_pool = req_to_token_pool.ngram_pool
-        if (
-            ngram_pool.context is not None
-            and ngram_pool.intermediate_context is not None
-        ):
-            state_pairs.append(
-                (
-                    ngram_pool.context.unsqueeze(0),
-                    ngram_pool.intermediate_context.unsqueeze(0),
-                )
-            )
-
-        for state, intermediate_state in state_pairs:
-            self._scatter_speculative_state_with_mask(
+            scatter(
                 state,
                 intermediate_state,
-                state_indices_tensor,
-                last_correct_step_indices,
+                mamba_track_indices,
+                mamba_steps_to_track,
             )
-            if mamba_track_indices is not None:
-                self._scatter_speculative_state_with_mask(
-                    state,
-                    intermediate_state,
-                    mamba_track_indices,
-                    mamba_steps_to_track,
-                )
 
 
 class ShortConvHybridAttnBackend(HybridLinearAttnBackend):

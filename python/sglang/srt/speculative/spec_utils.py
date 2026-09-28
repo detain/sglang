@@ -222,9 +222,9 @@ def draft_kv_indices_buffer_width(
     num_seqs * topk branches each attend up to max_context_len KV slots; the topk
     factor is mandatory -- dropping it under-allocates and overflows the row (#27338, #27460).
     """
-    assert num_seqs * topk * max_context_len < 2**31, (
-        "kv_indices flat offset would overflow int32; reduce batch/topk/context"
-    )
+    assert (
+        num_seqs * topk * max_context_len < 2**31
+    ), "kv_indices flat offset would overflow int32; reduce batch/topk/context"
     return num_seqs * topk * max_context_len
 
 
@@ -918,6 +918,26 @@ def _verify_commit_step_indices(
     return last_correct_step_indices, mamba_steps_to_track
 
 
+def _commit_ple_state_after_replayssm_verify(
+    req_pool,
+    state_batch_indices: torch.Tensor,
+    last_correct_step_indices: torch.Tensor,
+    mamba_track_indices: Optional[torch.Tensor],
+    mamba_steps_to_track: Optional[torch.Tensor],
+) -> None:
+    from sglang.srt.layers.attention.hybrid_linear_attn_backend import (
+        commit_ple_state_after_mtp_verify,
+    )
+
+    commit_ple_state_after_mtp_verify(
+        req_pool,
+        state_batch_indices,
+        last_correct_step_indices,
+        mamba_track_indices,
+        mamba_steps_to_track if mamba_track_indices is not None else None,
+    )
+
+
 def commit_mamba_states_after_verify(
     target_worker: TpModelWorker,
     batch: ScheduleBatch,
@@ -981,6 +1001,13 @@ def commit_mamba_states_after_verify(
             mamba_track_indices=batch.mamba_track_indices,
             mamba_steps_to_track=mamba_steps_to_track,
             null_block_id=-1,
+        )
+        _commit_ple_state_after_replayssm_verify(
+            req_pool,
+            state_batch_indices,
+            last_correct_step_indices,
+            batch.mamba_track_indices,
+            mamba_steps_to_track,
         )
         return
 
@@ -1055,6 +1082,15 @@ def commit_mamba_states_after_verify(
                 batch.mamba_track_indices,
                 mamba_steps_to_track,
             )
+        # The early return skips update_mamba_state_after_mtp_verify, which is
+        # where the PLE side states are otherwise committed.
+        _commit_ple_state_after_replayssm_verify(
+            req_pool,
+            state_batch_indices,
+            last_correct_step_indices,
+            batch.mamba_track_indices,
+            mamba_steps_to_track,
+        )
         return
 
     # KDA ReplaySSM (fold-every-commit): KDA keeps its own recurrent verify kernel
