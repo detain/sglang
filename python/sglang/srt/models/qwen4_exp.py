@@ -177,6 +177,13 @@ def _ple_context_window(batch: _PLEBatch, ngram_size: int) -> torch.Tensor:
     return contexts
 
 
+def _ple_padding_is_wasteful(batch: _PLEBatch) -> bool:
+    """Whether the rows x longest-row padded layout is mostly padding, as in a
+    mixed-chunk batch of one long prefill and many one-token decode tails."""
+    padded = batch.lengths.shape[0] * batch.row_width
+    return padded > 2 * batch.processed_tokens + 64
+
+
 def _prepare_ple_batch(
     input_ids: torch.Tensor,
     forward_batch: ForwardBatch,
@@ -1195,6 +1202,9 @@ class Qwen4ExpPLELayer(nn.Module):
                 conv_state[track_indices] = next_state.to(dtype=conv_state.dtype)
             return F.silu(conv_output)
 
+        if not batch.mode.is_target_verify() and _ple_padding_is_wasteful(batch):
+            return self._short_conv_packed(x, forward_batch, batch, conv_state)
+
         state = conv_state.index_select(0, batch.state_indices).to(dtype=x.dtype)
         padded_seq = x.new_zeros(
             (batch.lengths.shape[0], batch.row_width, self.conv_channels)
@@ -1265,6 +1275,74 @@ class Qwen4ExpPLELayer(nn.Module):
                 )
 
         return F.silu(conv_output[batch.req_indices, batch.token_offsets])
+
+    def _short_conv_packed(
+        self,
+        x: torch.Tensor,
+        forward_batch: ForwardBatch,
+        batch: _PLEBatch,
+        conv_state: torch.Tensor,
+    ) -> torch.Tensor:
+        """Extend short conv over one flat ``[state | tokens]`` segment per row.
+
+        The padded path materializes rows x longest-row x channels three times;
+        a mixed-chunk batch (a 4k-token prefill plus dozens of one-token decode
+        tails) multiplies that by the tail count and OOMs. Every output window
+        lies inside its own row's segment, so a single conv1d over the
+        concatenated segments computes the same values in O(tokens) memory.
+        """
+        state_len = self.short_conv_state_len
+        channels = self.conv_channels
+        rows = batch.lengths.shape[0]
+        lengths = batch.lengths
+        seg_lens = lengths + state_len
+        seg_starts = torch.cumsum(seg_lens, 0) - seg_lens
+        # Host-side bound: every row's segment plus one dump row for tokens
+        # past their row (DP padding), which must not land in a neighbour.
+        dump = batch.processed_tokens + rows * state_len
+        flat = x.new_zeros((dump + 1, channels))
+
+        state_cols = torch.arange(state_len, device=x.device, dtype=torch.long)
+        state = conv_state.index_select(0, batch.state_indices).to(dtype=x.dtype)
+        state_pos = (seg_starts.unsqueeze(1) + state_cols.unsqueeze(0)).reshape(-1)
+        flat[state_pos] = state.transpose(1, 2).reshape(-1, channels)
+
+        num_tokens = x.shape[0]
+        req_indices = batch.req_indices[:num_tokens]
+        token_pos = seg_starts.index_select(0, req_indices) + state_len
+        token_pos = torch.where(
+            batch.valid_tokens[:num_tokens],
+            token_pos + batch.token_offsets[:num_tokens],
+            torch.full_like(token_pos, dump),
+        )
+        flat[token_pos] = x
+
+        # Output i reads inputs [i, i + state_len]: token p's output is p - state_len.
+        conv_output = F.conv1d(
+            flat.transpose(0, 1).unsqueeze(0),
+            self.conv1d.weight.to(dtype=x.dtype),
+            bias=None,
+            dilation=self.short_conv_dilation,
+            groups=self.conv_channels,
+        )[0]
+        output = conv_output.index_select(1, (token_pos - state_len).clamp(min=0))
+
+        def _gather_at(offsets: torch.Tensor) -> torch.Tensor:
+            pos = seg_starts.unsqueeze(1) + offsets.unsqueeze(1) + state_cols
+            return flat[pos.reshape(-1)].reshape(rows, state_len, channels).transpose(
+                1, 2
+            )
+
+        conv_state[batch.state_indices] = _gather_at(lengths).to(
+            dtype=conv_state.dtype
+        )
+        track = _ple_track_targets(forward_batch, batch)
+        if track is not None:
+            track_indices, track_offsets = track
+            conv_state[track_indices] = _gather_at(track_offsets).to(
+                dtype=conv_state.dtype
+            )
+        return F.silu(output.transpose(0, 1))
 
     def forward_idle(self, forward_batch: ForwardBatch) -> None:
         if self._prefetch_state is not None:
