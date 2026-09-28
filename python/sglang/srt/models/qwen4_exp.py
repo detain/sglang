@@ -796,7 +796,7 @@ class Qwen4ExpNGramEmbedding(nn.Module):
         if get_is_capture_mode():
             staging.capture_contexts(contexts)
             return
-        from sglang.kernels.ops.qwen4_ple import can_fuse_qwen4_ngram_hash
+        from sglang.kernels.ops.embeddings.qwen4_ngram import can_fuse_qwen4_ngram_hash
 
         fused = (
             self.enable_ple_fusion

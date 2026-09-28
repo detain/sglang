@@ -4,7 +4,7 @@ from unittest import mock
 import pytest
 import torch
 
-from sglang.kernels.ops.qwen4_ple import can_fuse_qwen4_ngram_hash
+from sglang.kernels.ops.embeddings.qwen4_ngram import can_fuse_qwen4_ngram_hash
 from sglang.test.ci.ci_register import register_cuda_ci
 from sglang.test.qwen4_ple_utils import assert_host_hash_matches, make_embedding
 

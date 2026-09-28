@@ -409,7 +409,7 @@ def test_eager_derivations_verified_once():
         mock.patch.object(qwen4, "get_is_capture_mode", return_value=False),
         mock.patch.object(qwen4, "_ple_context_window", return_value=torch.ones(1, 3)),
         mock.patch(
-            "sglang.kernels.ops.qwen4_ple.can_fuse_qwen4_ngram_hash", return_value=True
+            "sglang.kernels.ops.embeddings.qwen4_ngram.can_fuse_qwen4_ngram_hash", return_value=True
         ),
     ):
         for fused in [False, True, False, True]:
