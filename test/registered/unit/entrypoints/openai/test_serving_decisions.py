@@ -34,6 +34,7 @@ from sglang.srt.parser.template_detection import (
     detect_reasoning_parser,
     detect_reasoning_pattern,
 )
+from sglang.srt.managers.request_preprocessor import RequestPreprocessor
 from sglang.srt.runtime_context import publish, restore_context, snapshot_context
 from sglang.srt.server_args import ServerArgs
 from sglang.test.ci.ci_register import register_cpu_ci
@@ -157,6 +158,7 @@ class ScoringManager(TokenizerManagerScoreMixin):
         self.context_len = context_len
         self.num_reserved_tokens = 0
         self.request_logger = SimpleNamespace(log_requests=False)
+        self.request_preprocessor = RequestPreprocessor()
         generator = torch.Generator().manual_seed(0)
         logits = torch.randn(len(tokenizer), generator=generator, dtype=torch.float64)
         self.logprobs = torch.log_softmax(logits * 4, dim=0)
@@ -475,7 +477,15 @@ class TestDecisions(unittest.IsolatedAsyncioTestCase):
                 response = await handler.handle_request(request, None)
                 await other
                 self.assertEqual(response.status_code, 200)
-                self.assertEqual(events, ["encode", "other"] * 3)
+                self.assertEqual(sorted(events), ["encode"] * 3 + ["other"] * 3)
+                # Request preprocessing runs on a worker thread (#39716), so
+                # where the first encode lands is timing-dependent. What must
+                # hold: after an encode, the next encode waits for the other
+                # request to run while it still has steps left.
+                first = events.index("encode")
+                for i in range(first + 1, len(events)):
+                    if events[i] == "encode" and "other" in events[i:]:
+                        self.assertEqual(events[i - 1], "other", events)
 
     async def test_all_questions_are_scored_in_one_call(self):
         manager = ScoringManager(self.tokenizer)

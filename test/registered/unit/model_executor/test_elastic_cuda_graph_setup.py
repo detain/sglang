@@ -13,7 +13,8 @@ register_cpu_ci(est_time=1, suite="base-a-test-cpu")
 
 class TestElasticCudaGraphSetup(unittest.TestCase):
     def test_deferred_capture_skips_distributed_setup(self):
-        model_runner = SimpleNamespace(is_draft_worker=False)
+        # device: the stack's SM120 graph prewarm gates on it first.
+        model_runner = SimpleNamespace(device="cpu", is_draft_worker=False)
         eager_runner = Mock()
         prefill = GraphCapture(
             runner=eager_runner,
@@ -46,7 +47,7 @@ class TestElasticCudaGraphSetup(unittest.TestCase):
         self.assertIs(capture.decode.runner, eager_runner)
 
     def test_recapture_repeats_warmup_after_rendezvous(self):
-        model_runner = SimpleNamespace(_kernel_warmed_up=True)
+        model_runner = SimpleNamespace(device="cpu", _kernel_warmed_up=True)
         eager_runner = Mock()
         decode_runner = Mock()
         replacement = Mock()

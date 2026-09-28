@@ -306,8 +306,10 @@ def test_eager_validates_before_warmup(monkeypatch):
     parallel = SimpleNamespace(
         tp_size=1, dp_size=1, pp_size=1, attn_tp_size=1, attn_tp_rank=0
     )
+    # eager_runner no longer imports get_parallel (#40638); patch where read.
     for module in (br, er):
-        monkeypatch.setattr(module, "get_parallel", lambda: parallel)
+        if hasattr(module, "get_parallel"):
+            monkeypatch.setattr(module, "get_parallel", lambda: parallel)
     monkeypatch.setattr(br, "get_disagg", lambda: SimpleNamespace(enable_pdmux=False))
     monkeypatch.setattr(
         br, "get_server_return_hidden_states_mode", lambda: br.CaptureHiddenMode.NULL
@@ -409,7 +411,8 @@ def test_eager_derivations_verified_once():
         mock.patch.object(qwen4, "get_is_capture_mode", return_value=False),
         mock.patch.object(qwen4, "_ple_context_window", return_value=torch.ones(1, 3)),
         mock.patch(
-            "sglang.kernels.ops.embeddings.qwen4_ngram.can_fuse_qwen4_ngram_hash", return_value=True
+            "sglang.kernels.ops.embeddings.qwen4_ngram.can_fuse_qwen4_ngram_hash",
+            return_value=True,
         ),
     ):
         for fused in [False, True, False, True]:

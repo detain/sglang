@@ -39,6 +39,13 @@ from sglang.test.test_utils import CustomTestCase
 STORE_LOGGER = "sglang.srt.mem_cache.storage.fast_file.fast_file_store"
 
 
+def _component_path(backend, key: str, component_name=None) -> str:
+    # HiCacheFile._get_component_path was removed upstream (#40963).
+    return os.path.join(
+        backend.file_path, f"{backend._get_component_key(key, component_name)}.bin"
+    )
+
+
 def _t(n_bytes: int, fill: int = 0) -> torch.Tensor:
     return torch.full((n_bytes,), fill, dtype=torch.uint8)
 
@@ -291,9 +298,9 @@ class TestNamespaces(FastFileTestBase):
 
         self.assertTrue(b.clear())
 
-        self.assertFalse(os.path.exists(b._get_component_path("owned")))
+        self.assertFalse(os.path.exists(_component_path(b, "owned")))
         self.assertFalse(os.path.exists(owned_temp))
-        self.assertTrue(os.path.exists(other._get_component_path("other")))
+        self.assertTrue(os.path.exists(_component_path(other, "other")))
         self.assertTrue(os.path.exists(other_temp))
         self.assertTrue(os.path.exists(unrelated))
         self.assertTrue(torch.equal(other.get("other", _t(100)), _t(100, fill=7)))
@@ -399,7 +406,7 @@ class TestDirectIO(FastFileTestBase):
         no_page, no_dummy = self._no_staging(pool)
         with no_page, no_dummy:
             self.assertEqual(b.batch_set_v1(["a", "b"], indices), [True, True])
-            with open(b._get_component_path("a"), "rb") as file:
+            with open(_component_path(b, "a"), "rb") as file:
                 self.assertEqual(
                     file.read(), expected_first.flatten().numpy().tobytes()
                 )
@@ -467,9 +474,9 @@ class TestDirectIO(FastFileTestBase):
         indices = torch.arange(4)
         self.assertEqual(b.batch_set_v1(keys, indices), [True, True])
         for key in keys:
-            self.assertEqual(os.path.getsize(b._get_component_path(key)), 0)
+            self.assertEqual(os.path.getsize(_component_path(b, key)), 0)
         self.assertEqual(b.batch_get_v1(keys, indices), [True, True])
-        os.remove(b._get_component_path("b"))
+        os.remove(_component_path(b, "b"))
         self.assertEqual(b.batch_get_v1(keys, indices), [True, False])
 
     def test_invalid_page_buffer_metadata_fails_the_batch_without_raising(self):
@@ -679,7 +686,7 @@ class TestStorageMetrics(FastFileTestBase):
         self.assertEqual(b.batch_set_v2([transfer]), {PoolName.SWA: [True, True]})
         self.assertEqual(b.get_stats().backup_pgs, [])
 
-        os.remove(b._get_component_path("b", PoolName.SWA))
+        os.remove(_component_path(b, "b", PoolName.SWA))
         pool.kv_buffer.zero_()
         with mock.patch.object(
             b, "_record_io_metrics", wraps=b._record_io_metrics
@@ -813,7 +820,7 @@ class TestCapEviction(FastFileTestBase):
     def test_untracked_files_are_adopted_on_set_and_get(self):
         b = self.make_backend(max_size="500")
         for key, size, access in (("x", 80, "set"), ("y", 64, "get")):
-            path = b._get_component_path(key)
+            path = _component_path(b, key)
             with open(path, "wb") as f:
                 f.write(b"\x00" * size)
             self.assertNotIn(b._get_suffixed_key(key), b._evictor._lru)
@@ -827,7 +834,7 @@ class TestCapEviction(FastFileTestBase):
     def test_external_delete_drops_stale_accounting_on_read(self):
         b = self.make_backend(max_size="200")
         self.assertTrue(b.set("a", _t(100)))
-        os.remove(b._get_component_path("a"))
+        os.remove(_component_path(b, "a"))
 
         self.assertIsNone(b.get("a", _t(100)))
 
@@ -844,12 +851,12 @@ class TestCapEviction(FastFileTestBase):
                 self.assertIsNone(b.get("a", _t(target_bytes)))
 
                 self.assertEqual(b._evictor.snapshot()["entries"], 0)
-                self.assertFalse(os.path.exists(b._get_component_path("a")))
+                self.assertFalse(os.path.exists(_component_path(b, "a")))
 
     def test_set_replaces_a_wrong_sized_existing_page(self):
         b = self.make_backend(max_size="200")
         self.assertTrue(b.set("a", _t(100, fill=1)))
-        with open(b._get_component_path("a"), "wb") as file:
+        with open(_component_path(b, "a"), "wb") as file:
             file.write(b"x" * 50)
 
         self.assertTrue(b.set("a", _t(100, fill=2)))
@@ -866,7 +873,7 @@ class TestCapEviction(FastFileTestBase):
         with mock.patch.object(b, "_readv_exact", side_effect=OSError("injected")):
             self.assertIsNone(b.get("a", _t(100)))
 
-        self.assertTrue(os.path.exists(b._get_component_path("a")))
+        self.assertTrue(os.path.exists(_component_path(b, "a")))
         self.assertEqual(b._evictor.snapshot()["entries"], 1)
         self.assertTrue(torch.all(b.get("a", _t(100)) == 4))
 
@@ -985,7 +992,7 @@ class TestMinFreeSpace(FastFileTestBase):
     def test_evicts_to_restore_the_floor(self):
         b = self.make_backend(min_free="100")
         suffixed = b._get_suffixed_key("victim")
-        path = b._get_component_path("victim")
+        path = _component_path(b, "victim")
         with open(path, "wb") as f:
             f.write(b"v" * 80)
         b._evictor._lru[suffixed] = 80
@@ -1020,7 +1027,7 @@ class TestMLAOwnerGating(FastFileTestBase):
         self.assertFalse(peer._evictor.enabled)
         self.assertFalse(peer.set("a", _t(50)))
         self.assertFalse(peer.exists("a"))
-        with open(peer._get_component_path("a"), "wb") as f:
+        with open(_component_path(peer, "a"), "wb") as f:
             f.write(b"x" * 50)
         self.assertTrue(peer.set("a", _t(50)), "an existing page is still accepted")
         self.assertEqual(peer._evictor.snapshot()["entries"], 0)
@@ -1057,7 +1064,7 @@ class TestMetadataCacheIntegration(FastFileTestBase):
     def test_external_delete_does_not_turn_a_rewrite_into_a_noop(self):
         b = self.make_backend(metadata_ttl=-1.0, enable_metadata_cache=True)
         self.assertTrue(b.set("k1", _t(50, fill=1)))
-        os.remove(b._get_component_path("k1"))
+        os.remove(_component_path(b, "k1"))
 
         self.assertTrue(b.set("k1", _t(50, fill=2)))
 
