@@ -1,20 +1,23 @@
 # stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
 #
-# STACK: qwennext-stack-93-2026-09-22
+# STACK: qwennext-stack-117-2026-09-28
 #   main+pr36787+pr37275+pr38144+pr38209+pr36644+pr39862+pr39809+pr39893+local_hicache_qsa_fixes
 #   +pr39614+pr39978+pr40002+pr39065+pr40501+pr40175+pr40362+pr39391+pr37061+pr39333+pr33778
 #   +pr38977+pr39977+pr40480+pr39880+pr40235+pr39807+cpu-triage+boot-fix+plan_updates_perf
-#   +pr40626+pr40778+pr40748+upstream-merge   (93 stack commits, 28 PR blocks --
-#   3 now merged upstream -- 39 local commits; stack.txt/doc commits and the
-#   upstream merge commit excluded)
+#   +pr40626+pr40778+pr40748+upstream-merge+eos-guard+upstream-merge-2
+#   +pr41168+pr41058+pr40099+pr40940+pr41313+pr39716+pr40952+pr41245+pr38480
+#   (entries 1-117; 09-28 added 22 entries: 9 new PR blocks, new head
+#   commits of #38144/#39614/#39977/#40778, and 7 local fixes)
 # branch : qwennext-stack
-# tip    : db9d0720fb   (the stack.txt commit sits above it)
+# tip    : d9a82db546   (the stack.txt commit sits above it)
 # base   : upstream sgl-project/sglang main @ 7ad55e4386 ([HiCache] TMA-staged
 #          host<->device KV transfer kernel (sm_90+) (#40278), 2026-09-21)
-# synced : upstream main @ d34f7b2326 (#40780, 2026-09-22) MERGED IN as
-#          a87ae32c42 on top of entry 91 -- 113 upstream commits; see the
-#          UPSTREAM MERGE section after entry 91. Entry shas below stay valid.
-# updated: 2026-09-22 (09-21: full rebuild on the 09-21 main tip + 7 newly-mined PRs
+# synced : upstream main @ f209e67767 (#39643, 2026-09-28) MERGED IN as
+#          2e228b5ce5 on top of entry 95 (second merge; the first was
+#          d34f7b2326 as a87ae32c42 after entry 91). See the UPSTREAM MERGE
+#          sections. Entry shas below stay valid.
+# updated: 2026-09-28 (09-28: upstream merge #2 + entries 95-117, see
+#          UPSTREAM MERGE #2; 09-21: full rebuild on the 09-21 main tip + 7 newly-mined PRs
 #          appended #39333 #33778 #38977 #39977 #40480 #39880 #40235, the
 #          erroneously-dropped #39807 restored as 63-65, then CPU-battery
 #          skip-guard triage entries 66-72; 09-22: boot-fix entries 73-75,
@@ -31,6 +34,8 @@
 # '(cherry picked from commit <full-sha>)' -- no Upstream-PR trailers are used.
 # 25 of 28 PRs verified OPEN as of 2026-09-22; #40501, #40175 and #33778
 # MERGED upstream on 09-22 and arrived again through the upstream merge.
+# 09-28: all 09-22 PRs re-checked -- none merged; #39893 CLOSED unmerged
+# (superseded by the open #40913..#40917 series, kept here; see WATCH).
 # PR heads MOVE on this repo -- re-fetch before quoting shas.
 
 ==============================================================================
@@ -940,6 +945,147 @@ STACK, IN BUILD ORDER (bottom first)
       # scratch_updates/truncation_causes/eos_reasoning_guard.patch (applies
       # clean on base 5e6aa39da3). Not pushed (user decides push/PR).
 
+         95. d765b3298a  fix(logprob): guard tolist conversion against [] placeholder rows in mixed token_ids_logprob batches
+      # Local (09-23..27, recorded here 09-28).
+
+  UPSTREAM MERGE #2 -- 2026-09-28: main @ f209e67767 merged as 2e228b5ce5
+  ============================================================================
+  # safety tag before the merge: safety/pre-upstream-merge-0928 (=d765b3298a)
+  # 311 upstream commits (09-22 .. 09-28, tip #39643). Of the stack PRs, none
+  # merged this week; #39893 was CLOSED unmerged 09-24 (kept -- see WATCH).
+  # Arrived via merge and relevant: #40041 (PLE gate+verify-conv fusion,
+  # default ON via SGLANG_ENABLE_QWEN4_PLE_FUSION -- auto-merged with our
+  # qwen4_exp.py), #40512 (host reclamation order), #40787 (HiRadixCache
+  # deleted), #41243 (kernel/test tree reorg), #41276 (lock receipts),
+  # #41166, #41165, #40796, #41517 (chat-template cache key), #39643/#40499
+  # (PP-only).
+  # Conflicts (10 files) -- resolutions:
+  #   qwen_sparse_attn_backend.py  keep SM120 triton decode + FP8 descales;
+  #     adopt upstream HIP packed decode; flash-attn resolve moved after the
+  #     HIP branch (== rebased #36787 head 7431002d1d).
+  #   cuda_graph_setup.py  prewarm after EagerRunner(run_warmup=...), and in
+  #     recapture_elastic_cuda_graph (== rebased #36787 head).
+  #   mega_moe.py  upstream flydsl early return + #39977 wrapper import.
+  #   hybrid_cache_controller.py  upstream per-chain _trailing_chain_groups
+  #     sidecar batch_get_v2 (#40456) wrapped in entry 24's degrade-to-miss.
+  #   unified_radix_cache.py  take upstream allocate_host_transfers (#39478);
+  #     HostPoolGroup.alloc(reclaim=) already reclaims only the shortfall.
+  #   hiradix_cache.py  take upstream deletion (#40748's hunks were inert).
+  #   hybrid_pool_assembler.py + its test, test_hc_mix.py  unions.
+  #   ops/qsa/ tests  follow #41243's move to kernels/ops/attention/qsa/.
+         96. a62c908093  test(jit-kernel): adapt fast_topk regression import to ops.attention (main #41243)
+             <- e9ba4f06996deb7d7d6fdedd340940a99b258e8c   (#38144 new head commit)
+         97. e47c528a61  fix(qwen4-exp): import the PLE n-gram hash gate from its new kernels module
+      # #41243 split kernels.ops.qwen4_ple; #40235's lazy import in
+      # verify_ids_once (and 2 tests) still named the old module -> would
+      # ImportError on the first decode/verify step with PLE host staging.
+      # Present on the #40235 PR head too (not yet reported upstream).
+         98. 3a6984e22d  test(sm120): sync #36787 test stubs with its rebased head
+      # test_cuda_graph_setup (EagerRunner run_warmup=, elastic prewarm test),
+      # test_nvfp4_moe_sm120 (get_parallel().tp_group), test_nvfp4_smallm_
+      # dispatch (swiglu_* stub fields) taken verbatim from #37275 a6c20ce837.
+         99. ec88e7baf1  [PD] Reject QSA state layout mismatches between peers before transfer
+             <- 67bbb8205007b03673bae403172b78df979030cc   (#39614 new head commit)
+        100. 6d5b9ab06f  Keep the original QSA layout error messages, shorten the comment
+             <- 81d23e79623ade552022eb73ef44788a83e5622f   (#39614)
+        101. ec1c922889  test: move DeepGEMM ownership test to kernels/ops/quantization
+             <- 0d77b1708d58adc700d85e224b1745e6c2e1b156   (#39977)
+      # Stack PR heads re-checked 09-28: #36787/#37275/#40235 were rebased
+      # (range-diff: only rebase adaptations, all present after 97/98);
+      # #36644's head gained only old main-merge commits; #40778 gained eb36b7a129
+      # (entry 108); #37061/#39391/#40002/#40748 unchanged.
+
+        102. 688c5d1937  fix(spec): commit Qwen4 PLE side states on the ReplaySSM verify path
+      # LOCAL, found in the 09-28 mining pass. UPSTREAM BUG ON OUR EXACT PATH:
+      # with --enable-linear-replayssm-spec on GDN, commit_mamba_states_after_
+      # verify takes the ReplaySSM branch and returns before
+      # update_mamba_state_after_mtp_verify -- the only caller of
+      # _update_ple_state_after_mtp_verify. Target verify writes the PLE
+      # N-gram history and short-conv state ONLY to intermediates, and the
+      # MTP draft has no PLE (ple_layer_ids=[]), so under NEXTN the persistent
+      # PLE states never advanced past the prompt. Fix: module function
+      # commit_ple_state_after_mtp_verify(req_pool, ...) called from both GDN
+      # ReplaySSM branches (same slot ids as their conv scatter). CPU test
+      # test/registered/unit/spec/test_replayssm_verify_ple_commit.py (3P;
+      # the branch test fails without the fix). NOT yet GPU-validated: A/B
+      # GSM8K + accept length + PLE-sensitive probes after the next restart.
+      # Same bug in upstream main (since #28695) -- worth an upstream PR.
+
+  Mining pass 2026-09-28 (PRs created 09-22 21:38Z .. 09-28, 726 PRs; 4
+  parallel reviews: model/kernel, spec/scheduler, HiCache, parser/API):
+        103. 07041b28b0  Skip speculative KV allocation transfers when no pages are needed
+             <- 47153ed2989d6082f5fbbcae6d48d5f76dca2f62   PR #41168 [open]
+      # eagle_prepare_for_decode early-exit when num_needed_tokens == 0 (most
+      # decode steps at page 128). Test test_eagle_decode_allocation.
+        104. 8a737675ba  [Fix] Keep sent_offset monotonic in incremental detokenization
+             <- ce55eafa26c55a925c810f542334b6beea598c13   PR #41058 [open]
+        105. 539cd6d0d8  Cover the remaining retreat shapes of find_printable_text
+             <- 7c205a9cbcf40e60ac74e7e93d4834e17caf0a03   PR #41058
+      # Streaming re-sent already-delivered text when a character split
+      # across tokens (MTP multi-token steps: CJK/emoji/box-drawing).
+        106. e5e0b3d543  fix: resolve issue #40076
+             <- 71413cb01b76542953170de17200427b906fd8ee   PR #40099 [open]
+      # top_logprobs > vocab crashed the scheduler (one-request DoS). Chosen
+      # over #41250 (dead max_k<=0 branch).
+        107. 28012a808b  [bugfix] chunked prefill req counted as a new waiting req in calculating batch_is_full
+             <- f1a48b54d69ff6ae605a3e26efd2c573d55bfaeb   PR #40940 [open]
+      # batch_is_full off-by-one while a chunked req is in flight (95/96).
+        108. a2fd75b0a0  fix(parser): keep truncated marker tails out of qwen3_coder one-shot text
+             <- eb36b7a12965aba5ace59972c5111344672df483   PR #40778 (new head commit)
+        109. 6ecf3b9ad1  fix(function-call): stream Qwen3 Coder string arguments
+             <- 732e85217ccf734e7e07b33fce1e17750b882d7a   PR #41313 [open]
+      # type:"string" params stream incrementally instead of buffering to
+      # </parameter> (opencode write/edit content: minutes of silence).
+      # Other types (incl. #39809's object path) unchanged. Chosen over #25246.
+        110. eed2b42248  Keep request preprocessing off the HTTP event loop
+             <- f0e04949e4af3b9dfd88ee3c61a2dcdb6f55abdb   PR #39716 [open]
+        111. 22818e22dd  Test event-loop responsiveness and ordering of request preprocessing
+             <- 6869240e0ac43310374e79f6466507c1d82b2bfc   PR #39716
+      # One FIFO worker for chat-template render + tokenize (Qwen4Exp is
+      # multimodal -> prompt is encoded twice, ~400 ms each at 138K tokens,
+      # both were on the event loop). TokenizerManager.__init__ gains
+      # init_request_preprocessor() (large-class-style compliant). Chosen over
+      # #41031 (4 workers, reorders; OrderedDict race in template cache).
+        112. 74973ebe53  fix: preserve CUDA error enums during HiCache cleanup
+             <- 2ebb9350c3ddc801d39e0fed8bc976102cab9838   PR #40952 [open]
+        113. ebc55dcd37  fix(hicache): consume the pending CUDA error when host registration fails
+             <- 62db45569d1c9889b3c30b62453d3e79395fda39   PR #41245 [open]
+      # Failure-path only: torch 2.13 cudaGetErrorString(int) raises TypeError,
+      # masking the real cudaHostRegister error.
+        114. 4149f3f0f9  fix: preserve HiCache host locks across radix splits
+             <- 232a3eef4c7f1309ed55b3a45135aeba7914c187   PR #38480 [open, 2 approvals]
+      # Full host lock not carried across a node split while an L3 SET is in
+      # flight -> wrong KV could reach file storage (write_through + file L3 =
+      # us). Needs #41276 (arrived in this merge). Touches the Rust tree core
+      # too (we run the python core, default).
+        115. 771073fa81  test(radix-tree): expect the Full host-lock boundary uuid in the SWA receipt test
+      # #41276's test_host_lock_refs_round_trip asserted an SWA-only receipt;
+      # #38480 adds the Full boundary uuid. 2F -> 112P on a force-rebuilt
+      # extension (the same 2F reproduce on the #38480 head itself).
+
+  Post-merge fixes found by the full battery (09-28):
+        116. c0ff6aff53  fix(qwen4-exp): import fast_topk from ops.attention in the graph JIT prewarm
+      # BOOT-BREAKING if missed: #36787's _prewarm_cuda_graph_jit_kernels
+      # imported ops.elementwise.fast_topk (moved to ops.attention by #41243)
+      # -> ImportError at the first SM120 CUDA-graph prewarm. Also on the
+      # #36787 head. (Entry 97 is the same class of break for #40235.)
+        117. d9a82db546  test: adapt stack tests and new upstream tests to the 09-28 merge
+      # fast_file (#40963 removed _get_component_path), ple_staging (#40638:
+      # eager_runner no longer imports get_parallel), elastic cuda-graph
+      # setup (stub device for the SM120 prewarm gate), serving_decisions
+      # (ScoringManager fake + yield-order check vs #39716's worker thread).
+      # Verified: full test/registered/unit battery, one process per file
+      # (-P 6), pre-merge d765b3298a (763 files) vs post (827 files):
+      #   every file green before is green after; every name failing after
+      #   was failing before, except the known SM120 nvfp4 trtllm/cute-dsl
+      #   set (test_nvfp4_moe_backends timed out pre-merge, 2F now) and
+      #   environmental ones (cache_dit missing for the new
+      #   test_minimax_h3_pdd_offline; EADDRINUSE under -P 6 for
+      #   test_nvfp4_linear_backends -- rerun alone). 80 new files (upstream +
+      #   stack tests): 79 pass after 117, 1 environmental; 16 files gone are
+      #   upstream removals/moves (#41286, #41297, #41243).
+      #   Segfault-prone HiCache files compared under xdist (see CAVEATS).
+
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
 ==============================================================================
@@ -997,9 +1143,58 @@ EVALUATED AND DELIBERATELY NOT INCLUDED
       is covered upstream by #38690. Generation uses the requested tier in all
       variants. Local branches pr40790 / pr33633 kept for reference.
 
+  Mining pass 2026-09-28 -- skipped (not reaching our config), highlights:
+      #40972 (trtllm-gen SM100 + unquantized KV only; hazards our SM120 decode),
+      #41461 (H20-gated QSA prefill), #40785 (DFLASH commit), #41352 (dup of
+      our #38977; its drift test could be copied), #41486 (SM90 only),
+      #41484 (startup-only; risks lazy-init capture), #40840/#41218/#40928/
+      #41396/#41327/#41239 (paths we don't run -- our rope override carries
+      rope_theta itself), #41169 (SIMULATE_ACC_LEN only), #41460 (moves the
+      reasoning update after finish -> breaks entry 94's EOS guard; usage
+      accounting only), #41283/#40893 (rejection sampling off), #41111/
+      #41050 (Sampler.forward: first token only), #40962/#41368/#41398/
+      #41154/#40883/#40929/#41290/#41101/#41559 (adaptive / Frozen-KV MTP /
+      PP / EAGLE3 / packed lm_head / MLA sharding / non-spec penalizer / PD),
+      #41505/#41502/#41481 (external /abort_request prefix; our rids are
+      exact), #41472 (prefer #39217 if ever reproduced), #41106 (dup of
+      entry 24's guards), #41374/#41509/#39395/#40576 (write_back only),
+      #41142 (harmless), #40910/#39747/#41365 (opt-in knobs), #41181 (no
+      cgroup limit here), #41183/#41580/#41263 (SWA -- model is not SWA),
+      #40882 (fast_file), #41446 (HiSparse), #41008 (unified memory),
+      #40223 (Inkling draft state; our draft is one full-attn layer -- drop
+      from watch), #41156 (tool_choice=required only; would need rework on
+      #41313), #41237/#41326 (only past 65536 detok states; #41237 is the
+      good one), #40968/#40965 (/v1/messages only -- pick #40968 if used),
+      #40823/#41413/#41219/#41039/#40894/#41370/#40902/#41324/#40985/
+      #41511/#41087/#41575/#41206/#41205/#41116/#41115/#41113/#40904/#41522
+      (not our parser/flags, cosmetic or perf-noise), #39575 (now gfx95-only).
+
 ==============================================================================
 WATCH LIST (re-evaluate before next sync)
 ==============================================================================
+
+  * 09-28 additions:
+  * #39893 CLOSED 09-24 -> replaced by ispobock's #40913 -> #40914 -> #40915
+    -> #40916 (QSA host pool) -> #40917 (umbrella #40608). All open, 0
+    reviews. When #40913+ merge: revert #39893 (22) and 82697f219d (73),
+    take the series (verified: applies clean after those reverts and 10
+    mem_cache test files pass; entry 25's qsa.py docstring is the only
+    loss). Check its new packed-draft pool-set startup check with fp8 KV.
+  * #39765  publish tracked-Mamba prefill cache before overlap batch prep
+    (freed duplicate KV slots captured by the next batch) -- extra_buffer +
+    overlap = us; adds a sync point to the event loop. Needs GPU A/B.
+  * #40947  PLE shared host table (memfd, drops the PLE all-reduce over
+    PCIe; author tested TP4 RTX PRO 6000). Targets release/v0.5.20 --
+    hand-port candidate (commits 4e1f57257d, c5ae122bd7).
+  * Qiaolin-Yu "[qwen 3.8 next]" perf series #41167/#41170-#41175 --
+    independent, B200 NVFP4 numbers only; A/B individually (#41173 QSA
+    draft-metadata and #41172 greedy verify look most relevant). #41171
+    touches the verify commit -- re-check against entry 102.
+  * #38151/#39787/#40128 mamba admission/eviction robustness; #35694 spec
+    overshoot out of the radix key; #39745 (redesigned by #41520);
+    #41520 (checkpoint_req rename changes write_through timing).
+  * #41273 --chunked-prefill-reserve-tokens (feature experiment for 1M
+    prompts); #41259/#41149 long-prompt tokenization (revisit after 110).
 
   * #39643 + #40001 -- PP+MTP aggregate accuracy gate: with #40501-style PP +
     NEXTN the GSM8K aggregate dropped .980 -> .955 in review testing; do not
@@ -1040,6 +1235,31 @@ WATCH LIST (re-evaluate before next sync)
 ==============================================================================
 CAVEATS
 ==============================================================================
+
+  * 09-28 BUILD (entries 95-117) IS UNBOOTED. The live server (pid 3985116,
+    up since 09-24) still runs the pre-merge tree. First boot: watch for
+    ImportErrors in the lazy kernel imports (entries 97/116 were two such
+    breaks from #41243's module moves -- a static resolve of every sglang
+    import and patch() string in the stack's files is now clean), then A/B
+    entry 102 (PLE commit on the ReplaySSM verify path): it changes model
+    output under NEXTN on purpose -- expect higher MTP accept length and
+    GSM8K >= the pre-fix build; compare against a run with
+    --enable-linear-replayssm-spec off (which never had the bug).
+  * VENVS: /root/sglang/sglang/.venv2/bin/activate sets VIRTUAL_ENV to the
+    LIVE /root/sglang/.venv (hardlink-clone artifact) -- `source
+    .venv2/bin/activate` activates the live venv. Use .venv2/bin/python
+    directly for the verification venv (it has pytest-xdist; .venv does
+    not). 09-28: ruff 0.16.9 was installed into .venv by accident (dev tool
+    only; nothing else moved). /snap/bin/ruff cannot read /tmp worktrees.
+  * 09-28 xdist comparison (-n 6 --max-worker-restart 500, live server up):
+    test_unified_radix_cache_unittest 124F pre / 128F post -- EVERY failure
+    is a 'worker crashed' (the cudaMemcpyBatchAsync segfault class); the 4
+    extra are new upstream SWA host-transfer tests that crash the same way,
+    0 names fail only pre. test_minimax_sparse_pool_host_unit 1F both
+    (same name). test_nvfp4_linear_backends alone: 7F both (SM120 mm_fp4).
+  * Batteries against a worktree: run with PYTHONPATH=<worktree>/python --
+    it takes precedence over the editable install (verified by
+    sglang.__file__), so library code is tested too, not only tests.
 
   * HiCache (--enable-hierarchical-cache) needs BOTH #39862 and #39893 (they
     fix different halves of open issue #39830, each measured with the other).
@@ -1169,6 +1389,8 @@ REBUILDING FROM SCRATCH
   #                                      prefetch dual-path + _pinned_buffer
   #                                      line + staging block; then entry 62)
   # After entry 91: git merge d34f7b2326 (resolutions in the UPSTREAM MERGE
-  # section), then entries 92-93.
+  # section), then entries 92-95. Then git merge f209e67767 (resolutions
+  # in UPSTREAM MERGE #2) and entries 96-117 (cherry-pick -x the listed
+  # upstream shas; local entries from this branch).
   # Post-build CPU battery (54 files) expectations are in CAVEATS/known-
   # failing; anything NOT on that list is a real regression.
