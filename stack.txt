@@ -1,13 +1,13 @@
 # stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
 #
-# STACK: qwennext-stack-125-2026-09-28
+# STACK: qwennext-stack-126-2026-09-28
 #   main+pr36787+pr37275+pr38144+pr38209+pr36644+pr39862+pr39809+pr39893+local_hicache_qsa_fixes
 #   +pr39614+pr39978+pr40002+pr39065+pr40501+pr40175+pr40362+pr39391+pr37061+pr39333+pr33778
 #   +pr38977+pr39977+pr40480+pr39880+pr40235+pr39807+cpu-triage+boot-fix+plan_updates_perf
 #   +pr40626+pr40778+pr40748+upstream-merge+eos-guard+upstream-merge-2
 #   +pr41168+pr41058+pr40099+pr40940+pr41313+pr39716+pr40952+pr41245+pr38480
 #   +mixed-chunk(pr39575*+pr39526*+pr40458+pr40143*+local)
-#   (entries 1-125; 09-28 added 22 entries: 9 new PR blocks, new head
+#   (entries 1-126; 09-28 added 22 entries: 9 new PR blocks, new head
 #   commits of #38144/#39614/#39977/#40778, and 7 local fixes; then 118-125
 #   make --enable-mixed-chunk safe and fix the QSA verify ring collision.
 #   * = picked with local modifications, see the entries)
@@ -1164,6 +1164,21 @@ STACK, IN BUILD ORDER (bottom first)
       #     effect on this model (the bad key blends in a neighbour 4 tokens
       #     later); kept as a correctness fix. Final build: GSM8K 0.967,
       #     mixed-prefix 0.965, soak clean.
+        126. (this commit)  tune(moe): add Max-Q down-projection configs for E=128 and E=256
+      # LOCAL. Both boots logged "Down MoE config file not found ... reusing
+      # the tuned up-projection config without TMA". Tuned with
+      # benchmark/kernels/fused_moe_triton/tuning_fused_moe_triton_sep.py on
+      # real routing: 144 topk_ids dumps (48 MoE layers x 3 forwards of 4096
+      # tokens, TP2/EP2 rank 0, docs + source text) from a temporary hook in
+      # Qwen2MoeSparseMoeBlock._forward_router_experts (never committed).
+      # Scratch tuner changes: down kernel only (up files kept as they were),
+      # 30 iters, num_stages <= 4, and BLOCK_SIZE_M pinned per M to the
+      # in-tree up config's (both kernels share one moe_align_block_size sort;
+      # the runtime overrides a mismatched down BLOCK_SIZE_M). Upstream
+      # tuner bug worth knowing: in down-only mode its final BLOCK_SIZE_M pick
+      # sums the untimed (inf) up cost and always returns the default 16.
+      # The search includes the old fallback (up params, no TMA), so each
+      # entry is no slower than before by the tuner's own timing.
 
 
 ==============================================================================
