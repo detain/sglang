@@ -1,13 +1,16 @@
 # stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
 #
-# STACK: qwennext-stack-117-2026-09-28
+# STACK: qwennext-stack-125-2026-09-28
 #   main+pr36787+pr37275+pr38144+pr38209+pr36644+pr39862+pr39809+pr39893+local_hicache_qsa_fixes
 #   +pr39614+pr39978+pr40002+pr39065+pr40501+pr40175+pr40362+pr39391+pr37061+pr39333+pr33778
 #   +pr38977+pr39977+pr40480+pr39880+pr40235+pr39807+cpu-triage+boot-fix+plan_updates_perf
 #   +pr40626+pr40778+pr40748+upstream-merge+eos-guard+upstream-merge-2
 #   +pr41168+pr41058+pr40099+pr40940+pr41313+pr39716+pr40952+pr41245+pr38480
-#   (entries 1-117; 09-28 added 22 entries: 9 new PR blocks, new head
-#   commits of #38144/#39614/#39977/#40778, and 7 local fixes)
+#   +mixed-chunk(pr39575*+pr39526*+pr40458+pr40143*+local)
+#   (entries 1-125; 09-28 added 22 entries: 9 new PR blocks, new head
+#   commits of #38144/#39614/#39977/#40778, and 7 local fixes; then 118-125
+#   make --enable-mixed-chunk safe and fix the QSA verify ring collision.
+#   * = picked with local modifications, see the entries)
 # branch : qwennext-stack
 # tip    : d9a82db546   (the stack.txt commit sits above it)
 # base   : upstream sgl-project/sglang main @ 7ad55e4386 ([HiCache] TMA-staged
@@ -1086,6 +1089,83 @@ STACK, IN BUILD ORDER (bottom first)
       #   upstream removals/moves (#41286, #41297, #41243).
       #   Segfault-prone HiCache files compared under xdist (see CAVEATS).
 
+  Mixed-chunk prefill enablement (09-28, branch mixed-chunk-fix):
+      # --enable-mixed-chunk was accepted at startup (NEXTN -> EAGLE, which
+      # supports_mixed_chunk() since #36933) but broke at runtime in four ways:
+      #  1. CRASH: a mixed batch appends every running decode as a 1-token
+      #     extend row with prefix seq_len-1; compressed QSA's extend write plan
+      #     asserted prefix % 4 == 0 -> device-side assert on both TP ranks at
+      #     the first mixed step, NCCL watchdog abort, server gone 12 s after
+      #     boot (reproduced here, TP2 on GPUs 2-3).
+      #  2. SILENT: merge_batch dropped the extend rows' mamba track tensors
+      #     after prepare_for_extend stamped mamba_last_track_seqlen -> an
+      #     unwritten ping-pong slot was donated to the radix tree (#39342).
+      #  3. SILENT (fp32 SSM only): circular GDN ReplaySSM keeps `temporal` at
+      #     cache_base; the plain extend kernel used for decode tails ignored the
+      #     ring. BF16 folds on every commit, so our bf16 config never hit it.
+      #  4. OOM: the PLE short conv padded rows x longest-row x channels; a 4k
+      #     chunk + 40 decode tails asked for 2.47 GiB at 90% memory.
+        118. 47ffae42a5  [Fix] Handle unaligned QSA extend prefixes from chunk-cache tails
+             <- 2e0b3f5bb45d4b92ab8f1ed761b296cc84972967   PR #39575 [open]
+      # LOCALLY MODIFIED on pick (conflict + design): the PR's final head
+      # gates the crossing path to gfx95; here it is gated on the host-side
+      # prefix lengths (any extend prefix % ratio != 0, or MIXED without host
+      # lengths), keeps the device assert for aligned batches, builds ring
+      # locs only when needed, and recompresses crossing groups with the same
+      # fused kernel as every other group (the PR used the unfused path).
+        119. 0fe374094b  fix(mamba): keep extend-row checkpoint tracking through mixed chunk prefill
+      # Adapted from PR #39526 (b75d97ca03, open, fixes #39342) to
+      # UnifiedRadixCache and our CPU track mirrors
+      # (mamba_prefill_track_mask_cpu / mamba_track_seqlens_cpu).
+        120. 89b579d980  fix(gdn): fold circular ReplaySSM history before a plain extend
+      # LOCAL. Once per EXTEND/MIXED forward, on the forward stream before the
+      # first GDN layer, rows with write_pos > 0 only (no-op under bf16).
+        121. 90a9855d12  test(qsa): cover mixed-chunk decode tails in the write plan and indexer
+        122. 54613d2065  fix(spec): sync grammar state for mixed decode tails
+             <- 0c4d91e6f8150df8f460f8df095ee0b4f1f53edc   PR #40458 [open]
+      # Mixed batches skip verify(); grammar-constrained decode tails aborted
+      # with 'Grammar accept_token failed' under overlap.
+        123. 75048ef386  fixup: read extend_prefix_lens_cpu defensively like the rest of the QSA metadata
+        124. 4e6da56b41  fix(qwen4-exp): pack the PLE short conv when padding dominates the batch
+      # LOCAL. One conv1d over flat per-row [state | tokens] segments when
+      # rows x longest-row > 2x tokens; plain prefill / verify unchanged.
+      # Verified (TP2 on GPUs 2-3, next8 flags, chat GSM8K thinking off, 1319 q,
+      # 64 threads; mixed-prefix = sglang.test.run_eval mixed_prefix_gsm8k):
+      #   unfixed tree, mixed on ........ crash at first mixed step (above)
+      #   bf16  mixed off ............... GSM8K 0.970  mixed-prefix 0.967
+      #   bf16  mixed on (fixed) ........ GSM8K 0.966/0.970  mixed-prefix 0.963
+      #   fp32  mixed on (fixed) ........ GSM8K 0.969  mixed-prefix 0.964
+      #   fp32  mixed on, 120 reverted .. GSM8K 0.939  mixed-prefix 0.940 (the fold is load-bearing)
+      #   shared-prefix harness (fresh prefixes prefilled under mixing, vs a
+      #   c1 reference after /flush_cache): 15/37/35 mismatches of 96 on vs
+      #   32/34/33 off -- the same batch-variance floor. Needle retrieval under
+      #   load 31/36 on vs its reference 31/36. 5-min soaks: 0 errors,
+      #   ~99.8% of prefill batches mixed. With mixing OFF the same decode
+      #   harness starved: 4185 prefill vs 24 decode batches in 20 min
+      #   (12 decoders at 5-8 tok/s total) -- the case mixed-chunk exists for.
+      #   NOTE: per-request spec_accept_length reads higher with mixing on
+      #   (3.9 vs 3.3) because mixed steps commit a token without a verify
+      #   step; it is not a real accept-length gain.
+      #   CPU/GPU batteries: every touched test file identical to the base
+      #   tree except the new tests (see the mixed-chunk-fix commits).
+        125. 738eea94f0  QSA: let the pending index-K ring hold more than one compression group
+             <- 31b7edb6216cf1bd980e9046e085789b0efec4d2   PR #40143 [open]
+      # LOCALLY MODIFIED: fixes a PRE-EXISTING verify-window collision (not
+      # mixed-chunk specific). The one-group ring (position % 4) let MTP
+      # verify rows overwrite the slot of a member 4 positions earlier in the
+      # same forward before the group was compressed: 3 of 4 window
+      # alignments, 84/89 committed groups wrong in the new indexer test. The
+      # PR sizes the ring ceil(draft/ratio) = 1 for us; here
+      # ceil((draft+ratio-1)/ratio) = 2, guard draft <= ratio*(N-1)+1.
+      # Only affects sparse block selection past the 2048-token budget.
+      #   e2e recall over the model's own generated list (greedy, 48 req):
+      #     ~5.7k tokens: 240/240 with 1 group and with 2 (not sensitive)
+      #     ~23k tokens:  160/160 with 1 group and with 2 -- no measurable e2e
+      #     effect on this model (the bad key blends in a neighbour 4 tokens
+      #     later); kept as a correctness fix. Final build: GSM8K 0.967,
+      #     mixed-prefix 0.965, soak clean.
+
+
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
 ==============================================================================
@@ -1206,9 +1286,6 @@ WATCH LIST (re-evaluate before next sync)
   * #40718  prefill CUDA graph for GDN/Mamba -- only if enabling prefill
     graphs (disabled in both run scripts); conflicts
     prefill_cuda_graph_runner.py, touches replayssm buffers.
-  * #40143  QSA ring>1 compression group -- only if raising
-    --speculative-num-draft-tokens above 4; conflicts qsa/metadata +
-    qsa_indexer + kv pool vs #39614/#39809.
   * #40223  HiCache pack all MTP draft KV + conv/SSM state into target host
     pools -- #39830 correctness family; conflicts our pool_host/mamba +
     hybrid_pool_assembler + fence work; insert after #39862 once reviewed.
@@ -1216,10 +1293,9 @@ WATCH LIST (re-evaluate before next sync)
     roadmap #38731); kernel files clean but qwen4_exp.py conflict.
   * #40552  HyperConnection fusions for Qwen-3.8-Flash (18 files, new JIT
     csrc incl sm100 splitk GEMM epilogue -- sm120 coverage unproven).
-  * #39575  unaligned QSA extend prefixes from chunk-cache tails; conflicts
-    qsa/metadata + qsa_indexer. Confirm repro under our config first.
-  * #38180  disable mixed-chunk with compressed QSA + fail-fast -- check
-    against our chunked-prefill + QSA settings.
+  * #38180  NOT NEEDED: its fail-fast disable is superseded by entries
+    118-124, which make mixed-chunk work with compressed QSA (#39575 picked
+    as 118, un-gated from gfx95).
   * #39082  defer QSA indexer import in EAGLE draft worker (startup-only).
   * #40594  model-level checkpoint page-cache release (host-RAM relief during
     load -- revisit together with #40235).
@@ -1236,15 +1312,14 @@ WATCH LIST (re-evaluate before next sync)
 CAVEATS
 ==============================================================================
 
-  * 09-28 BUILD (entries 95-117) IS UNBOOTED. The live server (pid 3985116,
-    up since 09-24) still runs the pre-merge tree. First boot: watch for
-    ImportErrors in the lazy kernel imports (entries 97/116 were two such
-    breaks from #41243's module moves -- a static resolve of every sglang
-    import and patch() string in the stack's files is now clean), then A/B
-    entry 102 (PLE commit on the ReplaySSM verify path): it changes model
-    output under NEXTN on purpose -- expect higher MTP accept length and
-    GSM8K >= the pre-fix build; compare against a run with
-    --enable-linear-replayssm-spec off (which never had the bug).
+  * 09-28 BUILD BOOTED 2026-09-28 (TP2 next8.sh on GPUs 0-1, and the
+    118-125 test servers on GPUs 2-3): no import breaks. Entry 102's A/B vs
+    --enable-linear-replayssm-spec off is still owed.
+  * --enable-mixed-chunk is ON in both run scripts from entry 125 on. Do not
+    run it on a tree without 118-124: the unfixed tree dies at the first
+    mixed step (QSA device assert on every TP rank). Mixed steps commit one
+    token per decode tail without a verify, so per-request
+    spec_accept_length reads inflated (3.9 vs 3.3) -- not a real gain.
   * VENVS: /root/sglang/sglang/.venv2/bin/activate sets VIRTUAL_ENV to the
     LIVE /root/sglang/.venv (hardlink-clone artifact) -- `source
     .venv2/bin/activate` activates the live venv. Use .venv2/bin/python
