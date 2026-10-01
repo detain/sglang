@@ -13,6 +13,7 @@ import torch
 import triton
 import triton.language as tl
 
+from sglang.srt.batch_invariant_ops import is_batch_invariant_mode_enabled
 from sglang.srt.environ import envs
 from sglang.srt.utils import is_sm120_supported, is_sm121
 
@@ -99,6 +100,8 @@ def _get_prefill_device_configs(device_index: int):
 
 
 def _get_best_config(total_q: int, device_index: Optional[int] = None):
+    if is_batch_invariant_mode_enabled():
+        return (32, 4, 2)
     if device_index is None:
         device_index = torch.cuda.current_device()
     table = _get_prefill_device_configs(device_index)
