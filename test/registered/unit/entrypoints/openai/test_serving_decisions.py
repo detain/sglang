@@ -5,6 +5,7 @@ import json
 import math
 import re
 import string
+import threading
 import unittest
 from types import SimpleNamespace
 
@@ -29,6 +30,7 @@ from sglang.srt.entrypoints.systemone.serving import (
     _score_confidence,
     _view,
 )
+from sglang.srt.managers.preprocess_executor import PreprocessExecutor
 from sglang.srt.managers.tokenizer_manager_score_mixin import TokenizerManagerScoreMixin
 from sglang.srt.multimodal.processors.base_processor import MultimodalSpecialTokens
 from sglang.srt.parser.jinja_template_utils import detect_jinja_template_content_format
@@ -37,7 +39,6 @@ from sglang.srt.parser.template_detection import (
     detect_reasoning_parser,
     detect_reasoning_pattern,
 )
-from sglang.srt.managers.request_preprocessor import RequestPreprocessor
 from sglang.srt.runtime_context import publish, restore_context, snapshot_context
 from sglang.srt.server_args import ServerArgs
 from sglang.test.ci.ci_register import register_cpu_ci
@@ -180,7 +181,7 @@ class ScoringManager(TokenizerManagerScoreMixin):
         self.context_len = context_len
         self.num_reserved_tokens = 0
         self.request_logger = SimpleNamespace(log_requests=False)
-        self.request_preprocessor = RequestPreprocessor()
+        self.preprocess_executor = PreprocessExecutor()
         generator = torch.Generator().manual_seed(0)
         logits = torch.randn(len(tokenizer), generator=generator, dtype=torch.float64)
         self.logprobs = torch.log_softmax(logits * 4, dim=0)
@@ -483,17 +484,13 @@ class TestDecisions(unittest.IsolatedAsyncioTestCase):
         ):
             with self.subTest(route):
                 events = []
-                encoding_started = asyncio.Event()
                 encode = handler._encode_question
 
                 def recorded(**kwargs):
-                    events.append("encode")
-                    encoding_started.set()
+                    events.append(threading.current_thread().name)
                     return encode(**kwargs)
 
                 async def other_request():
-                    # Conversion may now yield before question encoding starts.
-                    await encoding_started.wait()
                     for _ in range(3):
                         events.append("other")
                         await asyncio.sleep(0)
@@ -501,17 +498,16 @@ class TestDecisions(unittest.IsolatedAsyncioTestCase):
                 handler._encode_question = recorded
                 other = asyncio.create_task(other_request())
                 response = await handler.handle_request(request, None)
-                await asyncio.wait_for(other, timeout=5)
+                await other
                 self.assertEqual(response.status_code, 200)
-                self.assertEqual(sorted(events), ["encode"] * 3 + ["other"] * 3)
-                # Request preprocessing runs on a worker thread (#39716), so
-                # where the first encode lands is timing-dependent. What must
-                # hold: after an encode, the next encode waits for the other
-                # request to run while it still has steps left.
-                first = events.index("encode")
-                for i in range(first + 1, len(events)):
-                    if events[i] == "encode" and "other" in events[i:]:
-                        self.assertEqual(events[i - 1], "other", events)
+                # Questions encode on the preprocessing worker, so the other
+                # request gets the loop before any of them.
+                self.assertEqual(events[0], "other")
+                self.assertEqual(events.count("other"), 3)
+                encodes = [e for e in events if e != "other"]
+                self.assertEqual(len(encodes), 3)
+                for thread_name in encodes:
+                    self.assertTrue(thread_name.startswith("sglang-preprocess"))
 
     async def test_all_questions_are_scored_in_one_call(self):
         manager = ScoringManager(self.tokenizer)

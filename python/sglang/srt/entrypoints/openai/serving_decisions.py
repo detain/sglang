@@ -1,11 +1,20 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import math
 import string
-from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Tuple
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Awaitable,
+    Callable,
+    Dict,
+    Iterator,
+    List,
+    Optional,
+    Tuple,
+)
 
 import msgspec
 from fastapi import Request
@@ -400,7 +409,9 @@ class OpenAIServingDecisions(OpenAIServingBase):
         temperature: float = 1.0,
     ):
         """Encode every question, then score them all in one call."""
-        prompts, label_token_ids, image_data = await _encode_all(adapted_request)
+        prompts, label_token_ids, image_data = await _encode_all(
+            encoded=adapted_request, preprocess=self._preprocess
+        )
         result = await self.tokenizer_manager.score_prompts(
             prompts=prompts,
             label_token_ids=label_token_ids,
@@ -457,15 +468,17 @@ def render_text(value: Optional[DecisionText]) -> str:
 
 async def _encode_all(
     encoded: Iterator[EncodedQuestion],
+    preprocess: Callable[..., Awaitable[Any]],
 ) -> Tuple[List[List[int]], List[List[int]], List[List[ImageData]]]:
-    """Collect prompt and label ids, letting other requests run between questions."""
+    """Collect prompt, label, and image ids, letting other requests run between questions."""
     prompts, label_token_ids, image_data = [], [], []
-    for prompt_ids, label_ids, images in encoded:
+    # Each question renders and tokenizes the whole input, so each is its own
+    # preprocessing job, and other requests' jobs queue between them.
+    while (item := await preprocess(next, encoded, None)) is not None:
+        prompt_ids, label_ids, images = item
         prompts.append(prompt_ids)
         label_token_ids.append(label_ids)
         image_data.append(images)
-        # Each question renders and tokenizes the whole input on the event loop.
-        await asyncio.sleep(0)
     return prompts, label_token_ids, image_data
 
 
