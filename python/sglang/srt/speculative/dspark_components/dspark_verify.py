@@ -153,6 +153,7 @@ class TargetVerifyExecutor:
         prefix_lens: torch.Tensor,
         draft_tokens: torch.Tensor,
         simulate_bonus_sampling_info=None,
+        compact_padding: bool = False,
     ) -> AcceptOuts:
         """Produce the per-request accept outcome after target verify.
 
@@ -179,6 +180,7 @@ class TargetVerifyExecutor:
             cutoff_layout=layout,
             fused_argmax=self._target_is_dsv41,
             block_verification=self._block_verification,
+            compact_padding=compact_padding,
         )
         sync_site = (
             SpecTpSyncSite.DSPARK_ACCEPT_GREEDY
@@ -927,6 +929,17 @@ def sample_simulated_bonus(
     return bonus.to(greedy_bonus.dtype).view_as(greedy_bonus)
 
 
+def _may_have_padding_rows(
+    layout: Optional[RaggedVerifyLayout], verify_num_draft_tokens: int
+) -> bool:
+    # Host-side lengths avoid a sync; without them, assume padding.
+    if layout is None:
+        return False
+    if layout.verify_lens_cpu is None:
+        return True
+    return min(layout.verify_lens_cpu) < verify_num_draft_tokens
+
+
 def accept_draft_tokens(
     *,
     candidates: torch.Tensor,
@@ -939,6 +952,7 @@ def accept_draft_tokens(
     cutoff_layout: Optional[RaggedVerifyLayout] = None,
     fused_argmax: bool = False,
     block_verification: bool = False,
+    compact_padding: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     greedy_mask = draft_block.greedy_mask
     cutoff_verify_lens = None if cutoff_layout is None else cutoff_layout.verify_lens
@@ -968,6 +982,13 @@ def accept_draft_tokens(
             rows_per_request=gamma_rows,
         ).view(bs, gamma_rows, vocab)
         expect(_VERIFY_DRAFT_PROBS, draft_probs)
+    padding_verify_lens = (
+        cutoff_verify_lens
+        if compact_padding
+        and verify_logits_adjustments_are_noop(sampling_info)
+        and _may_have_padding_rows(cutoff_layout, verify_num_draft_tokens)
+        else None
+    )
     if not sampling_info.is_any_greedy:
         return AcceptSampling.execute(
             candidates=candidates,
@@ -979,6 +1000,7 @@ def accept_draft_tokens(
             verify_num_draft_tokens=verify_num_draft_tokens,
             cutoff_verify_lens=cutoff_verify_lens,
             block_verification=block_verification,
+            padding_verify_lens=padding_verify_lens,
         )
     greedy_len, greedy_bonus, greedy_trim = AcceptGreedy.execute(
         candidates=candidates,
@@ -997,6 +1019,7 @@ def accept_draft_tokens(
         verify_num_draft_tokens=verify_num_draft_tokens,
         cutoff_verify_lens=cutoff_verify_lens,
         block_verification=block_verification,
+        padding_verify_lens=padding_verify_lens,
     )
     selected = SelectMixedAccept.execute(
         greedy_mask=greedy_mask,
