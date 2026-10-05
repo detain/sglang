@@ -1,5 +1,6 @@
 import functools
 import json
+import time
 import unittest
 import warnings
 
@@ -2531,6 +2532,26 @@ class TestQwen3CoderDetector(unittest.TestCase):
                 self.assertEqual(result.normal_text, "beforeafter")
                 self.assertEqual(len(result.calls), 1)
                 self.assertEqual(result.calls[0].name, "get_current_weather")
+
+    def test_unclosed_tool_call_tags_parse_in_linear_time(self):
+        """Many opening tags without a closing tag must not stall the parser
+        (it runs on the event loop); earlier complete calls still parse."""
+        text = (
+            "<tool_call>\n<function=get_current_weather>\n"
+            "<parameter=location>New York</parameter>\n</function>\n</tool_call>"
+            + "<tool_call> "
+            * 25000
+        )
+
+        start = time.perf_counter()
+        result = self.detector.detect_and_parse(text, self.tools)
+        elapsed = time.perf_counter() - start
+
+        self.assertLess(elapsed, 1.0)
+        self.assertEqual(len(result.calls), 1)
+        self.assertEqual(
+            json.loads(result.calls[0].parameters), {"location": "New York"}
+        )
 
     # ==================== Streaming Tests ====================
 
