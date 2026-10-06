@@ -678,14 +678,16 @@ def _fp8_wo_a_einsum(
     weight_scale: torch.Tensor,
     recipe: Tuple[int, int, int],
 ) -> torch.Tensor:
-    import deep_gemm
+    from sglang.srt.layers.deep_gemm_wrapper.entrypoint import (
+        einsum_bhr_hdr_bhd_f8f8bf16,
+    )
 
     groups, rank = weight.shape[:2]
     output = torch.empty(
         o_fp8.shape[0], groups, rank, device=o_fp8.device, dtype=torch.bfloat16
     )
-    deep_gemm.fp8_einsum(
-        "bhr,hdr->bhd", (o_fp8, o_s), (weight, weight_scale), output, recipe=recipe
+    einsum_bhr_hdr_bhd_f8f8bf16(
+        (o_fp8, o_s), (weight, weight_scale), output, recipe=recipe
     )
     return output
 
