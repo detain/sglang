@@ -18,6 +18,29 @@ from sglang.srt.function_call.utils import (
 
 logger = logging.getLogger(__name__)
 
+STRING_PARAM_TYPES = ["string", "str", "text", "varchar", "char", "enum"]
+
+
+def _schema_allows_null(schema: Any) -> bool:
+    """Whether a JSON schema explicitly admits null."""
+    if not isinstance(schema, dict):
+        return False
+    schema_type = schema.get("type")
+    if schema_type == "null" or (
+        isinstance(schema_type, list) and "null" in schema_type
+    ):
+        return True
+    if schema.get("nullable") is True:
+        return True
+    enum = schema.get("enum")
+    if isinstance(enum, list) and None in enum:
+        return True
+    for keyword in ("anyOf", "oneOf"):
+        branches = schema.get(keyword)
+        if isinstance(branches, list) and any(map(_schema_allows_null, branches)):
+            return True
+    return False
+
 
 # A double quote between two word characters can never be a JSON delimiter, so it must be a
 # quote the model forgot to escape inside a string. Hebrew abbreviations write gershayim as an
@@ -156,9 +179,16 @@ class Qwen3CoderDetector(BaseFormatDetector):
         self, param_value: str, param_name: str, param_config: dict, func_name: str
     ) -> Any:
         """Convert parameter value based on its type in the schema."""
-        # Handle null value for any type
+        # String values are written raw, so `null` is the text "null" for a
+        # string parameter unless its schema allows null.
         if param_value.lower() == "null":
-            return None
+            param_schema = param_config.get(param_name)
+            if (
+                infer_type_from_json_schema(param_schema) is None
+                or self._get_param_type(param_schema) not in STRING_PARAM_TYPES
+                or _schema_allows_null(param_schema)
+            ):
+                return None
 
         if param_name not in param_config:
             if param_config != {}:
@@ -169,7 +199,7 @@ class Qwen3CoderDetector(BaseFormatDetector):
             return param_value
 
         param_type = self._get_param_type(param_config[param_name])
-        if param_type in ["string", "str", "text", "varchar", "char", "enum"]:
+        if param_type in STRING_PARAM_TYPES:
             return param_value
         elif (
             param_type.startswith("int")
@@ -207,12 +237,13 @@ class Qwen3CoderDetector(BaseFormatDetector):
                 )
             return param_value
         elif param_type in ["boolean", "bool", "binary"]:
-            param_value = param_value.lower()
-            if param_value not in ["true", "false"]:
+            lowered = param_value.lower()
+            if lowered not in ["true", "false"]:
                 logger.warning(
-                    f"Parsed value '{param_value}' of parameter '{param_name}' is not a boolean (`true` of `false`) in tool '{func_name}', degenerating to false."
+                    f"Parsed value '{param_value}' of parameter '{param_name}' is not a boolean (`true` or `false`) in tool '{func_name}', degenerating to string."
                 )
-            return param_value == "true"
+                return param_value
+            return lowered == "true"
         else:
             if (
                 param_type in ["object", "array", "arr"]
@@ -393,7 +424,7 @@ class Qwen3CoderDetector(BaseFormatDetector):
             if self.current_tool_param_count:
                 fragment += ", "
             fragment += json.dumps(state["name"]) + ": "
-            if complete and chunk.lower() == "null":
+            if complete and state["null_as_json"] and chunk.lower() == "null":
                 fragment += "null"
             else:
                 fragment += '"' + json.dumps(chunk, ensure_ascii=False)[1:-1]
@@ -495,6 +526,10 @@ class Qwen3CoderDetector(BaseFormatDetector):
                             "name": param_name,
                             "opened": False,
                             "leading": True,
+                            # _convert_param_value keeps the text "null" for a
+                            # string param unless its schema admits null; mirror
+                            # that here so streaming stays in parity.
+                            "null_as_json": _schema_allows_null(schema),
                         }
                         self.parsed_pos += name_end + 1
                         continue
