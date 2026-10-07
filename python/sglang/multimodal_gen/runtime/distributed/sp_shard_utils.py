@@ -159,8 +159,14 @@ def split_seqs(
     stream keeps its per-rank shape.
 
      ([... txt_last, PAD, img_last]) -> prefix (txt + pad), body (img)
+
+    Outputs are always contiguous (consumers may requantize/reshape).
     """
     total = joint.shape[dim]
+    # Downstream output projections (to_add_out / to_out RowParallelLinear)
+    # feed these tensors into FP8/NVFP4 quantized GEMMs that require a
+    # contiguous 2D reshape; `narrow` over the seq dim is non-contiguous
+    # when batch > 1. `.contiguous()` is a no-op when already contiguous.
     if local_pad > 0:
         real = prefix_len - local_pad
         body_end = total - local_pad
@@ -168,10 +174,13 @@ def split_seqs(
             [joint.narrow(dim, 0, real), joint.narrow(dim, body_end, local_pad)],
             dim=dim,
         )
-        return prefix, joint.narrow(dim, real, body_end - real)
+        return (
+            prefix.contiguous(),
+            joint.narrow(dim, real, body_end - real).contiguous(),
+        )
     return (
-        joint.narrow(dim, 0, prefix_len),
-        joint.narrow(dim, prefix_len, total - prefix_len),
+        joint.narrow(dim, 0, prefix_len).contiguous(),
+        joint.narrow(dim, prefix_len, total - prefix_len).contiguous(),
     )
 
 

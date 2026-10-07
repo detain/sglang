@@ -2055,7 +2055,7 @@ def apply_fp8_linear_bmm_flashinfer(
 ) -> torch.Tensor:
     """Per-tensor static fp8 linear via flashinfer bmm_fp8 (SM90 and newer)."""
     output_shape = [*input.shape[:-1], weight.shape[1]]
-    input_2d = input.view(-1, input.shape[-1])
+    input_2d = input.reshape(-1, input.shape[-1])
     qinput, x_scale = static_quant_fp8(input_2d, input_scale, repeat_scale=False)
     output = flashinfer_bmm_fp8(qinput, weight, x_scale, weight_scale, input.dtype)
     if bias is not None:
@@ -2087,8 +2087,11 @@ def apply_fp8_linear(
         )
     output_padding = 17 if pad_output else None
 
-    # View input as 2D matrix for fp8 methods
-    input_2d = input.view(-1, input.shape[-1])
+    # View input as 2D matrix for fp8 methods. `reshape` (not `view`) so
+    # non-contiguous strided slices (e.g. diffusion DiT seq-dim narrows with
+    # batch > 1) are materialized instead of raising; a no-op copy when
+    # already contiguous, which is the LLM-serving hot path.
+    input_2d = input.reshape(-1, input.shape[-1])
     output_shape = [*input.shape[:-1], weight.shape[1]]
 
     # A pre-quantized fp8 activation (e.g. from a fused RMSNorm+quant kernel)
