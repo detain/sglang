@@ -275,17 +275,29 @@ class TestUlyssesAttentionKVGather(unittest.TestCase):
 
 
 class TestSpAttentionModeResolution(unittest.TestCase):
-    def _resolve(self, *, degree=2, auto=True, causal=False, sparse=False):
+    def _resolve(
+        self, *, degree=2, auto=True, causal=False, sparse=False, equal_len=False
+    ):
         stub = SimpleNamespace(kv_gather_degree=degree, sp_split_auto=auto)
         with patch(
             "sglang.multimodal_gen.runtime.server_args.get_global_server_args",
             return_value=stub,
         ):
-            return _resolve_sp_attention_mode(causal=causal, sparse_backend=sparse)
+            return _resolve_sp_attention_mode(
+                causal=causal,
+                sparse_backend=sparse,
+                requires_equal_len_qkv=equal_len,
+            )
 
     def test_gather_degree_selects_the_gather_exchange(self):
         self.assertEqual(self._resolve(), ("kv_gather", True))
         self.assertEqual(self._resolve(auto=False), ("kv_gather", False))
+
+    def test_equal_len_backend_keeps_the_gather_exchange_otherwise(self):
+        self.assertEqual(self._resolve(equal_len=False), ("kv_gather", True))
+        self.assertEqual(
+            self._resolve(auto=False, equal_len=False), ("kv_gather", False)
+        )
 
     def test_degree_one_is_plain_ulysses(self):
         self.assertEqual(self._resolve(degree=1), ("ulysses", False))
@@ -294,12 +306,25 @@ class TestSpAttentionModeResolution(unittest.TestCase):
     def test_auto_degree_falls_back_for_unsupported_layers(self):
         self.assertEqual(self._resolve(causal=True), ("ulysses", True))
         self.assertEqual(self._resolve(sparse=True), ("ulysses", True))
+        self.assertEqual(self._resolve(equal_len=True), ("ulysses", True))
 
     def test_explicit_degree_fails_closed(self):
         with self.assertRaises(ValueError):
             self._resolve(auto=False, causal=True)
         with self.assertRaises(NotImplementedError):
             self._resolve(auto=False, sparse=True)
+        with self.assertRaisesRegex(
+            NotImplementedError, "equal Q/K/V sequence lengths"
+        ):
+            self._resolve(auto=False, equal_len=True)
+
+    def test_equal_len_capability_membership(self):
+        self.assertIs(AttentionBackendEnum.FP8_FA_SM120.requires_equal_len_qkv, True)
+        self.assertIs(AttentionBackendEnum.TORCH_SDPA.requires_equal_len_qkv, False)
+        self.assertIs(AttentionBackendEnum.FA2.requires_equal_len_qkv, False)
+        self.assertIs(
+            AttentionBackendEnum.VIDEO_SPARSE_ATTN.requires_equal_len_qkv, False
+        )
 
 
 class TestKVGatherCallSupport(unittest.TestCase):

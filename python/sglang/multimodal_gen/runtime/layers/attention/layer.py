@@ -92,7 +92,7 @@ _VARLEN_FA_ENABLED = os.environ.get("SGLANG_VARLEN_FA", "1") != "0"
 
 
 def _resolve_sp_attention_mode(
-    *, causal: bool, sparse_backend: bool
+    *, causal: bool, sparse_backend: bool, requires_equal_len_qkv: bool = False
 ) -> tuple[str, bool]:
     """Resolve one layer's SP exchange; returns (mode, is_auto).
 
@@ -105,11 +105,17 @@ def _resolve_sp_attention_mode(
     args = get_global_server_args()
     if args.kv_gather_degree <= 1:
         return "ulysses", False
-    if causal or sparse_backend:
+    if causal or sparse_backend or requires_equal_len_qkv:
         if args.sp_split_auto:
             return "ulysses", True
         if causal:
             raise ValueError("K/V-gather SP does not support causal attention.")
+        if requires_equal_len_qkv:
+            raise NotImplementedError(
+                "K/V-gather SP does not support attention backends that require "
+                "equal Q/K/V sequence lengths (e.g. fp8_fa_sm120); use the "
+                "Ulysses exchange."
+            )
         raise NotImplementedError(
             "K/V-gather SP does not support sparse attention backends."
         )
@@ -437,7 +443,9 @@ class UlyssesAttention(nn.Module):
         self.causal = causal
         self.sp_attention_mode, self.sp_attention_mode_is_auto = (
             _resolve_sp_attention_mode(
-                causal=causal, sparse_backend=self.backend.is_sparse
+                causal=causal,
+                sparse_backend=self.backend.is_sparse,
+                requires_equal_len_qkv=self.backend.requires_equal_len_qkv,
             )
         )
 
@@ -893,7 +901,9 @@ class USPAttention(nn.Module):
         self.enable_packed_qkv_input_a2a = bool(enable_packed_qkv_input_a2a)
         self.sp_attention_mode, self.sp_attention_mode_is_auto = (
             _resolve_sp_attention_mode(
-                causal=causal, sparse_backend=self.backend.is_sparse
+                causal=causal,
+                sparse_backend=self.backend.is_sparse,
+                requires_equal_len_qkv=self.backend.requires_equal_len_qkv,
             )
         )
 

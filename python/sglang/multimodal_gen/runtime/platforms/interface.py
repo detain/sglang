@@ -76,6 +76,18 @@ class AttentionBackendEnum(enum.Enum):
             AttentionBackendEnum.CUBE_SPARSE_ATTN,
         }
 
+    @property
+    def requires_equal_len_qkv(self) -> bool:
+        """True when the kernel compiles per dense equal-length sequence.
+
+        kv_gather hands such a kernel a local Q against gathered full-length
+        K/V, which it rejects; the FP8 FA SM120 kernel requires exactly
+        ``[S, H, 128]`` for all of Q/K/V.
+        """
+        return self in {
+            AttentionBackendEnum.FP8_FA_SM120,
+        }
+
 
 class PlatformEnum(enum.Enum):
     CUDA = enum.auto()
