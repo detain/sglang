@@ -80,6 +80,18 @@ class TestGatherShardedSequenceContiguous(unittest.TestCase):
         _, gathered_input = self._run(tensor)
         self.assertIs(gathered_input, tensor)
 
+    def test_strided_last_dim_chunk_is_materialized(self):
+        # Flux2's fused QKV+MLP projection: `value` is a strided last-dim
+        # chunk of the packed buffer and reaches the gather with no
+        # replicated prefix/suffix, so the pass-through branch must
+        # materialize it before all_gather.
+        packed = torch.randn(2, 16, 3 * 4 * 8)
+        value = packed.chunk(3, dim=-1)[2].unflatten(-1, (4, 8))
+        self.assertFalse(value.is_contiguous())
+        _, gathered_input = self._run(value)
+        self.assertTrue(gathered_input.is_contiguous())
+        torch.testing.assert_close(gathered_input, value)
+
     def test_prefix_and_suffix_together_are_rejected(self):
         with self.assertRaises(ValueError):
             USPAttention._gather_sharded_sequence(

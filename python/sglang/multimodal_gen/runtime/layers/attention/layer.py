@@ -460,8 +460,14 @@ class UlyssesAttention(nn.Module):
             if any(x is None for x in (replicated_q, replicated_k, replicated_v)):
                 raise ValueError("Replicated Q, K, and V must be provided together.")
 
-        k = sequence_model_parallel_all_gather(k, dim=1)
-        v = sequence_model_parallel_all_gather(v, dim=1)
+        # same hazard as USPAttention._gather_sharded_sequence: a model may
+        # hand us a strided last-dim chunk view, which all_gather rejects
+        k = sequence_model_parallel_all_gather(
+            k if k.is_contiguous() else k.contiguous(), dim=1
+        )
+        v = sequence_model_parallel_all_gather(
+            v if v.is_contiguous() else v.contiguous(), dim=1
+        )
 
         local_query_len = q.shape[1]
         if replicated_q is not None:
@@ -1528,6 +1534,12 @@ class USPAttention(nn.Module):
             gathered = sequence_model_parallel_all_gather(sharded, dim=1)
             return torch.cat([gathered, replicated], dim=1)
 
+        if not tensor.is_contiguous():
+            # The model may hand us a strided view outright: Flux2's fused
+            # QKV+MLP projection chunks `value` along the last dim of the
+            # packed buffer and only the QK norm+RoPE epilogue materializes
+            # q/k. The dim-0 block all-gather needs a contiguous shard.
+            tensor = tensor.contiguous()
         return sequence_model_parallel_all_gather(tensor, dim=1)
 
     def _forward_with_kv_gather(
