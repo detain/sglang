@@ -1945,8 +1945,10 @@ class LTX2DenoisingStage(DenoisingStage):
 
                 if ctx.use_ltx23_legacy_one_stage:
                     with self._ltx2_model_forward_context(ctx, step):
-                        v_pos, a_v_pos = step.current_model(
-                            **self._build_ltx2_model_kwargs(
+                        v_pos, a_v_pos = self._ltx2_call_current_model(
+                            ctx,
+                            step,
+                            self._build_ltx2_model_kwargs(
                                 ctx,
                                 base_model_kwargs_local,
                                 encoder_hidden_states=encoder_hidden_states,
@@ -1955,10 +1957,12 @@ class LTX2DenoisingStage(DenoisingStage):
                                 disable_v2a_cross_attn=(
                                     skip_v2a_cross_attn_for_video_gt
                                 ),
-                            )
+                            ),
                         )
-                        v_neg, a_v_neg = step.current_model(
-                            **self._build_ltx2_model_kwargs(
+                        v_neg, a_v_neg = self._ltx2_call_current_model(
+                            ctx,
+                            step,
+                            self._build_ltx2_model_kwargs(
                                 ctx,
                                 base_model_kwargs_local,
                                 encoder_hidden_states=negative_encoder_hidden_states,
@@ -1967,7 +1971,7 @@ class LTX2DenoisingStage(DenoisingStage):
                                 disable_v2a_cross_attn=(
                                     skip_v2a_cross_attn_for_video_gt
                                 ),
-                            )
+                            ),
                         )
 
                     v_pos = v_pos.float()
@@ -1979,8 +1983,10 @@ class LTX2DenoisingStage(DenoisingStage):
                     a_v_ptb = None
                     if need_perturbed:
                         with self._ltx2_model_forward_context(ctx, step):
-                            v_ptb, a_v_ptb = step.current_model(
-                                **self._build_ltx2_model_kwargs(
+                            v_ptb, a_v_ptb = self._ltx2_call_current_model(
+                                ctx,
+                                step,
+                                self._build_ltx2_model_kwargs(
                                     ctx,
                                     base_model_kwargs_local,
                                     encoder_hidden_states=encoder_hidden_states,
@@ -1995,7 +2001,7 @@ class LTX2DenoisingStage(DenoisingStage):
                                     disable_v2a_cross_attn=(
                                         skip_v2a_cross_attn_for_video_gt
                                     ),
-                                )
+                                ),
                             )
                         v_ptb = v_ptb.float()
                         a_v_ptb = a_v_ptb.float()
@@ -2004,8 +2010,10 @@ class LTX2DenoisingStage(DenoisingStage):
                     a_v_mod = None
                     if need_modality:
                         with self._ltx2_model_forward_context(ctx, step):
-                            v_mod, a_v_mod = step.current_model(
-                                **self._build_ltx2_model_kwargs(
+                            v_mod, a_v_mod = self._ltx2_call_current_model(
+                                ctx,
+                                step,
+                                self._build_ltx2_model_kwargs(
                                     ctx,
                                     base_model_kwargs_local,
                                     encoder_hidden_states=encoder_hidden_states,
@@ -2013,7 +2021,7 @@ class LTX2DenoisingStage(DenoisingStage):
                                     encoder_attention_mask=encoder_attention_mask,
                                     disable_a2v_cross_attn=True,
                                     disable_v2a_cross_attn=True,
-                                )
+                                ),
                             )
                         v_mod = v_mod.float()
                         a_v_mod = a_v_mod.float()
@@ -2138,8 +2146,10 @@ class LTX2DenoisingStage(DenoisingStage):
                                     model_kwargs_chunk["perturbation_configs"] = (
                                         split_perturbation_configs[index],
                                     )
-                                video_chunk, audio_chunk = step.current_model(
-                                    **model_kwargs_chunk
+                                video_chunk, audio_chunk = (
+                                    self._ltx2_call_current_model(
+                                        ctx, step, model_kwargs_chunk
+                                    )
                                 )
                                 batched_video_chunks.append(video_chunk)
                                 batched_audio_chunks.append(audio_chunk)
@@ -2153,9 +2163,15 @@ class LTX2DenoisingStage(DenoisingStage):
                             )
                         )
                         with self._ltx2_model_forward_context(ctx, step):
-                            batched_video, batched_audio = step.current_model(
-                                **batched_model_kwargs,
-                                perturbation_configs=perturbation_configs,
+                            batched_video, batched_audio = (
+                                self._ltx2_call_current_model(
+                                    ctx,
+                                    step,
+                                    {
+                                        **batched_model_kwargs,
+                                        "perturbation_configs": perturbation_configs,
+                                    },
+                                )
                             )
 
                     batched_video = batched_video.float()
