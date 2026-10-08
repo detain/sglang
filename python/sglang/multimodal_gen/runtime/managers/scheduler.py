@@ -776,13 +776,19 @@ class Scheduler(SchedulerWarmupMixin, SchedulerPostTrainingMixin, SchedulerDisag
                             output_batch.output
                         )
 
-                with self._record_return_stage(
-                    output_batch, "Scheduler.return_result.spill_cuda"
-                ):
-                    # The previous reply has already been mapped: the client
-                    # only sends the next hop after materializing the last one.
-                    release_retained_producer_tensors()
-                    spill_cuda_tensors(output_batch, in_place=True)
+                    with self._record_return_stage(
+                        output_batch, "Scheduler.return_result.spill_cuda"
+                    ):
+                        # The previous reply has already been mapped: the client
+                        # only sends the next hop after materializing the last one.
+                        release_retained_producer_tensors()
+                        # IPC handles are only dereferenced by the client when
+                        # is_local_endpoint holds too (scheduler_client's
+                        # _materialize_local_cuda_refs); spilling across a
+                        # non-loopback endpoint would ship unresolvable
+                        # CudaIpcRef objects. Non-local replies pickle the
+                        # tensors through a host copy instead.
+                        spill_cuda_tensors(output_batch, in_place=True)
                 with self._record_return_stage(
                     output_batch, "Scheduler.return_result.pickle"
                 ):
