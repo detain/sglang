@@ -9,6 +9,7 @@ diffusion models.
 """
 
 import atexit
+import importlib.util
 import json
 import mmap
 import os
@@ -19,6 +20,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Any, Callable, List, Optional, Sequence, Union
 
 import imageio
@@ -940,6 +942,133 @@ def materialize_output_sample(
     return MaterializedOutput(sample=sample, frames=frames, audio=audio, fps=fps)
 
 
+@lru_cache(maxsize=1)
+def _imageio_ffmpeg_plugin_available() -> bool:
+    """Whether imageio's FFMPEG plugin (from the imageio-ffmpeg package) is usable.
+
+    ``quality`` and ``output_params`` are kwargs honored only by that plugin.
+    When imageio-ffmpeg is absent (e.g. a venv that has imageio + av but drifted
+    from the pinned diffusion extra), imageio dispatches ``.mp4`` writes to
+    PyAVPlugin, whose ``write()`` rejects those kwargs with a TypeError. Video
+    writers must branch on this before passing FFMPEG-only kwargs.
+    """
+    return importlib.util.find_spec("imageio_ffmpeg") is not None
+
+
+def _save_video_mp4_via_ffmpeg_pipe(
+    *,
+    save_file_path: str,
+    frames: list,
+    fps: int,
+    quality: float,
+) -> None:
+    """Encode uint8 HWC frames to mp4 through a direct ffmpeg subprocess.
+
+    CPU fallback for environments without imageio's FFMPEG plugin, where
+    ``imageio.mimsave`` would be routed to PyAVPlugin and crash on the
+    FFMPEG-only ``quality``/``output_params`` kwargs. Encoding parameters
+    mirror ``_try_save_cuda_video_direct`` (same quality->crf mapping, preset,
+    yuv420p and macro-block scaling) so fallback output stays consistent with
+    the direct CUDA path. The macro-block scale also guarantees even
+    dimensions, which yuv420p requires for odd input sizes.
+    """
+    try:
+        ffmpeg_exe = _resolve_ffmpeg_exe()
+    except RuntimeError as e:
+        raise RuntimeError(
+            "Cannot save mp4: imageio's FFMPEG plugin is unavailable "
+            "(install imageio-ffmpeg) and no usable ffmpeg executable was "
+            f"found (install ffmpeg or add it to PATH). Original error: {e}"
+        ) from e
+
+    first = np.asarray(frames[0])
+    if first.ndim != 3 or first.shape[2] != 3:
+        raise ValueError(
+            "ffmpeg-pipe video save expects uint8 HWC RGB frames, got shape "
+            f"{first.shape}; frames from _sample_to_uint8_frames must be "
+            "3-channel images"
+        )
+    height, width = int(first.shape[0]), int(first.shape[1])
+    crf = int((1 - quality / 10.0) * 51)
+
+    command = [
+        ffmpeg_exe,
+        "-y",
+        "-f",
+        "rawvideo",
+        "-vcodec",
+        "rawvideo",
+        "-s",
+        f"{width}x{height}",
+        "-pix_fmt",
+        "rgb24",
+        "-r",
+        f"{fps:.02f}",
+        "-i",
+        "pipe:0",
+        "-an",
+        "-vcodec",
+        "libx264",
+        "-preset",
+        X264_PRESET,
+        "-pix_fmt",
+        "yuv420p",
+        "-crf",
+        str(crf),
+    ]
+
+    macro_block_size = 16
+    if width % macro_block_size or height % macro_block_size:
+        output_width = (
+            width
+            if width % macro_block_size == 0
+            else width + macro_block_size - width % macro_block_size
+        )
+        output_height = (
+            height
+            if height % macro_block_size == 0
+            else height + macro_block_size - height % macro_block_size
+        )
+        command += ["-vf", f"scale={output_width}:{output_height}"]
+
+    command += ["-threads", str(_x264_auto_thread_count(height))]
+    command += ["-v", "warning", save_file_path]
+
+    with tempfile.TemporaryFile() as stderr_file:
+        process = subprocess.Popen(
+            command,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=stderr_file,
+        )
+        try:
+            if process.stdin is None:
+                raise RuntimeError("ffmpeg stdin pipe was not created")
+            try:
+                for frame in frames:
+                    arr = np.ascontiguousarray(frame, dtype=np.uint8)
+                    process.stdin.write(arr.tobytes())
+            except BrokenPipeError:
+                # ffmpeg died early; the return-code check surfaces its stderr.
+                pass
+            process.stdin.close()
+            process.stdin = None
+            returncode = process.wait()
+        finally:
+            if process.stdin is not None:
+                process.stdin.close()
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+        if returncode:
+            stderr_file.seek(0)
+            stderr_text = stderr_file.read().decode("utf-8", "replace")
+            raise RuntimeError(
+                f"ffmpeg failed to encode {save_file_path} "
+                f"(exit code {returncode}): {stderr_text}"
+            )
+
+
 def save_materialized_output(
     materialized: MaterializedOutput,
     data_type: DataType,
@@ -969,15 +1098,26 @@ def save_materialized_output(
             quality=quality,
         )
         if not saved_with_audio:
-            imageio.mimsave(
-                save_file_path,
-                materialized.frames,
-                fps=materialized.fps,
-                format=output_format,
-                codec="libx264",
-                quality=quality,
-                output_params=["-preset", X264_PRESET],
-            )
+            if _imageio_ffmpeg_plugin_available():
+                imageio.mimsave(
+                    save_file_path,
+                    materialized.frames,
+                    fps=materialized.fps,
+                    format=output_format,
+                    codec="libx264",
+                    quality=quality,
+                    output_params=["-preset", X264_PRESET],
+                )
+            else:
+                # Without imageio-ffmpeg, imageio dispatches .mp4 writes to
+                # PyAVPlugin, whose write() has no quality/output_params
+                # kwargs (TypeError). Encode via a direct ffmpeg subprocess.
+                _save_video_mp4_via_ffmpeg_pipe(
+                    save_file_path=save_file_path,
+                    frames=materialized.frames,
+                    fps=materialized.fps,
+                    quality=quality,
+                )
 
             _maybe_mux_audio_into_mp4(
                 save_file_path=save_file_path,

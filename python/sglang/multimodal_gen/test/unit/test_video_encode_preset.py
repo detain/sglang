@@ -91,7 +91,13 @@ def test_saved_video_carries_the_configured_preset(tmp_path):
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="needs ffmpeg")
-def test_saved_video_decodes_to_every_frame(tmp_path):
+def test_saved_video_decodes_to_every_frame(tmp_path, monkeypatch):
+    # Force the imageio-ffmpeg-absent branch so this pins the direct
+    # ffmpeg-pipe encoder even in environments that install the plugin.
+    from sglang.multimodal_gen.runtime.entrypoints import utils as output_utils
+
+    monkeypatch.setattr(output_utils, "_imageio_ffmpeg_plugin_available", lambda: False)
+
     rng = np.random.default_rng(1)
     frames = rng.integers(0, 256, (FRAMES, SIZE, SIZE, 3), dtype=np.uint8)
     sample = torch.from_numpy(frames).permute(3, 0, 1, 2).float() / 255.0

@@ -126,6 +126,10 @@ def test_video_audio_single_pass_failure_falls_back(tmp_path, monkeypatch):
             raise RuntimeError("unsupported audio input")
 
     monkeypatch.setattr(output_utils.imageio, "mimsave", mimsave_spy)
+    # This test pins the mimsave-based one-pass -> two-pass audio fallback;
+    # force that branch even when imageio-ffmpeg is absent (then the silent
+    # write would otherwise go through the ffmpeg-pipe fallback instead).
+    monkeypatch.setattr(output_utils, "_imageio_ffmpeg_plugin_available", lambda: True)
     monkeypatch.setattr(output_utils, "scipy_wavfile", FakeWavFile)
     monkeypatch.setattr(
         output_utils,
