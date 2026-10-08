@@ -47,8 +47,39 @@ from sglang.multimodal_gen.runtime.disaggregation.transport.protocol import (
     is_transfer_message,
 )
 from sglang.multimodal_gen.runtime.utils.common import get_zmq_socket
+from sglang.multimodal_gen.runtime.utils.perf_logger import (
+    MemorySnapshot,
+    RequestMetrics,
+)
 
 logger = logging.getLogger(__name__)
+
+
+# Scalar keys that describe request performance rather than generated
+# content; they bypass per-node emit allowlists since any terminal may carry
+# them and only one OutputBatch is assembled.
+_OUTPUT_METRIC_KEYS = ("metrics", "metrics_list", "peak_memory_mb", "usage")
+
+
+def _deserialize_request_metrics(data: dict | None) -> RequestMetrics | None:
+    if data is None:
+        return None
+
+    metrics = RequestMetrics(request_id=data["request_id"])
+    metrics.stages = data.get("stages", {})
+    metrics.denoising_stages = set(data.get("denoising_stages", ()))
+    metrics.steps = data.get("steps", [])
+    metrics.total_duration_ms = data.get("total_duration_ms", 0.0)
+    for name, snapshot in data.get("memory_snapshots", {}).items():
+        metrics.memory_snapshots[name] = MemorySnapshot(
+            allocated_mb=snapshot.get("allocated_mb", 0.0),
+            reserved_mb=snapshot.get("reserved_mb", 0.0),
+            peak_allocated_mb=snapshot.get("peak_allocated_mb", 0.0),
+            peak_reserved_mb=snapshot.get("peak_reserved_mb", 0.0),
+            peak_host_anon_mb=snapshot.get("peak_host_anon_mb", 0.0),
+        )
+    return metrics
+
 
 # Scalars worth exposing to route predicates but not part of SamplingParams.
 _EXTRA_ROUTE_FIELDS = ("height", "width", "num_frames", "generate_audio")
@@ -361,7 +392,7 @@ class DiffusionServer:
         fields: dict[str, Any] = {
             k: v for k, v in tensor_fields.items() if v is not None
         }
-        for key in ("audio_sample_rate",):
+        for key in ("audio_sample_rate", *_OUTPUT_METRIC_KEYS):
             if scalar_fields.get(key) is not None:
                 fields[key] = scalar_fields[key]
 
@@ -624,10 +655,19 @@ class DiffusionServer:
 
         self._drop_request_transfers(action.request_id)
         fields = _decode_terminal_fields(action.fields)
+        metrics_list = fields.get("metrics_list")
         batch = OutputBatch(
             output=fields.get("output"),
             audio=fields.get("audio"),
             audio_sample_rate=fields.get("audio_sample_rate"),
+            metrics=_deserialize_request_metrics(fields.get("metrics")),
+            metrics_list=(
+                [_deserialize_request_metrics(m) for m in metrics_list]
+                if metrics_list
+                else None
+            ),
+            peak_memory_mb=fields.get("peak_memory_mb", 0.0),
+            usage=fields.get("usage"),
         )
         self._reply(action.request_id, action.client_identity, batch)
 

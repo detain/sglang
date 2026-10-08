@@ -292,10 +292,15 @@ class DagRequestScheduler:
                 return self._fail_locked(state, f"{node}: {error}")
 
             allowed = self._plan.node(node).emit
+            from sglang.multimodal_gen.runtime.disaggregation.orchestrator import (
+                _OUTPUT_METRIC_KEYS,
+            )
+
             for key, value in fields.items():
                 if allowed is not None and key not in allowed:
-                    continue
-                if value is not None:
+                    if key not in _OUTPUT_METRIC_KEYS:
+                        continue
+                if value is not None and state.partial_output.get(key) is None:
                     state.partial_output[key] = value
 
             self._retire_node(state, node)
