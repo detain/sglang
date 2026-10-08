@@ -720,6 +720,18 @@ def _try_save_video_with_audio(
     if audio_np is None:
         return False
 
+    if not _imageio_ffmpeg_plugin_available():
+        # The one-pass mimsave below passes FFMPEG-plugin-only kwargs
+        # (quality, output_params, audio_path, audio_codec). Without
+        # imageio-ffmpeg, imageio routes .mp4 writes to PyAVPlugin, which
+        # rejects them with a TypeError, so skip the doomed attempt and let
+        # the caller's two-pass path (pipe-encode + remux) handle audio.
+        logger.info(
+            "imageio FFMPEG plugin unavailable; using the compatible "
+            "two-pass video+audio path"
+        )
+        return False
+
     selected_sr = _pick_audio_sample_rate(
         audio_np=audio_np,
         audio_sample_rate=audio_sample_rate,
