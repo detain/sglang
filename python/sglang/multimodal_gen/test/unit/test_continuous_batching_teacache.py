@@ -30,6 +30,9 @@ class _FakeTeaCacheModel(TeaCacheMixin):
 
     def __init__(self, prefix: str = "wan"):
         self.config = SimpleNamespace(prefix=prefix)
+        # TeaCacheMixin._init_teacache_state reads self.prefix (CFG-cache
+        # separation landed upstream after this test was written).
+        self.prefix = prefix
         self._init_teacache_state()
 
 
