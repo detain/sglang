@@ -1180,6 +1180,78 @@ STACK, IN BUILD ORDER (bottom first)
       # The search includes the old fallback (up params, no TMA), so each
       # entry is no slower than before by the tuner's own timing.
 
+  FLUX.2 fp8_fa_sm120 + diffusion serving local fixes (2026-10-07/08, all LOCAL):
+        127. 3642490413  [diffusion] fix: materialize non-contiguous seq splits before FP8 requant
+      # FLUX.2 joint-stream split_seqs() narrows along seq -> strided views at
+      # batch>1 crash ModelOpt FP8 apply_fp8_linear's .view(-1,H). Fix at both
+      # ends: split_seqs returns .contiguous() (documented contract; no-op at
+      # batch 1) + apply_fp8_linear/bmm_flashinfer view->reshape (no-op copy
+      # on the LLM hot path). Unit + GPU e2e pass (bit-identical vs contiguous).
+        128. 55aaa02d2a  [diffusion] fix: materialize strided QKV shards before SP kv-gather
+      # FLUX.2 sp=2 auto kv_gather crashed warmup: "Tensors must be contiguous"
+      # -- Flux2 `value` is the raw last-dim chunk of the packed QKV+MLP proj
+      # (strided), while q/k are fresh from the QK-norm epilogue. Third
+      # contiguity hole at the same collective after upstream f9fca05803
+      # (#39291, arrived in the 09-28 merge) guarded the replicated prefix/
+      # suffix slices. Guards in layer.py _gather_sharded_sequence pass-through
+      # + _forward_with_kv_gather k/v + regression test. gloo is lenient to
+      # strided inputs; the rejection is the device-NCCL c10d check (proved
+      # via all_to_all_single repro). E2E: proved on the live FLUX.2 server.
+        129. 71fe8a08c4  [diffusion] fix: keep fp8_fa_sm120 module constants importable under meta-device init
+      # The FLUX.2 loader builds the DiT under a meta-device ctx; fused_prep's
+      # module-level INVERSE_FP8_MAX was torch.ones(...).item() with no device
+      # -> "Tensor.item() cannot be called on meta tensors" killed every
+      # --attention-backend fp8_fa_sm120 startup. device="cpu", bit-identical
+      # constant (0x3b124925). Import sweep: the only module-level hazard.
+      # E2E with 128: proved on the same boot.
+        130. 512e08de1e  [diffusion] fix: keep equal-length-QKV attention kernels on the Ulysses SP exchange
+      # kv_gather hands attention sharded-Q/full-K/V -> fp8_fa_sm120 (requires
+      # [S,H,128] equal shapes) rejected every call and silently fell back to
+      # cuDNN SDPA -- the requested backend was dead config at sp=2 (every
+      # block logged "Q/K/V shapes differ"). New capability
+      # AttentionBackendEnum.requires_equal_len_qkv (True only FP8_FA_SM120)
+      # joins causal/sparse in the _resolve_sp_attention_mode demotion
+      # predicate: auto kv_gather -> Ulysses exchange, explicit
+      # --kv-gather-degree fails closed. 26+2 tests pass.
+        131. c16d89efd7  [diffusion] fix: crash saving mp4 when imageio FFMPEG plugin is absent
+      # imageio+av without imageio-ffmpeg (prod venv drift from the diffusion
+      # extra): mimsave routed .mp4 to PyAVPlugin, which rejects the
+      # quality/output_params kwargs. Gate the mimsave fallback on plugin
+      # availability; otherwise pipe uint8 HWC frames as rawvideo into a
+      # direct ffmpeg subprocess (libx264, yuv420p, crf=(1-q/10)*51 with the
+      # mb16 scale -- same formula as the CUDA direct path). ffprobe-verified.
+        132. 611592687a  [diffusion] fix: LTX-Video v1 inherits LTX-2 negative prompt that overflows its 128-token T5 encoder
+      # The 'ltx'+'video' family detector mapped Lightricks/LTX-Video (v1) to
+      # LTX2SamplingParams, whose 254-T5-token Gemma-oriented negative was
+      # truncated to v1's model_max_length=128 at every warmup (weakened CFG).
+      # LTXVideoSamplingParams subclasses LTX2SamplingParams: compact 107-token
+      # negative + fps=25 (v1 default), registered via the EXACT hf path (
+      # consulted before detectors) so LTX-2/2.3/2.5 resolution is untouched.
+        133. b7c770ebec  [diffusion] fix: ship unresolvable CUDA IPC handles on non-loopback scheduler endpoints
+      # Scheduler.return_result spilled tensor-bearing replies into CudaIpcRef
+      # unconditionally, but client dereference (materialize_cuda_refs) is
+      # gated on is_local_endpoint -> servers bound --host 0.0.0.0 pickled raw
+      # IPC handles no client can resolve ("CudaIpcRef has no len()" in
+      # process_generation_batch: webui, realtime adapter, benchmarks,
+      # output extra_body). Gate the reply spill with the same predicate
+      # (mirrors _prepare_local_payload); local keeps the IPC fast path
+      # byte-for-byte. The Wan file-paths success path was always safe.
+      # LIVE ONLY AFTER RESTART (owed).
+        134. 1b66dcb374  [diffusion] fix: stop the doomed one-pass audio mimsave attempt when imageio-ffmpeg is absent
+      # Follow-up to 131: in the PyAV world the one-pass audio mimsave always
+      # raised, spraying a scary WARNING per save before the two-pass remux
+      # did the job anyway. Check _imageio_ffmpeg_plugin_available() first:
+      # calm INFO + straight to two-pass. New caplog test pins that mimsave
+      # is never attempted there.
+        135. e8cd55441c  [diffusion] fix: forward max_sequence_length to diffusers pipeline kwargs
+      # The diffusers fallback dropped top-level max_sequence_length --
+      # _build_pipeline_kwargs only forwarded extra[diffusers_kwargs] into
+      # pipe(**kwargs); now signature-gated forwarding (diffusers_kwargs keeps
+      # precedence). +6 CPU unit tests. LIVE ONLY AFTER RESTART (owed).
+      # ENV note (not a commit): /root/sglang/.venv gained imageio-ffmpeg
+      # 0.5.1 + opencv-headless 4.10.0.84 + trimesh 5.1.1 (uv, 10-08); fixes
+      # hunyuan3d discovery. fp8_fa_sm120 FLUX.2 e2e of 130 still owed.
+
 
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
