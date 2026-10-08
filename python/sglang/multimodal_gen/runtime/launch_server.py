@@ -1,6 +1,7 @@
 # Copied and adapted from: https://github.com/hao-ai-lab/FastVideo
 
 import dataclasses
+import json
 import multiprocessing as mp
 import os
 import sys
@@ -444,7 +445,7 @@ def launch_pool_disagg_server(
     # Start DiffusionServer
     frontend_endpoint = f"tcp://{host}:{server_args.scheduler_port}"
 
-    diffusion_server = DiffusionServer(
+    diffusion_server = DiffusionServer.from_classic_args(
         frontend_endpoint=frontend_endpoint,
         encoder_work_endpoints=encoder_work_endpoints,
         denoiser_work_endpoints=denoiser_work_endpoints,
@@ -454,7 +455,6 @@ def launch_pool_disagg_server(
         decoder_result_endpoint=decoder_result_ep,
         dispatch_policy_name=server_args.disagg_dispatch_policy,
         timeout_s=float(server_args.disagg_timeout),
-        server_args=server_args,
     )
     diffusion_server.start()
 
@@ -502,6 +502,49 @@ def parse_url_string(url_str: str | None) -> list[str]:
     return [u.strip() for u in (url_str or "").split(";") if u.strip()]
 
 
+def launch_dag_server(server_args: ServerArgs):
+    """Launch the orchestrator for a custom DAG topology (``--disagg-dag``).
+
+    Node work endpoints come from the topology's pool URLs; result endpoints
+    follow the same ``base_port + index + 1`` convention the three fixed roles
+    use, so a DAG deployment needs no extra port bookkeeping.
+    """
+    configure_logger(server_args)
+
+    plan = server_args.resolve_execution_plan()
+    host = server_args.host or "127.0.0.1"
+    base_port = server_args.scheduler_port
+    frontend_endpoint = f"tcp://{host}:{base_port}"
+
+    logger.info("Starting DiffusionServer with a %d-node DAG", len(plan.node_names))
+    logger.info("  Frontend: %s", frontend_endpoint)
+    for name in plan.node_names:
+        node = plan.node(name)
+        logger.info(
+            "  %s: %d instance(s), capacity=%d, work=%s, result=%s",
+            name,
+            node.num_instances,
+            node.capacity,
+            node.pool.urls,
+            node.pool.result_endpoint,
+        )
+
+    diffusion_server = DiffusionServer(
+        frontend_endpoint=frontend_endpoint,
+        plan=plan,
+        timeout_s=float(server_args.disagg_timeout),
+    )
+    diffusion_server.start()
+
+    if not diffusion_server.wait_ready(timeout=30.0):
+        raise RuntimeError("DiffusionServer failed to bind sockets within 30 seconds")
+
+    try:
+        launch_http_server_only(server_args)
+    finally:
+        diffusion_server.stop()
+
+
 def launch_disagg_server(server_args: ServerArgs):
     """Launch DiffusionServer head node + HTTP server (--disagg-role server).
 
@@ -513,6 +556,10 @@ def launch_disagg_server(server_args: ServerArgs):
         denoiser result: scheduler_port + 2
         decoder result: scheduler_port + 3
     """
+    if server_args.disagg_dag:
+        launch_dag_server(server_args)
+        return
+
     configure_logger(server_args)
     set_global_server_args(server_args)
 
@@ -525,6 +572,14 @@ def launch_disagg_server(server_args: ServerArgs):
         and server_args.encoder_urls is None
         and server_args.decoder_urls is None
     )
+    if glm_distributed_mode_enabled:
+        raise NotImplementedError(
+            "GLM distributed denoiser mode (GlmImagePipeline + --srt-encoder-url "
+            "without --encoder-urls/--decoder-urls) is not supported by the "
+            "DAG-based DiffusionServer (PR #32550); the AR-batch dispatch "
+            "machinery needs re-porting onto the DAG router. Serve GLM-Image "
+            "monolithically or with classic encoder/denoiser/decoder URLs."
+        )
     required_urls = [("--denoiser-urls", server_args.denoiser_urls)]
     if not glm_distributed_mode_enabled:
         required_urls.extend(
@@ -567,10 +622,7 @@ def launch_disagg_server(server_args: ServerArgs):
         decoder_result_ep,
     )
 
-    denoiser_options = (
-        {"denoiser_capacity_per_worker": 1} if glm_distributed_mode_enabled else {}
-    )
-    diffusion_server = DiffusionServer(
+    diffusion_server = DiffusionServer.from_classic_args(
         frontend_endpoint=frontend_endpoint,
         encoder_work_endpoints=encoder_work_endpoints,
         denoiser_work_endpoints=denoiser_work_endpoints,
@@ -580,9 +632,6 @@ def launch_disagg_server(server_args: ServerArgs):
         decoder_result_endpoint=decoder_result_ep,
         dispatch_policy_name=server_args.disagg_dispatch_policy,
         timeout_s=float(server_args.disagg_timeout),
-        server_args=server_args,
-        glm_distributed_mode_enabled=glm_distributed_mode_enabled,
-        **denoiser_options,
     )
     diffusion_server.start()
 
@@ -618,13 +667,24 @@ def launch_disagg_role(server_args: ServerArgs):
             f"--disagg-server-addr is required for --disagg-role {role_type.value}"
         )
 
+    plan = server_args.resolve_execution_plan()
+    node_name = server_args.dag_node
+
     # Derive endpoints
     work_endpoint = server_args.derive_pool_work_endpoint()
-    result_endpoint = server_args.derive_pool_result_endpoint()
+    if plan is not None:
+        if not node_name or not plan.has_node(node_name):
+            raise ValueError(
+                f"--dag-node must name a node in --disagg-dag; got {node_name!r}, "
+                f"known nodes: {plan.node_names}"
+            )
+        result_endpoint = plan.node(node_name).pool.result_endpoint
+    else:
+        result_endpoint = server_args.derive_pool_result_endpoint()
 
     logger.info(
-        "Starting disagg role: %s, num_gpus=%d",
-        role_type.value,
+        "Starting disagg node: %s, num_gpus=%d",
+        node_name or role_type.value,
         server_args.num_gpus,
     )
     logger.info("  Work endpoint (bind): %s", work_endpoint)
@@ -643,13 +703,27 @@ def launch_disagg_role(server_args: ServerArgs):
         start=server_args.scheduler_port + 100, avoid={server_args.scheduler_port}
     )
 
-    role_par = server_args.get_role_parallelism(role_type)
+    if plan is not None:
+        # Each pool carries its own parallelism, so two nodes with the same
+        # role_affinity can be sharded differently.
+        node_par = plan.node(node_name).pool.parallelism
+        role_par = {
+            "tp_size": node_par.get("tp"),
+            "sp_degree": node_par.get("sp"),
+            "ulysses_degree": node_par.get("ulysses"),
+            "ring_degree": node_par.get("ring"),
+        }
+        is_source = plan.is_source(node_name)
+    else:
+        role_par = server_args.get_role_parallelism(role_type)
+        is_source = role_type == RoleType.ENCODER
+
     role_overrides = {
         "disagg_role": role_type,
         "disagg_mode": True,
         "pool_work_endpoint": work_endpoint,
         "pool_result_endpoint": result_endpoint,
-        "warmup_mode": "request" if role_type == RoleType.ENCODER else "off",
+        "warmup_mode": "request" if is_source else "off",
         "scheduler_port": internal_scheduler_port,
         # Per-role parallelism (None = auto-derive from num_gpus)
         "tp_size": role_par["tp_size"],
@@ -774,8 +848,46 @@ def launch_disagg_role(server_args: ServerArgs):
         shutdown_scheduler_processes(role_args, processes, request_shutdown=False)
 
 
+def validate_dag_topology(server_args: ServerArgs) -> None:
+    """Compile the DAG topology YAML and print the plan, then exit.
+
+    This is a lightweight dry-run: it does not load model weights or construct
+    the pipeline. Plan structure (roles, edges, predicates, terminal nodes) is
+    checked at compile time. Stage names vs the live pipeline are guarded by
+    unit tests (``test/unit/test_dag_disagg.py``) and model-specific DAG E2E
+    tests.
+    """
+    configure_logger(server_args)
+
+    plan = server_args.resolve_execution_plan()
+    if plan is None:
+        raise ValueError("--dag-validate requires --disagg-dag")
+
+    print(json.dumps(plan.to_dict(), indent=2))
+
+    from sglang.multimodal_gen.registry import get_model_info
+
+    model_info = get_model_info(
+        server_args.model_path,
+        backend=server_args.backend,
+        model_id=server_args.model_id,
+    )
+    if model_info is not None:
+        print(f"\nModel resolves to pipeline: {model_info.pipeline_cls.__name__}")
+
+    print("\nDAG topology compiled successfully.")
+    print(
+        "Stage coverage vs the live pipeline is checked in unit/E2E tests "
+        "(see test/unit/test_dag_disagg.py)."
+    )
+
+
 def dispatch_launch(server_args: ServerArgs):
     """Route to the correct launch function based on --disagg-role."""
+    if server_args.dag_validate:
+        validate_dag_topology(server_args)
+        return
+
     apply_plugin_hooks()
 
     if "NCCL_NVLS_ENABLE" not in os.environ or server_args.enable_nccl_nvls:
