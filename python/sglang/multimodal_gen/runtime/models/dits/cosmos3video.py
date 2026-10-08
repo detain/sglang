@@ -783,7 +783,6 @@ class Cosmos3CrossAttention(nn.Module):
             supported_attention_backends=supported_attention_backends,
             is_cross_attention=True,
             prefix=add_prefix("attn", prefix),
-            is_cross_attention=True,
         )
 
     def forward(
