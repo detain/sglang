@@ -117,6 +117,14 @@ class BaseLayerWithLoRA(nn.Module):
     def bias(self):
         return getattr(self.base_layer, "bias", None)
 
+    def _scale_lora_delta(
+        self, delta: torch.Tensor, runtime_lora_scale: float = 1.0
+    ) -> torch.Tensor:
+        if self.lora_alpha != self.lora_rank:
+            delta = delta * (self.lora_alpha / self.lora_rank)  # type: ignore
+        scale = self.strength * runtime_lora_scale
+        return delta if scale == 1.0 else delta * scale
+
     @property
     def can_merge_base_weight(self) -> bool:
         """Whether a LoRA delta may safely replace the stored base weight."""
@@ -159,9 +167,7 @@ class BaseLayerWithLoRA(nn.Module):
             lora_B.to(device=input_parallel.device, non_blocking=True)
         )
         delta_parallel = _compute_lora_delta(input_lora, lora_A_sliced, lora_B_sliced)
-        if self.lora_alpha != self.lora_rank:
-            delta_parallel *= self.lora_alpha / self.lora_rank  # type: ignore
-        delta_parallel *= self.strength
+        delta_parallel = self._scale_lora_delta(delta_parallel)
         output_parallel += delta_parallel.to(dtype=output_parallel.dtype)
 
         output = self.base_layer.collect_output(
@@ -874,9 +880,7 @@ class LinearWithLoRA(BaseLayerWithLoRA):
                 lora_B.to(device=input.device, non_blocking=True)
             )
             delta = _compute_lora_delta(input_lora, lora_A_sliced, lora_B_sliced)
-            if self.lora_alpha != self.lora_rank:
-                delta *= self.lora_alpha / self.lora_rank  # type: ignore
-            delta *= self.strength
+            delta = self._scale_lora_delta(delta)
             output += delta.to(dtype=output.dtype)
 
         return self._add_lora_output_offset(output)
