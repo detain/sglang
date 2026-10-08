@@ -1347,6 +1347,15 @@ STACK, IN BUILD ORDER (bottom first)
       # (merged upstream #42988, not in tree) ported by hand. alias_free.py
       # + kandinsky6/decoding.py hunks dropped (files don't exist here).
 
+        156. e7b4901d03  LOCAL  fix: SP Wan VAE decode crashed on #38650's epilogue kwargs
+      # SpatialParallelCausalConv3d.forward(x, cache_x) never accepted
+      # residual/skip_bias; _run_cached_causal_conv's fallback passed them
+      # unconditionally -> prod DecodingStage TypeError under spatial
+      # parallel decode (entry 145 regression). _conv_supports_epilogue
+      # gate + bit-identical eager chain (also gates the non-cached
+      # conv1/conv2 calls + defer_bias). Regression test in test_layout.py.
+      # Upstream main has the same latent hole. LIVE ONLY AFTER RESTART.
+
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
 ==============================================================================
