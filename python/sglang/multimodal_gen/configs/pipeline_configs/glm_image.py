@@ -21,6 +21,9 @@ from sglang.multimodal_gen.runtime.server_args import get_global_server_args
 class GlmImagePipelineConfig(SpatialImagePipelineConfig):
     """Configuration for the GlmImage pipeline."""
 
+    def supports_continuous_batching(self):
+        return True
+
     vae_precision: str = "bf16"
 
     should_use_guidance: bool = False

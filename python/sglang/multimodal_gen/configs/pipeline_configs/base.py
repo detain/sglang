@@ -6,7 +6,7 @@ import math
 import os
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, fields
-from enum import Enum
+from enum import Enum, auto
 from operator import attrgetter
 from typing import Any, ClassVar
 
@@ -134,6 +134,12 @@ class PipelineConfig:
     """The base configuration class for a generation pipeline."""
 
     native_only_components: ClassVar[tuple[str, ...]] = ()
+    # Tasks that accept continuous batching (batching_mode="continuous").
+    continuous_batching_supported_tasks: ClassVar[tuple[ModelTaskType, ...]] = ()
+    # True when cond/uncond can run as one batched forward (batch 2B).
+    supports_cfg_batch_folding: ClassVar[bool] = False
+    # True when different resolutions can pack along the sequence dim (varlen).
+    supports_varlen_step_packing: ClassVar[bool] = False
     # Default task; supported_task_types is a model capability, not a user knob.
     task_type: ModelTaskType = ModelTaskType.I2I
     supported_task_types: ClassVar[tuple[ModelTaskType, ...] | None] = None
@@ -463,6 +469,9 @@ class PipelineConfig:
     def supports_native_grouped_requests(self):
         """Return whether dynamic batches should run as grouped Req lists."""
         return False
+
+    def supports_continuous_batching(self):
+        return self.task_type in self.continuous_batching_supported_tasks
 
     def supports_sequential_dit_inference(self):
         """Return whether batched AR is followed by per-request DiT inference."""
