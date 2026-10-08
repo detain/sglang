@@ -847,15 +847,6 @@ class LinearWithLoRA(BaseLayerWithLoRA):
     not a tuple of (output, bias).
     """
 
-    def __init__(
-        self,
-        base_layer: nn.Linear,
-        lora_rank: int | None = None,
-        lora_alpha: int | None = None,
-        snapshot_base: bool = True,
-    ) -> None:
-        super().__init__(base_layer, lora_rank, lora_alpha, snapshot_base)
-
     @torch.compile()
     def forward(self, input: torch.Tensor) -> torch.Tensor:
         # nn.Linear.forward() returns a single tensor, not a tuple

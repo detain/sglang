@@ -376,24 +376,46 @@ def pt_weights_iterator(
 
 def default_weight_loader(param: torch.Tensor, loaded_weight: torch.Tensor) -> None:
     """Default weight loader."""
+    if param.numel() == 1 and loaded_weight.numel() == 1:
+        # Sometimes scalar values aren't considered tensors with shapes
+        # so if both param and loaded_weight are a scalar,
+        # "broadcast" instead of copy
+        param.data.fill_(loaded_weight.item())
+    else:
+        assert param.size() == loaded_weight.size(), (
+            f"Attempted to load weight ({loaded_weight.size()}) "
+            f"into parameter ({param.size()})"
+        )
+
+        param.data.copy_(loaded_weight)
+
+
+def load_stacked_weight(
+    name: str,
+    loaded_weight: torch.Tensor,
+    params_dict: dict[str, torch.nn.Parameter],
+    stacked_params_mapping: Iterable[tuple[str, str, str | int]],
+) -> str | None:
+    """Load a known parameter or its fused shard; return None for unknown names."""
+    for param_name, weight_name, shard_id in stacked_params_mapping:
+        if weight_name not in name:
+            continue
+        name = name.replace(weight_name, param_name)
+        if name not in params_dict:
+            continue
+        param = params_dict[name]
+        param.weight_loader(param, loaded_weight, shard_id)
+        return name
+
+    if name not in params_dict:
+        return None
+    param = params_dict[name]
     try:
-        if param.numel() == 1 and loaded_weight.numel() == 1:
-            # Sometimes scalar values aren't considered tensors with shapes
-            # so if both param and loaded_weight are a scalar,
-            # "broadcast" instead of copy
-            param.data.fill_(loaded_weight.item())
-        else:
-            assert param.size() == loaded_weight.size(), (
-                f"Attempted to load weight ({loaded_weight.size()}) "
-                f"into parameter ({param.size()})"
-            )
-
-            param.data.copy_(loaded_weight)
-    except Exception:
-        # NOTE: This exception is added for the purpose of setting breakpoint to
-        # debug weight loading issues.
-        raise
-
+        weight_loader = param.weight_loader
+    except AttributeError:
+        weight_loader = default_weight_loader
+    weight_loader(param, loaded_weight)
+    return name
 
 def maybe_remap_kv_scale_name(name: str, params_dict: dict) -> str | None:
     """Remap the name of FP8 k/v_scale parameters.
@@ -455,6 +477,36 @@ def maybe_remap_kv_scale_name(name: str, params_dict: dict) -> str | None:
 
     # If there were no matches, return the untouched param name
     return name
+
+
+def load_llm_encoder_weights(
+    weights: Iterable[tuple[str, torch.Tensor]],
+    params_dict: dict[str, torch.nn.Parameter],
+    stacked_params_mapping: Iterable[tuple[str, str, str | int]],
+    *,
+    strip_prefix: str = "",
+) -> set[str]:
+    """Load Llama/Qwen-style encoder weights, excluding rotary cache tensors."""
+    loaded_params: set[str] = set()
+    for name, loaded_weight in weights:
+        if strip_prefix and name.startswith(strip_prefix):
+            name = name[len(strip_prefix) :]
+        if (
+            "rotary_emb.inv_freq" in name
+            or "rotary_emb.cos_cached" in name
+            or "rotary_emb.sin_cached" in name
+        ):
+            continue
+        if "scale" in name:
+            name = maybe_remap_kv_scale_name(name, params_dict)
+            if name is None:
+                continue
+        name = load_stacked_weight(
+            name, loaded_weight, params_dict, stacked_params_mapping
+        )
+        if name is not None:
+            loaded_params.add(name)
+    return loaded_params
 
 
 def compute_weights_checksum(

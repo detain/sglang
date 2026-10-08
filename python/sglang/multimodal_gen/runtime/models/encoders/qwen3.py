@@ -20,8 +20,7 @@ from sglang.multimodal_gen.runtime.layers.vocab_parallel_embedding import (
     VocabParallelEmbedding,
 )
 from sglang.multimodal_gen.runtime.loader.weight_utils import (
-    default_weight_loader,
-    maybe_remap_kv_scale_name,
+    load_llm_encoder_weights,
 )
 from sglang.multimodal_gen.runtime.models.encoders.base import TextEncoder
 from sglang.srt.layers.activation import SiluAndMul
@@ -432,64 +431,12 @@ class Qwen3ForCausalLM(TextEncoder):
 
     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
         """Load weights with support for tensor parallelism and weight remapping."""
-        params_dict = dict(self.named_parameters())
-        loaded_params: set[str] = set()
-
-        for name, loaded_weight in weights:
-            # Strip 'model.' prefix from HuggingFace Qwen3 weights
-            if name.startswith("model."):
-                name = name[6:]  # len("model.") == 6
-
-            # Skip rotary embedding weights
-            if "rotary_emb.inv_freq" in name:
-                continue
-            if "rotary_emb.cos_cached" in name or "rotary_emb.sin_cached" in name:
-                continue
-
-            # Handle KV scale remapping
-            if "scale" in name:
-                kv_scale_name: str | None = maybe_remap_kv_scale_name(name, params_dict)
-                if kv_scale_name is None:
-                    continue
-                else:
-                    name = kv_scale_name
-
-            # Handle stacked params mapping (qkv_proj, gate_up_proj)
-            for (
-                param_name,
-                weight_name,
-                shard_id,
-            ) in self.config.arch_config.stacked_params_mapping:
-                if weight_name not in name:
-                    continue
-                name = name.replace(weight_name, param_name)
-
-                # Skip loading extra bias for GPTQ models
-                if name.endswith(".bias") and name not in params_dict:
-                    continue
-
-                if name not in params_dict:
-                    continue
-
-                param = params_dict[name]
-                weight_loader = param.weight_loader
-                weight_loader(param, loaded_weight, shard_id)
-                break
-            else:
-                # Skip loading extra bias for GPTQ models
-                if name.endswith(".bias") and name not in params_dict:
-                    continue
-
-                if name not in params_dict:
-                    continue
-
-                param = params_dict[name]
-                weight_loader = getattr(param, "weight_loader", default_weight_loader)
-                weight_loader(param, loaded_weight)
-
-            loaded_params.add(name)
-
-        return loaded_params
+        return load_llm_encoder_weights(
+            weights,
+            dict(self.named_parameters()),
+            self.config.arch_config.stacked_params_mapping,
+            strip_prefix="model.",
+        )
 
 
 EntryClass = Qwen3ForCausalLM

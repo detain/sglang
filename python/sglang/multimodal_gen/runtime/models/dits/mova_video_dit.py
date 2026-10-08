@@ -284,9 +284,6 @@ class CrossAttention(nn.Module):
 
 
 class MulAdd(nn.Module):
-    def __init__(self):
-        super().__init__()
-
     def forward(self, x, gate, residual):
         return residual + gate * x
 
