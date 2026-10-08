@@ -1,25 +1,32 @@
 # stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
 #
-# STACK: qwennext-stack-126-2026-09-28
+# STACK: qwennext-stack-155-2026-10-08
 #   main+pr36787+pr37275+pr38144+pr38209+pr36644+pr39862+pr39809+pr39893+local_hicache_qsa_fixes
 #   +pr39614+pr39978+pr40002+pr39065+pr40501+pr40175+pr40362+pr39391+pr37061+pr39333+pr33778
 #   +pr38977+pr39977+pr40480+pr39880+pr40235+pr39807+cpu-triage+boot-fix+plan_updates_perf
 #   +pr40626+pr40778+pr40748+upstream-merge+eos-guard+upstream-merge-2
 #   +pr41168+pr41058+pr40099+pr40940+pr41313+pr39716+pr40952+pr41245+pr38480
 #   +mixed-chunk(pr39575*+pr39526*+pr40458+pr40143*+local)
-#   (entries 1-126; 09-28 added 22 entries: 9 new PR blocks, new head
+#   +diffusion-batch-2026-10-08(pr27673+pr28690*+pr32513+pr32550*+pr33036*+pr33588*
+#    +pr36399+pr36767+pr37460*+pr38650+pr39212+pr40493+pr40588+pr40755+pr41340*
+#    +pr41944+pr42249+pr42928*+pr43028*+pr43064*)
+#   (entries 1-155; *=squash/ported, see commit messages. 10-08 added entries
+#   136-155: 20 diffusion PRs (4 more evaluated-skipped, see NOT INCLUDED).
+#   09-28 added 22 entries: 9 new PR blocks, new head
 #   commits of #38144/#39614/#39977/#40778, and 7 local fixes; then 118-125
 #   make --enable-mixed-chunk safe and fix the QSA verify ring collision.
 #   * = picked with local modifications, see the entries)
 # branch : qwennext-stack
-# tip    : d9a82db546   (the stack.txt commit sits above it)
+# tip    : dc85a2d5e3   (the stack.txt commit sits above it)
 # base   : upstream sgl-project/sglang main @ 7ad55e4386 ([HiCache] TMA-staged
 #          host<->device KV transfer kernel (sm_90+) (#40278), 2026-09-21)
 # synced : upstream main @ f209e67767 (#39643, 2026-09-28) MERGED IN as
 #          2e228b5ce5 on top of entry 95 (second merge; the first was
 #          d34f7b2326 as a87ae32c42 after entry 91). See the UPSTREAM MERGE
 #          sections. Entry shas below stay valid.
-# updated: 2026-09-28 (09-28: upstream merge #2 + entries 95-117, see
+# updated: 2026-10-08 (10-08: diffusion PR batch entries 136-155 -- 20 open
+#          PRs applied onto the stack; server restart OWED to activate.
+#          09-28: upstream merge #2 + entries 95-117, see
 #          UPSTREAM MERGE #2; 09-21: full rebuild on the 09-21 main tip + 7 newly-mined PRs
 #          appended #39333 #33778 #38977 #39977 #40480 #39880 #40235, the
 #          erroneously-dropped #39807 restored as 63-65, then CPU-battery
@@ -1253,9 +1260,114 @@ STACK, IN BUILD ORDER (bottom first)
       # hunyuan3d discovery. fp8_fa_sm120 FLUX.2 e2e of 130 still owed.
 
 
+  Diffusion PR merge batch (2026-10-08). 24 PRs requested, 20 applied
+  (entries 136-155; 4 skipped -- see NOT INCLUDED). SQUASH = net PR-tip diff
+  applied via `git apply -3` with conflict resolutions documented IN the
+  commit message; PORTED = intent re-authored on our tree shape; plain
+  entries are cherry-pick -x (upstream shas listed). HEAD of the branch
+  moved with each entry; test evidence per entry also in commit messages.
+      RESTART OWED: all of 136-155 are live only after the user restarts
+      the diffusion servers (prod FLUX.2 dp-size2 on GPUs 2/3 untouched
+      through the batch -- verification used CUDA_VISIBLE_DEVICES=3).
+        136. c428f58ab5 e448906e8e (+fix c879c0ca1a)  PR #27673  LiteAttention temporal sparse attention backend
+      # Hopper-gated _LiteAttentionBackendResolver in cuda.py registry,
+      # LITE_ATTENTION enum + is_sparse in AttentionBackendEnum (kept
+      # alongside our requires_equal_len_qkv), batched-CFG in denoising,
+      # docs folded into attention_backends.mdx (upstream's .md->mdx move
+      # redirected to our docs path). c879c0ca1a fixes a duplicate-kwarg
+      # auto-merge artifact in cosmos3video.py.
+        137. 1d411e4768 +c492b7536c  PR #28690  continuous batching v0 (SQUASH)
+      # --batching-mode {static|dynamic|continuous}: managers/
+      # continuous_batching.py + continuous_stage_worker.py,
+      # pipelines_core/batched_solver.py + fallback_diagnostics.py,
+      # packed-teacache varlen path, denoising stage split into PR's step
+      # methods (kept our LiteAttention reset + metric vocabulary w/
+      # batch_size kwarg bridge). Base 07-13: path rewrites applied
+      # (kernels move, docs move).
+        138. 109e4f441d  PR #32513  Thread LTX-2 linear prefixes for NVFP4
+        139. ea475b84e1 +801b8f4d33  PR #32550  DAG-based disaggregation (SQUASH)
+      # Full runtime/disaggregation/dag/ package + topology YAMLs +
+      # multi-input join in scheduler_mixin (our GLM-distributed grafts
+      # preserved) + protocol node field. KNOWN REGRESSION: glm_distributed
+      # mode on disagg servers now raises NotImplementedError (old AR-batch
+      # orchestrator machinery not re-ported over the DAG rewrite).
+      # 801b8f4d33 restores request metrics through the DAG result path.
+        140. f92c2b9681  PR #33036  overlap declared-parallel conditioning stages (SQUASH)
+      # --parallel-stage-execution {auto|serial}, DEFAULT serial; Wan I2V
+      # text+image encoder overlap first; executor group machinery; merged
+      # cleanly over our 139 DAG hooks in composed_pipeline_base.
+        141. 35f86b6ca2  PR #33588  stop silently dropping weights in update_weights_from_disk (PORTED)
+        142. 9c98d780a8  PR #36399  bench: report steady-state denoise latency by default
+      # --iterations N + per-iteration latency table; unified with our
+      # quality-bcg-matrix flags in the sep benchmark skill scripts.
+        143. ef336c222c b1dd8ca448 a16d1ae3f0 76b8ad66ee +14d748a2c0  PR #36767  TeaCache coefficient calibration + LongCat-Image, Wan2.2, MiniMax-H3
+      # SGLANG_TEACACHE_CALIBRATE(_OUT) capture path (record_from_env in
+      # Wan/LongCat/MiniMax-H3 forwards), request-scoped TeaCache state,
+      # boundary fixes, preserved early Wan2.1 steps; MiniMax-H3 joins
+      # Spectrum+TeaCache mixins. 14d748a2c0 aligns legacy WanT2V_1_3B
+      # start_skipping 5->6 test expectations (intentional in e312da42ef).
+        144. 4b0fa083ec  PR #37460  Rework linear and LoRA linear common part (SQUASH)
+      # Net-diff-from-PR-tip trick: PR tip had merged main and our files
+      # matched that shape -> `git diff tip..pr | git apply` clean. Base
+      # ParallelLinear gains parallel_input/apply_quant_method/
+      # collect_output hooks; all LoRA wrappers share _forward_with_delta.
+        145. af9074943c  PR #38650  Wan VAE conv bias epilogue + tiled RMSNorm+SiLU
+      # conv_bias fused into wan_rmsnorm_silu (kept our BitExactFusionGate
+      # post-gate) + can_use_conv_bias_epilogue gate.
+        146. 53ade2519d  PR #39212  allow SageAttention for FLUX.2
+        147. 0f094f64b7 1682ff2be0  PR #40493  honor --vae-slicing in native pipelines
+        148. 0ad6f65e6c f69b3c5a8b  PR #40588  USP: accept strided row views in packed QKV all-to-all
+      # Complements (does not replace) our 128/130 layer.py contiguity
+      # fixes -- usp.py now documents/enables the strided-row contract.
+        149. fa0a5ea8a9 bb43c2af37  PR #40755  LTX-2: skip no-op SP self-attention mask
+        150. ba8a7a5a9e  PR #41340  Qwen-Image 2.1 VAE lossless fast paths (SQUASH)
+      # 3 new JIT CUDA kernels (bias_residual_add, channel_rmsnorm_finish_
+      # silu, channel_rmsnorm_silu_nhwc) + conv_fold.py + DupUp3D->
+      # ConvTranspose2d under quality=extra-high/high + channels_last
+      # decode. Skill-doc hunk redirected .agents/skills -> .claude/skills
+      # (our tree predates upstream's .agents split); README table union.
+      # JIT kernels compile clean on SM120 (254 norm + 181 fastpath tests).
+        151. 8c2bc7622c d3d2d45c3b 380f8e6110 f05e928db0  PR #41944  XPU strided qkv + bit-exact FLUX.2 norm fusions
+        152. b0e538b556  PR #42249  defer quantization implementation imports (lazy exports)
+      # method_names.py vendored with EMPTY alias map (convrot INT8 #38040
+      # is in upstream-main but NOT our tree yet) -- restore
+      # {kitchen_int8: convrot_int8} alias when the stack next merges main.
+        153. 7c9d5fdf45  PR #42928  breakable CUDA graphs for LTX-2.3/2.5 (SQUASH)
+      # BCG allow-gate + guided-pass routing + on-device STG mask; applied
+      # clean (zero conflicts) over our 138/149 ltx_2.py changes; net diff
+      # includes the LTX CI cases + cookbook doc updates.
+        154. fac65fab1f  PR #43028  share/fold LoRA delta scaling (PORTED)
+      # Written against main's 4-site + runtime_lora_scale shape (#30487
+      # not in our tree); intent via _scale_lora_delta helper on our 2
+      # delta sites. Re-examine on next main merge.
+        155. dc85a2d5e3  PR #43064  remove unused helpers / share duplicated code (SQUASH, applied LAST)
+      # lora/linear.py + orchestrator.py conflicts kept OURS (already
+      # superseded by 144/139); encoders take the shared
+      # load_llm_encoder_weights -- its dependency load_stacked_weight
+      # (merged upstream #42988, not in tree) ported by hand. alias_free.py
+      # + kandinsky6/decoding.py hunks dropped (files don't exist here).
+
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
 ==============================================================================
+
+  Diffusion batch 2026-10-08 -- evaluated, NOT included:
+  PR #35335 (auto-residency 4/4) -- USER-SKIPPED on request 10-08: its
+      deps #37917 (2/4) and #37918 (3/4) are still open PRs; #37916 (1/4)
+      already arrived in our tree via the 09-28 main merge (a176ba2f7b).
+      Nothing was applied, so nothing needed unapplying.
+  PR #31176 (broadcast per-prompt conditioning) -- SUPERSEDED: the
+      feature is in main via #31233 (d389039337):
+      expand_conditioning_to_sample_batch + per-model overrides +
+      extra_per_sample_conditioning_fields (semantic dupe, not ancestor).
+  PR #41240 (LTX-2.5 LPT tile balance) -- ALREADY APPLIED: git cherry
+      patch-id '=' (6cb2a25543 is content-identical in our base).
+  PR #32860 (Wan VAE DupUp3D add-fuse) -- SUPERSEDED: tree already has
+      the bit-exact dup_up3d_add Triton kernel
+      (kernels/ops/diffusion/layout/wan_causal_cache_triton.py:298) wired
+      into the wanvae shortcut block with XPU + NHWC gates; the PR's
+      aten can_fuse_add approach is redundant (cherry-pick conflicted,
+      aborted clean).
 
   PR #39721 / #39722 / #39723 / #39724  @Shunkangz
       [Qwen3.8 CP 1/4 .. 4/4] Collocated prefill context parallelism
@@ -1550,9 +1662,28 @@ REBUILDING FROM SCRATCH
   #                                      stage-local has_ple + _is_capturing
   #                                      prefetch dual-path + _pinned_buffer
   #                                      line + staging block; then entry 62)
+  # After entry 135 (10-07/08 local fixes): 10-08 diffusion batch
+  # entries 136-155 -- cherry-pick -x the shas above for plain entries;
+  # for SQUASH/PORTED entries replay the recorded net-diff method (git
+  # rev-list --reverse --no-merges base..prHEAD ^upstream-main ^HEAD to
+  # enumerate, or diff the PR TIP when it already merged main) -- every
+  # resolution is documented in that commit's message. Re-fetch PR heads
+  # first (they move; #43064 had rebased to main-tip when applied).
+  # Battery expectation after 155: multimodal_gen/test/unit green on a
+  # visible GPU EXCEPT ENV files: test_weight_utils.py (4F, no
+  # runai_model_streamer), test_consistency_metrics.py (no skimage),
+  # test_minimax_h3_media.py (4F, this CPython lacks os.memfd_create),
+  # test_pi05_action_api.py (1F, no msgpack); registered battery:
+  # test_nvfp4_scaled_mm.py (4F, flashinfer trtllm mm_fp4 / fused swiglu
+  # need SM100, we are SM120). Test-side fixes riding with the batch:
+  # scheduler.event_loop continuous-guard getattr (metrics tests build
+  # __new__ schedulers), dp-gate test double gained cb_* fields, and
+  # layerwise_offload's stale register-time content assert removed
+  # (was already failing since the 09-28 #40439 merge).
   # After entry 91: git merge d34f7b2326 (resolutions in the UPSTREAM MERGE
   # section), then entries 92-95. Then git merge f209e67767 (resolutions
   # in UPSTREAM MERGE #2) and entries 96-117 (cherry-pick -x the listed
-  # upstream shas; local entries from this branch).
+  # upstream shas; local entries from this branch), then 118-135 (local),
+  # then 136-155 (diffusion batch).
   # Post-build CPU battery (54 files) expectations are in CAVEATS/known-
   # failing; anything NOT on that list is a real regression.
