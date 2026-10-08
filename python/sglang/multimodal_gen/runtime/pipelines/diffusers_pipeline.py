@@ -306,6 +306,16 @@ class DiffusersExecutionStage(PipelineStage):
         if batch.num_outputs_per_prompt > 1:
             kwargs["num_images_per_prompt"] = batch.num_outputs_per_prompt
 
+        # `max_sequence_length` arrives either from the request field (copied
+        # onto the batch by prepare_request) or from diffusers_kwargs (set on
+        # the batch in video_api). Forward it to pipelines whose __call__
+        # accepts it; otherwise long prompts are silently truncated at the
+        # pipeline default (e.g. diffusers LTXPipeline caps T5 at 128).
+        # diffusers_kwargs entries applied below still win on conflict.
+        msl = getattr(batch, "max_sequence_length", None)
+        if msl is not None and self._pipeline_accepts_kwarg("max_sequence_length"):
+            kwargs["max_sequence_length"] = msl
+
         # Extra diffusers-specific kwargs
         if batch.extra:
             diffusers_kwargs = batch.extra.get("diffusers_kwargs", {})
@@ -313,6 +323,18 @@ class DiffusersExecutionStage(PipelineStage):
                 kwargs.update(diffusers_kwargs)
 
         return kwargs
+
+    def _pipeline_accepts_kwarg(self, name: str) -> bool:
+        """Whether the wrapped pipeline's __call__ accepts a keyword."""
+        try:
+            sig = inspect.signature(self.diffusers_pipe.__call__)
+        except (TypeError, ValueError):
+            return False
+        if any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+        ):
+            return True
+        return name in sig.parameters
 
     def _get_generator_device(self, batch: Req) -> str:
         """Resolve RNG device consistently with the non-diffusers path.
