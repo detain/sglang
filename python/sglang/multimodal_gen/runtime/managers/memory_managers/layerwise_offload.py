@@ -1757,6 +1757,19 @@ class LayerwiseOffloadManager:
         return self.resident_layers if self._residency_active else 0
 
     @property
+    def resident_bytes(self) -> int:
+        """Total bytes held in this manager's CPU buffers.
+
+        The cost of materialising this manager's layers onto the device.
+        """
+        return sum(
+            tensor.numel() * tensor.element_size()
+            for storage in (self._consolidated_cpu_weights, self._strided_cpu_weights)
+            for per_layer in storage.values()
+            for tensor in per_layer.values()
+        )
+
+    @property
     def _retained_set(self) -> frozenset[int]:
         """Which layers are currently held across denoise steps; empty until armed."""
         return self._resident_set if self._residency_active else frozenset()
