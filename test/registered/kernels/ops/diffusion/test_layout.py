@@ -666,6 +666,72 @@ def test_wan_cached_conv_chunk_loop_bitwise(pads_temporal_only):
         assert torch.equal(got_payload, ref_cache[:, :, -CACHE_T:])
 
 
+
+def test_run_cached_causal_conv_falls_back_for_convs_without_epilogue():
+    """SpatialParallelCausalConv3d (SP-decoded Wan VAE) keeps the plain
+    ``forward(x, cache_x=None)`` signature; passing the #38650 epilogue
+    kwargs there crashed production decode with
+    "unexpected keyword argument 'residual'". The cached-conv runner must
+    detect epilogue support and keep the bit-identical eager chain."""
+    import torch.nn as nn
+    import torch.nn.functional as Fn
+    from sglang.multimodal_gen.runtime.models.vaes import wanvae as _wv
+    from sglang.multimodal_gen.runtime.models.vaes.wanvae import (
+        WanCausalConv3d,
+        _conv_supports_epilogue,
+        _run_cached_causal_conv,
+    )
+
+    class PlainCausal(nn.Conv3d):  # SpatialParallelCausalConv3d-shaped
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._padding = (
+                self.padding[2],
+                self.padding[2],
+                self.padding[1],
+                self.padding[1],
+                2 * self.padding[0],
+                0,
+            )
+            self.padding = (0, 0, 0)
+
+        def forward(self, x, cache_x=None):
+            pad = list(self._padding)
+            if cache_x is not None and pad[4] > 0:
+                x = torch.cat([cache_x.to(x.device, x.dtype), x], dim=2)
+                pad[4] -= cache_x.shape[2]
+            return Fn.conv3d(Fn.pad(x, pad), self.weight, self.bias, stride=self.stride)
+
+    torch.manual_seed(0)
+    c = 8
+    conv = PlainCausal(c, c, 3, padding=1)
+    assert not _conv_supports_epilogue(conv)
+    assert _conv_supports_epilogue(WanCausalConv3d(c, c, 3, padding=1))
+
+    x = torch.randn(1, c, 2, 5, 6)
+    h = torch.randn(1, c, 2, 5, 6)
+
+    cache = [None]
+    base = _run_cached_causal_conv(conv, x, cache, 0)  # used to TypeError
+    assert torch.equal(base, conv(x))  # first chunk: cache is zeros
+    assert cache[0].shape[2] == 2
+
+    cache = [None]
+    out_r = _run_cached_causal_conv(conv, x, cache, 0, residual=h)
+    assert torch.equal(out_r, base + h)  # eager chain == epilogue arithmetic
+
+    # second chunk consumes exactly the cache the first one wrote
+    assert torch.equal(cache[0], x[:, :, -2:])  # cache = last CACHE_T frames
+    x2 = torch.randn(1, c, 2, 5, 6)
+    cache2 = [cache[0].clone()]
+    got = _run_cached_causal_conv(conv, x2, cache2, 0)
+    man = Fn.conv3d(
+        Fn.pad(torch.cat([cache[0], x2], dim=2), (1, 1, 1, 1, 0, 0)),
+        conv.weight,
+        conv.bias,
+    )
+    assert torch.equal(got, man)
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
 
