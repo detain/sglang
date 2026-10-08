@@ -639,12 +639,9 @@ def test_consolidated_host_copy_order_and_fallback(
     registrations = []
 
     def observe_registration(tensor):
-        if (
-            source_device == "cpu"
-            and fallback != "shared_storage"
-            and not registrations
-        ):
-            torch.testing.assert_close(tensor, expected, rtol=0, atol=0)
+        # #40439 populates the host store AFTER registration, so the
+        # tensor seen here is intentionally uninitialized; content is
+        # asserted on the manager's alias below instead.
         registrations.append(tensor.data_ptr())
         return False if fallback == "register" else register(tensor)
 

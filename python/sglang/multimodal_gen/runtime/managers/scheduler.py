@@ -2171,7 +2171,9 @@ class Scheduler(SchedulerWarmupMixin, SchedulerPostTrainingMixin, SchedulerDisag
             self._disagg_event_loop()
             return
 
-        if self.server_args.batching_mode == "continuous":
+        # getattr: unit tests drive event_loop() on __new__-built
+        # schedulers without server_args; a real scheduler always has it.
+        if getattr(getattr(self, "server_args", None), "batching_mode", None) == "continuous":
             if not self._continuous_batching_enabled_for_pipeline():
                 raise RuntimeError(
                     "continuous batching is not enabled for this pipeline"
