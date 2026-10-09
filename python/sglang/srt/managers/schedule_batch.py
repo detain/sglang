@@ -2246,12 +2246,6 @@ def set_mamba_track_indices_from_reqs(
             track_positions=track_positions,
         )
     )
-    if freed_rows:
-        # Overlap can leave a request in TARGET_VERIFY after its Mamba state has
-        # been freed and reused by another request. The downstream scatter
-        # treats a negative destination as a no-op, while the old fallback to
-        # position 0 could overwrite the reused live slot.
-        batch.mamba_track_indices[freed_rows] = -1
 
 
 def release_req(

@@ -226,6 +226,17 @@ def test_video_audio_single_pass_failure_falls_back(tmp_path, monkeypatch):
     assert "audio_path" not in calls[1][2]
     assert len(mux_calls) == 1
 
+
+@pytest.mark.parametrize(
+    ("height", "available_cpus", "expected_threads"),
+    [
+        (768, 256, 24),
+        (720, 256, 22),
+        (2160, 16, 24),
+        (4320, 256, 128),
+        (16, 1, 1),
+    ],
+)
 def test_x264_auto_thread_count(monkeypatch, height, available_cpus, expected_threads):
     monkeypatch.setattr(
         output_utils.os,
