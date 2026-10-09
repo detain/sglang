@@ -49,7 +49,7 @@ from sglang.srt.layers.layer_boundary import (
     get_attn_tp_context,
 )
 from sglang.srt.layers.layer_boundary.residual import batch as residual_batch
-from sglang.srt.layers.linear import ReplicatedLinear
+from sglang.srt.layers.linear import MergedColumnParallelLinear, ReplicatedLinear
 from sglang.srt.layers.logits_processor import LogitsProcessorOutput
 from sglang.srt.layers.moe.fused_moe_triton.layer import FusedMoE
 from sglang.srt.layers.moe.utils import get_moe_a2a_backend
@@ -200,6 +200,8 @@ class _PLEBatch(msgspec.Struct, frozen=True):
     state_indices: torch.Tensor
     query_start_loc: torch.Tensor | None
     ngram_context: Optional[torch.Tensor]
+    ngram_input_ids: Optional[torch.Tensor]
+    ngram_history: Optional[torch.Tensor]
     ngram_eos_token_id: Optional[int]
 
 
@@ -234,7 +236,12 @@ class _BreakablePLEBatch:
 
 @eager_on_graph(True)
 def _breakable_prepare_ple_batch(
-    input_ids, *, ngram_size, ngram_eos_token_id, prepare_rows=None
+    input_ids,
+    *,
+    ngram_size,
+    ngram_eos_token_id,
+    prepare_rows=None,
+    use_packed_ngram=False,
 ):
     forward_batch = get_tc_piecewise_forward_context().forward_batch
     batch = _prepare_ple_batch(
@@ -242,6 +249,7 @@ def _breakable_prepare_ple_batch(
         forward_batch=forward_batch,
         ngram_size=ngram_size,
         ngram_eos_token_id=ngram_eos_token_id,
+        use_packed_ngram=use_packed_ngram,
     )
     if prepare_rows is not None:
         # Host-staged PLE lookup ids are hashed on CPU before the first
@@ -288,6 +296,7 @@ def _prepare_ple_batch(
     *,
     ngram_size: Optional[int],
     ngram_eos_token_id: Optional[int],
+    use_packed_ngram: bool = False,
 ) -> Optional[_PLEBatch]:
     """Prepare the token layout and the shared N-gram history once per forward."""
 
@@ -415,9 +424,15 @@ def _prepare_ple_batch(
         )
 
     ngram_context = None
+    ngram_input_ids = None
+    ngram_history = None
     if ngram_size is not None:
         assert ngram_eos_token_id is not None
-        if use_decode_fast_path:
+        history = get_req_to_token_pool().get_ngram_context(state_indices)
+        if use_packed_ngram and packed_query_start_loc is not None:
+            ngram_input_ids = tokens
+            ngram_history = history
+        elif use_decode_fast_path:
             # One token per decode row:
             # this view is the padded tensor the general path would materialize.
             padded = tokens.unsqueeze(1)
@@ -429,13 +444,13 @@ def _prepare_ple_batch(
                     tokens,
                     tokens.new_full((), ngram_eos_token_id),
                 )
-        history = get_req_to_token_pool().get_ngram_context(state_indices)
         if history.shape[1] != ngram_size - 1:
             raise RuntimeError(
                 "Qwen4 PLE N-gram cache has the wrong context width: "
                 f"{history.shape[1]=} {ngram_size=}"
             )
-        ngram_context = torch.cat([history, padded], dim=1)
+        if ngram_history is None:
+            ngram_context = torch.cat([history, padded], dim=1)
 
     return _PLEBatch(
         mode=mode,
@@ -450,6 +465,8 @@ def _prepare_ple_batch(
         state_indices=state_indices,
         query_start_loc=packed_query_start_loc,
         ngram_context=ngram_context,
+        ngram_input_ids=ngram_input_ids,
+        ngram_history=ngram_history,
         ngram_eos_token_id=ngram_eos_token_id,
     )
 
@@ -457,10 +474,30 @@ def _prepare_ple_batch(
 def _commit_ple_batch(batch: Optional[_PLEBatch], forward_batch: ForwardBatch) -> None:
     """Commit the shared N-gram history after every PLE layer consumed it."""
 
-    if batch is None or batch.ngram_context is None or not batch.processed_tokens:
+    if batch is None or not batch.processed_tokens:
         return
 
     pool = get_req_to_token_pool()
+    if batch.ngram_history is not None:
+        from sglang.kernels.ops.embeddings.qwen4_ngram import (
+            fused_qwen4_packed_ngram_update,
+        )
+
+        track = _ple_track_targets(forward_batch, batch)
+        track_indices, track_offsets = track if track is not None else (None, None)
+        fused_qwen4_packed_ngram_update(
+            batch.ngram_input_ids,
+            batch.query_start_loc,
+            batch.ngram_history,
+            pool.ngram_pool.context,
+            batch.state_indices,
+            track_indices=track_indices,
+            track_offsets=track_offsets,
+        )
+        return
+
+    if batch.ngram_context is None:
+        return
     context = batch.ngram_context
     context_len = context.shape[1] - batch.row_width
     if batch.mode.is_target_verify():
@@ -562,6 +599,7 @@ def _use_qwen4_varlen_prefill(
     req_indices: torch.Tensor,
     token_offsets: torch.Tensor,
     dilation: int,
+    residual: torch.Tensor | None = None,
 ) -> bool:
     if (
         not envs.SGLANG_ENABLE_QWEN4_PLE_FUSION.get()
@@ -588,11 +626,85 @@ def _use_qwen4_varlen_prefill(
         req_indices,
         token_offsets,
         dilation,
+        residual,
+    )
+
+
+def _use_qwen4_direct_decode(
+    mode: ForwardMode,
+    x: torch.Tensor,
+    residual: torch.Tensor,
+    weight: torch.Tensor,
+    state: torch.Tensor,
+    state_indices: torch.Tensor,
+    dilation: int,
+    track_indices: torch.Tensor | None,
+) -> bool:
+    if (
+        not envs.SGLANG_ENABLE_QWEN4_PLE_FUSION.get()
+        or not is_cuda()
+        or not mode.is_decode()
+    ):
+        return False
+    from sglang.kernels.ops.mamba.qwen4_short_conv import (
+        can_fuse_qwen4_direct_decode_conv,
+    )
+
+    return can_fuse_qwen4_direct_decode_conv(
+        x,
+        residual,
+        weight,
+        state,
+        state_indices,
+        dilation,
+        track_indices,
     )
 
 
 def _use_attn_tp_ngram() -> bool:
     return is_dp_attention_enabled() and envs.SGLANG_USE_ATTN_TP_NGRAM.get()
+
+
+def _use_qwen4_packed_ngram_prefill(
+    mode: ForwardMode,
+    query_start_loc: torch.Tensor | None,
+    input_ids: torch.Tensor,
+    history: torch.Tensor,
+    multipliers: torch.Tensor,
+    vocab_sizes: torch.Tensor,
+    offsets: torch.Tensor,
+    *,
+    dp_attention_enabled: bool,
+    offloaded: bool,
+) -> bool:
+    """Keep decode, verify, DP-gather, and host-table paths on their fallbacks."""
+
+    if (
+        not envs.SGLANG_ENABLE_QWEN4_PLE_FUSION.get()
+        or not is_cuda()
+        or dp_attention_enabled
+        or offloaded
+        or mode
+        not in (
+            ForwardMode.EXTEND,
+            ForwardMode.MIXED,
+            ForwardMode.SPLIT_PREFILL,
+        )
+        or query_start_loc is None
+    ):
+        return False
+    from sglang.kernels.ops.embeddings.qwen4_ngram import (
+        can_fuse_qwen4_packed_ngram_hash,
+    )
+
+    return can_fuse_qwen4_packed_ngram_hash(
+        input_ids,
+        query_start_loc,
+        history,
+        multipliers,
+        vocab_sizes,
+        offsets,
+    )
 
 
 class Qwen4ExpPLEGroupedNorm(nn.Module):
@@ -979,6 +1091,45 @@ class Qwen4ExpNGramEmbedding(nn.Module):
             staging.verify(self.compute_ngram_ids(batch), key)
 
     def compute_ngram_ids(self, batch: _PLEBatch) -> torch.Tensor:
+        if batch.ngram_history is not None:
+            offloaded = isinstance(self.ngram_embedding, Qwen4ExpPinnedHostEmbedding)
+            if _use_qwen4_packed_ngram_prefill(
+                batch.mode,
+                batch.query_start_loc,
+                batch.ngram_input_ids,
+                batch.ngram_history,
+                self.layer_multipliers,
+                self.ngram_heads_vocab_sizes,
+                self.ngram_heads_offsets,
+                dp_attention_enabled=is_dp_attention_enabled(),
+                offloaded=offloaded,
+            ):
+                from sglang.kernels.ops.embeddings.qwen4_ngram import (
+                    fused_qwen4_packed_ngram_hash,
+                )
+
+                return fused_qwen4_packed_ngram_hash(
+                    batch.ngram_input_ids,
+                    batch.query_start_loc,
+                    batch.ngram_history,
+                    self.layer_multipliers,
+                    self.ngram_heads_vocab_sizes,
+                    self.ngram_heads_offsets,
+                    self.eos_token_id,
+                )
+            # Metadata-only guards can reject a nonstandard caller without
+            # synchronizing values. Reconstruct the prior padded path on device.
+            padded = batch.ngram_input_ids.new_full(
+                (batch.lengths.shape[0], batch.row_width), self.eos_token_id
+            )
+            if batch.processed_tokens:
+                padded[batch.req_indices, batch.token_offsets] = batch.ngram_input_ids
+            context = torch.cat([batch.ngram_history, padded], dim=1)
+            contexts = context.unfold(1, self.ngram_size, 1)[
+                batch.req_indices, batch.token_offsets
+            ]
+            return self._hash_contexts(contexts)
+
         assert batch.ngram_context is not None
         contexts = _ple_context_window(batch, self.ngram_size)
         return self._hash_contexts(
@@ -1317,20 +1468,33 @@ class Qwen4ExpPLELayer(nn.Module):
             self.conv_kernel_size - 1
         ) * self.short_conv_dilation
         self.conv_channels = self.hc_hidden_size
-        self.key_proj = ReplicatedLinear(
-            self.ple_embed_dim,
-            self.conv_channels,
-            bias=False,
-            quant_config=quant_config,
-            prefix=f"{prefix}.key_proj",
-        )
-        self.value_proj = ReplicatedLinear(
-            self.ple_embed_dim,
-            self.hidden_size,
-            bias=False,
-            quant_config=quant_config,
-            prefix=f"{prefix}.value_proj",
-        )
+        self.merge_key_value_proj = quant_config is None
+        if self.merge_key_value_proj:
+            self.key_value_proj = MergedColumnParallelLinear(
+                self.ple_embed_dim,
+                [self.conv_channels, self.hidden_size],
+                bias=False,
+                quant_config=None,
+                prefix=f"{prefix}.key_value_proj",
+                parallel_group="replicated",
+            )
+        else:
+            # Preserve checkpoint parameter names and quant-method-specific
+            # parameter trees for FP8 and all other quantized configurations.
+            self.key_proj = ReplicatedLinear(
+                self.ple_embed_dim,
+                self.conv_channels,
+                bias=False,
+                quant_config=quant_config,
+                prefix=f"{prefix}.key_proj",
+            )
+            self.value_proj = ReplicatedLinear(
+                self.ple_embed_dim,
+                self.hidden_size,
+                bias=False,
+                quant_config=quant_config,
+                prefix=f"{prefix}.value_proj",
+            )
         norm_hidden = self.hc_hidden_size
         norm_group = self.hidden_size
         self.norm_key = Qwen4ExpPLEGroupedNorm(
@@ -1373,6 +1537,7 @@ class Qwen4ExpPLELayer(nn.Module):
         x: torch.Tensor,
         forward_batch: ForwardBatch,
         batch: _PLEBatch,
+        residual: torch.Tensor | None = None,
     ) -> torch.Tensor:
         if x.shape[0] == 0:
             return x
@@ -1389,6 +1554,7 @@ class Qwen4ExpPLELayer(nn.Module):
             batch.req_indices,
             batch.token_offsets,
             self.short_conv_dilation,
+            residual,
         ):
             from sglang.kernels.ops.mamba.qwen4_short_conv import (
                 fused_qwen4_varlen_conv,
@@ -1405,10 +1571,11 @@ class Qwen4ExpPLELayer(nn.Module):
                 batch.req_indices,
                 batch.token_offsets,
                 self.short_conv_dilation,
+                residual=residual,
                 track_indices=track_indices,
                 track_offsets=track_offsets,
             )
-            return F.silu(conv_output)
+            return conv_output if residual is not None else F.silu(conv_output)
 
         if batch.use_decode_fast_path:
             # With row_width=1 the padded/transpose path is x.unsqueeze(-1),
@@ -1445,7 +1612,8 @@ class Qwen4ExpPLELayer(nn.Module):
             if track is not None:
                 track_indices, _ = track
                 conv_state[track_indices] = next_state.to(dtype=conv_state.dtype)
-            return F.silu(conv_output)
+            conv_output = F.silu(conv_output)
+            return residual + conv_output if residual is not None else conv_output
 
         if not batch.mode.is_target_verify() and _ple_padding_is_wasteful(batch):
             return self._short_conv_packed(x, forward_batch, batch, conv_state)
@@ -1533,7 +1701,8 @@ class Qwen4ExpPLELayer(nn.Module):
                     dtype=conv_state.dtype
                 )
 
-        return F.silu(conv_output[batch.req_indices, batch.token_offsets])
+        conv_output = F.silu(conv_output[batch.req_indices, batch.token_offsets])
+        return residual + conv_output if residual is not None else conv_output
 
     def _short_conv_packed(
         self,
@@ -1778,8 +1947,12 @@ class Qwen4ExpPLELayer(nn.Module):
             embeddings = self._consume_prefetched_embeddings(forward_batch)
         else:
             embeddings = self.ple_embedding(batch, forward_batch)
-        key, _ = self.key_proj(embeddings)
-        value, _ = self.value_proj(embeddings)
+        if self.merge_key_value_proj:
+            key_value, _ = self.key_value_proj(embeddings)
+            key, value = key_value.split([self.conv_channels, self.hidden_size], dim=-1)
+        else:
+            key, _ = self.key_proj(embeddings)
+            value, _ = self.value_proj(embeddings)
         token_count = hidden_states.shape[0]
         hidden_size = self.hidden_size
         hc_count = self.hc_count
@@ -1824,6 +1997,27 @@ class Qwen4ExpPLELayer(nn.Module):
         gated_value_normed = self._apply_ple_norm(self.norm_conv, gated_value)
         gated_value = gated_value.flatten(-2)
         gated_value_normed = gated_value_normed.flatten(-2)
+        if self.ple_embedding.enable_ple_fusion and batch.mode.is_decode():
+            from sglang.kernels.ops.mamba.qwen4_short_conv import (
+                fused_qwen4_direct_decode_conv,
+            )
+
+            pool = get_req_to_token_pool()
+            conv_state = pool.short_conv_layer_cache(self.layer_id)
+            track = _ple_track_targets(forward_batch, batch)
+            track_indices = track[0] if track is not None else None
+            direct_args = (
+                gated_value_normed,
+                gated_value,
+                self.conv1d.weight,
+                conv_state,
+                batch.state_indices,
+                self.short_conv_dilation,
+                track_indices,
+            )
+            if _use_qwen4_direct_decode(batch.mode, *direct_args):
+                output = fused_qwen4_direct_decode_conv(*direct_args)
+                return _pad_token_rows(output, batch.physical_tokens)
         if self.ple_embedding.enable_ple_fusion and batch.mode.is_target_verify():
             from sglang.kernels.ops.mamba.qwen4_short_conv import (
                 can_fuse_qwen4_verify_conv,
@@ -1845,12 +2039,12 @@ class Qwen4ExpPLELayer(nn.Module):
             if can_fuse_qwen4_verify_conv(*conv_args):
                 output = fused_qwen4_verify_conv(*conv_args)
                 return _pad_token_rows(output, batch.physical_tokens)
-        conv_output = self._short_conv(
+        output = self._short_conv(
             gated_value_normed,
             forward_batch,
             batch,
+            residual=gated_value,
         )
-        output = gated_value + conv_output
         if not batch.use_decode_fast_path:
             output = torch.where(
                 batch.valid_tokens.unsqueeze(-1),
@@ -2375,6 +2569,14 @@ class Qwen4ExpModel(Qwen3_5ForCausalLM):
         self.ple_ngram_eos_token_id = (
             int(config.eos_token_id) if self.ple_ngram_size is not None else None
         )
+        self.use_packed_ple_ngram = bool(
+            self.has_ple
+            and envs.SGLANG_ENABLE_QWEN4_PLE_FUSION.get()
+            and is_cuda()
+            and not is_dp_attention_enabled()
+            and not bool(config.ple_offload_embedding)
+            and self.ple_ngram_size == 3
+        )
         if hasattr(self, "norm"):
             delattr(self, "norm")
         hc_config = HyperConnectionConfig(
@@ -2603,6 +2805,7 @@ class Qwen4ExpModel(Qwen3_5ForCausalLM):
                 ngram_size=self.ple_ngram_size,
                 ngram_eos_token_id=self.ple_ngram_eos_token_id,
                 prepare_rows=self.prepare_ple_rows,
+                use_packed_ngram=self.use_packed_ple_ngram,
             )
         elif self.has_ple:
             ple_batch = _prepare_ple_batch(
@@ -2610,6 +2813,7 @@ class Qwen4ExpModel(Qwen3_5ForCausalLM):
                 forward_batch=forward_batch,
                 ngram_size=self.ple_ngram_size,
                 ngram_eos_token_id=self.ple_ngram_eos_token_id,
+                use_packed_ngram=self.use_packed_ple_ngram,
             )
         if not breakable_ple and not get_is_capture_mode():
             self.prepare_ple_rows(forward_batch, ple_batch=ple_batch)
@@ -2868,6 +3072,8 @@ class Qwen4ExpForConditionalGeneration(Qwen3VLForConditionalGeneration):
             ("qkv_proj", "v_proj", "v"),
             ("gate_up_proj", "gate_proj", 0),
             ("gate_up_proj", "up_proj", 1),
+            ("key_value_proj", "key_proj", 0),
+            ("key_value_proj", "value_proj", 1),
             # Checkpoints use the qwen3.5 head-first in_proj layout,
             # matching Qwen3_5GatedDeltaNet's forward, not qwen3-next's group-first.
             ("in_proj_qkvz.", "in_proj_qkv.", (0, 1, 2)),
