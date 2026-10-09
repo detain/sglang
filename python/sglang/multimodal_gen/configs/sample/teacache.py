@@ -80,9 +80,14 @@ class TeaCacheParams(CacheParams):
             return self.expert_thresh[expert]
         return self.teacache_thresh
 
-    def get_skip_boundaries(
-        self, num_inference_steps: int, do_cfg: bool
-    ) -> tuple[int, int]:
+    def get_skip_step_range(self, num_inference_steps: int) -> tuple[int, int]:
+        """Return the ``[start, end)`` range of denoising steps that may skip.
+
+        Measured in denoising steps rather than forward calls, so the window does
+        not depend on how many CFG branches run locally per step (serial CFG, CFG
+        parallel, or CFG gating that stops running the negative branch).
+        """
+
         def _resolve_boundary(value: int | float) -> int:
             if isinstance(value, float):
                 return int(num_inference_steps * value)
@@ -90,8 +95,20 @@ class TeaCacheParams(CacheParams):
                 return num_inference_steps + value
             return value
 
-        start_skipping = _resolve_boundary(self.start_skipping)
-        end_skipping = _resolve_boundary(self.end_skipping)
+        return (
+            _resolve_boundary(self.start_skipping),
+            _resolve_boundary(self.end_skipping),
+        )
+
+    def get_skip_boundaries(
+        self, num_inference_steps: int, do_cfg: bool
+    ) -> tuple[int, int]:
+        """Backward-compatible view of ``get_skip_step_range`` in forward-call units.
+
+        Doubles the step window when each denoising step runs two forward calls
+        (serial CFG positive + negative).
+        """
+        start_skipping, end_skipping = self.get_skip_step_range(num_inference_steps)
 
         if do_cfg:
             start_skipping *= 2
@@ -107,5 +124,5 @@ class TeaCacheParams(CacheParams):
         mid-schedule: the global step still forces the first steps and the final
         step regardless of which expert runs them.
         """
-        start, end = self.get_skip_boundaries(num_inference_steps, do_cfg=False)
+        start, end = self.get_skip_step_range(num_inference_steps)
         return current_timestep < start or current_timestep >= end

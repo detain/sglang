@@ -1,5 +1,6 @@
 """Regression coverage for cold diffusion imports and quantization dispatch."""
 
+import importlib
 import os
 import subprocess
 import sys
@@ -15,7 +16,7 @@ from sglang.multimodal_gen.runtime.layers import quantization
         "runtime.layers.linear",
         "runtime.utils.hf_diffusers_utils",
         "test.single_test_file.test_ar_models",
-        "runtime.layers.quantization.configs.kitchen_int8_config",
+        "runtime.layers.quantization.configs.convrot_int8_config",
     ],
 )
 def test_cold_import(module):
@@ -35,26 +36,43 @@ def test_cold_import(module):
 
 
 @pytest.mark.parametrize(
-    "method,name",
+    "method,module,name",
     [
-        ("auto-round", "AutoRoundConfig"),
-        ("bitsandbytes", "BitsAndBytesConfig"),
-        ("modelopt", "ModelOptFp8DiffusionConfig"),
-        ("modelopt_fp8", "ModelOptFp8Config"),
-        ("modelopt_fp4", "ModelOptFp4Config"),
-        ("modelslim", "ModelSlimConfig"),
-        ("fp8", "Fp8Config"),
-        ("mxfp4", "Mxfp4Config"),
-        ("mxfp8", "MXFP8Config"),
-        ("mxfp4_npu", "NPUMXFP4Config"),
-        ("kitchen_int8", "KitchenInt8Config"),
+        ("auto-round", "auto_round", "AutoRoundConfig"),
+        ("bitsandbytes", "bitsandbytes", "BitsAndBytesConfig"),
+        ("modelopt", "modelopt_fp8", "ModelOptFp8Config"),
+        ("modelopt_fp8", "modelopt_quant", "ModelOptFp8Config"),
+        ("modelopt_fp4", "modelopt_quant", "ModelOptFp4Config"),
+        ("modelslim", "modelslim", "ModelSlimConfig"),
+        ("fp8", "fp8", "Fp8Config"),
+        ("mxfp4", "mxfp4", "Mxfp4Config"),
+        ("mxfp8", "mxfp8", "MXFP8Config"),
+        ("mxfp4_npu", "mxfp4_npu", "NPUMXFP4Config"),
+        # upstream #42370 renamed kitchen_int8 -> convrot_int8
+        ("convrot_int8", "configs.convrot_int8_config", "ConvRotInt8Config"),
     ],
 )
-def test_builtin_config_and_package_export(method, name):
+def test_builtin_config_dispatch(method, module, name):
+    # The quantization package no longer re-exports config classes (the lazy
+    # ``__getattr__`` shim was dropped upstream); dispatch is the contract.
     config = quantization.get_quantization_config(method)
     assert issubclass(config, quantization.QuantizationConfig)
-    assert config is getattr(quantization, name)
+    expected = getattr(
+        importlib.import_module(
+            f"sglang.multimodal_gen.runtime.layers.quantization.{module}"
+        ),
+        name,
+    )
+    assert config is expected
     assert quantization.get_quantization_config(method) is config
+
+
+def test_kitchen_int8_alias_resolves_to_convrot():
+    # deprecated CLI name must still reach the canonical convrot config,
+    # matching the QUANTIZATION_METHOD_ALIASES entry in method_names.
+    assert quantization.get_quantization_config(
+        "kitchen_int8"
+    ) is quantization.get_quantization_config("convrot_int8")
 
 
 def test_custom_registration(monkeypatch):

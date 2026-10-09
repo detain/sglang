@@ -32,6 +32,9 @@ class TestComponentUuidCounter(unittest.TestCase):
             base.next_component_uuid(ComponentType.C128), 400_000_000_000_001
         )
         self.assertEqual(
+            base.next_component_uuid(ComponentType.AUXILIARY_SWA), 500_000_000_000_001
+        )
+        self.assertEqual(
             base.next_component_uuid(ComponentType.FULL), 200_000_000_000_002
         )
 

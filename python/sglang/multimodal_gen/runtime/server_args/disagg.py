@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import ClassVar, Literal
+from typing import ClassVar
 
 from sglang.multimodal_gen.runtime.disaggregation.roles import RoleType
 from sglang.multimodal_gen.runtime.utils.argparse import FlexibleArgumentParser
@@ -123,11 +123,6 @@ class DisaggServerArgsMixin:
         plan = ExecutionPlan.compile(spec)
         self._execution_plan = plan
         return plan
-
-    def resolved_role_device(self) -> Literal["cpu", "cuda"]:
-        if self.disagg_role_device == "auto":
-            return "cpu" if self.num_gpus <= 0 else "cuda"
-        return self.disagg_role_device
 
     @classmethod
     def add_disagg_cli_args(cls, parser: FlexibleArgumentParser) -> None:

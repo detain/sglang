@@ -34,6 +34,7 @@ from sglang.srt.mem_cache.hicache_storage import (
 
 if TYPE_CHECKING:
     from sglang.srt.mem_cache.allocator import BaseTokenToKVPoolAllocator
+    from sglang.srt.mem_cache.memory_pool_host import LogicalHostPool
     from sglang.srt.mem_cache.pool_host import HostKVCache
 
 from sglang.srt.layers.dp_attention import (
@@ -42,12 +43,23 @@ from sglang.srt.layers.dp_attention import (
 from sglang.srt.mem_cache.l2_transfer import L2Transfer, L2TransferEngine
 from sglang.srt.mem_cache.memory_pool import MLATokenToKVPool
 from sglang.srt.mem_cache.utils import get_storage_hash_str
-from sglang.srt.runtime_context import get_parallel
+from sglang.srt.runtime_context import get_memory, get_parallel
 from sglang.srt.utils import get_device_module
 
 logger = logging.getLogger(__name__)
 
 device_module = get_device_module()
+
+
+def storage_model_name(
+    model_name: Optional[str], host_pool: HostKVCache | LogicalHostPool
+) -> Optional[str]:
+    """The model name storage backends key pages on, tagged with the host
+    pool's page format when it has one of its own."""
+    tag = host_pool.storage_format_tag
+    if tag is None:
+        return model_name
+    return f"{model_name}-{tag}" if model_name else tag
 
 
 class LayerLoadingEvent:
@@ -603,6 +615,7 @@ class HiCacheController:
                     "mori",
                     "fast_file",
                     "tensorcast",
+                    "seaweedfs",
                 ]
             ) or (
                 self.storage_backend_type == "dynamic"
@@ -694,17 +707,15 @@ class HiCacheController:
         if storage_backend_extra_config is None:
             storage_backend_extra_config = {}
 
+        parallel = get_parallel()
         if is_dp_attention_enabled():
-            self.tp_rank = get_parallel().attn_tp_rank
-            self.tp_size = get_parallel().attn_tp_size
-            self.dp_rank = get_parallel().attn_dp_rank
+            tp_rank = parallel.attn_tp_rank
+            tp_size = parallel.attn_tp_size
+            dp_rank = parallel.attn_dp_rank
         else:
-            self.tp_rank = get_parallel().tp_rank
-            self.tp_size = get_parallel().tp_size
-            self.dp_rank = 0
-
-        self.pp_rank = get_parallel().pp_rank
-        self.pp_size = get_parallel().pp_size
+            tp_rank = parallel.tp_rank
+            tp_size = parallel.tp_size
+            dp_rank = 0
 
         # Currently, NPUMLATokenToKVPool is the subclass of MLATokenToKVPool.
         # DeepSeekV4TokenToKVPool has compressed MLA-style rank-replicated cache
@@ -721,22 +732,23 @@ class HiCacheController:
         should_split_heads = False
 
         if tp_lcm_size:
-            assert tp_lcm_size % self.tp_size == 0, (
+            assert tp_lcm_size % tp_size == 0, (
                 "tp_lcm_size must be divisible by tp_size."
             )
             should_split_heads = (
                 not is_rank_replicated
                 and self.mem_pool_host.layout == "page_head"
-                and tp_lcm_size > self.tp_size
+                and tp_lcm_size > tp_size
             )
 
         attn_cp_rank, attn_cp_size = self.get_attn_cp_rank_and_size()
+        model_name = storage_model_name(model_name, self.storage_host_pool)
 
         return HiCacheStorageConfig(
-            tp_rank=self.tp_rank,
-            tp_size=self.tp_size,
-            pp_rank=self.pp_rank,
-            pp_size=self.pp_size,
+            tp_rank=tp_rank,
+            tp_size=tp_size,
+            pp_rank=parallel.pp_rank,
+            pp_size=parallel.pp_size,
             attn_cp_rank=attn_cp_rank,
             attn_cp_size=attn_cp_size,
             # TODO(hzh): Rename is_mla_model to is_rank_replicated.
@@ -746,7 +758,7 @@ class HiCacheController:
             model_name=model_name,
             tp_lcm_size=tp_lcm_size,
             should_split_heads=should_split_heads,
-            dp_rank=self.dp_rank,
+            dp_rank=dp_rank,
             extra_config=storage_backend_extra_config,
         )
 
@@ -830,6 +842,10 @@ class HiCacheController:
 
         completion = self.l2_transfer_engine.submit_device_to_host(
             self._l2_transfers(host_indices, device_indices, pool_transfers)
+        )
+
+        self.mem_pool_device_allocator.set_hicache_transfer_done_event(
+            (id(self), "write"), completion.finish_event
         )
 
         self.ack_write_queue.append(
@@ -976,6 +992,10 @@ class HiCacheController:
             transfer_layer_id_max=self.transfer_layer_id_max,
         )
 
+        self.mem_pool_device_allocator.set_hicache_transfer_done_event(
+            (id(self), "load"), completion.finish_event
+        )
+
         self.ack_load_queue.append(
             HiCacheAck(
                 start_event=completion.start_event,
@@ -1114,10 +1134,12 @@ class HiCacheController:
                     # prefetch_sync_thread MIN-reduces them pairwise, and the
                     # ack sequence must end with completed_req.  The failure
                     # itself is handled per-page inside the file backend.
-                    logger.warning(
-                        f"Prefetch batch failed for {operation.request_id}; "
-                        "truncating the hit prefix.",
-                        exc_info=True,
+                    # (Upstream gates this on unified memory and re-raises
+                    # otherwise, which would kill the IO daemon and desync
+                    # the cross-rank ack pairing -- sgl-project/sglang#39830.)
+                    logger.exception(
+                        "HiCache prefetch transfer failed for request %s",
+                        operation.request_id,
                     )
                     hit_pages = 0
                 # Check termination
@@ -1190,7 +1212,9 @@ class HiCacheController:
             # and silently disable the L3 read tier for the rest of the serve
             # (sgl-project/sglang#39830).  Degrade to "done with whatever
             # progress the per-batch acks already reported"; the scheduler
-            # frees the un-acked host tail.
+            # frees the un-acked host tail.  The finally keeps upstream's
+            # guarantee that the completed_req ack is emitted no matter how
+            # the transfer unwinds.
             try:
                 self._page_transfer(operation)
             except Exception:
@@ -1199,13 +1223,14 @@ class HiCacheController:
                     "closing out with partial progress.",
                     exc_info=True,
                 )
-            self.prefetch_sync_queue.put(
-                PrefetchAck(
-                    rid=operation.request_id,
-                    completed_req=True,
-                    operation=operation,
+            finally:
+                self.prefetch_sync_queue.put(
+                    PrefetchAck(
+                        rid=operation.request_id,
+                        completed_req=True,
+                        operation=operation,
+                    )
                 )
-            )
 
     def prefetch_rate_limited(self) -> bool:
         """
@@ -1226,6 +1251,24 @@ class HiCacheController:
             return True
         # todo: more sophisticated rate limiting based on storage backend performance
         return False
+
+    def alloc_prefetch_host_buffers(
+        self, operation: StorageOperation, need_size: int
+    ) -> Optional[torch.Tensor]:
+        """Allocate the host bounce for a storage hit."""
+        return self.mem_pool_host.alloc(need_size)
+
+    def can_fit_prefetch_host_buffers(
+        self, operation: StorageOperation, need_size: int
+    ) -> bool:
+        """Whether a prefetch bounce can fit when its host pools are empty."""
+        return need_size <= self.mem_pool_host.size
+
+    def free_prefetch_host_buffers(
+        self, operation: StorageOperation, host_indices: torch.Tensor
+    ) -> None:
+        """Roll back a hit-sized host bounce before transfer ownership moves."""
+        self.mem_pool_host.free(host_indices)
 
     def _storage_hit_query(self, operation) -> tuple[list[str], int]:
         last_hash = operation.last_hash
@@ -1267,7 +1310,9 @@ class HiCacheController:
             # would strand every later prefetch (nothing drains into
             # prefetch_hit_queue) and leak the scheduler's ongoing_prefetch
             # entries.  Degrade to a zero-hit answer, which the scheduler
-            # already revokes safely (sgl-project/sglang#39830).
+            # already revokes safely (sgl-project/sglang#39830).  (Upstream
+            # gates the same degradation on unified memory and re-raises
+            # otherwise, which kills the thread and skips the collective.)
             try:
                 if operation.is_terminated():
                     hash_value, storage_hit_count = [], 0
@@ -1284,19 +1329,26 @@ class HiCacheController:
             # number of hit-count all_reduces or the sync threads deadlock, so a
             # locally failed query still participates (with a zero) instead of
             # skipping the collective.
-            storage_hit_count_tensor = torch.tensor(storage_hit_count, dtype=torch.int)
-            self._all_reduce(
-                storage_hit_count_tensor,
-                torch.distributed.ReduceOp.MIN,
-                self.prefetch_hits_sync_groups,
+            storage_hit_count = self._sync_prefetch_hit_query(
+                operation, storage_hit_count
             )
-            storage_hit_count = storage_hit_count_tensor.item()
 
             # Record the TP-synced hit count; the scheduler thread decides
             # at drain time whether to revoke (below threshold) or allocate.
             operation.hash_value = hash_value[: (storage_hit_count // self.page_size)]
             operation.storage_hit_count = storage_hit_count
             self.prefetch_hit_queue.put(operation)
+
+    def _sync_prefetch_hit_query(self, operation, storage_hit_count: int) -> int:
+        """Rank-reduce a hit query (MIN) so every rank agrees on the usable
+        prefix. Runs for every operation, hit or miss."""
+        hit_count = torch.tensor(storage_hit_count, dtype=torch.int)
+        self._all_reduce(
+            hit_count,
+            torch.distributed.ReduceOp.MIN,
+            self.prefetch_hits_sync_groups,
+        )
+        return int(hit_count.item())
 
     def write_storage(
         self,

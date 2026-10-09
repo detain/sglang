@@ -1,4 +1,4 @@
-import logging
+import shutil
 
 import numpy as np
 import pytest
@@ -75,6 +75,24 @@ def test_png_output_saving_uses_fast_pillow_path(
     assert save_calls == [("PNG", expected_compress_level)]
 
 
+def test_warm_image_writer_takes_the_default_jpeg_path(tmp_path, monkeypatch):
+    written = []
+    imwrite = output_utils.imageio.imwrite
+
+    def imwrite_spy(path, frame, **kwargs):
+        written.append((path, kwargs))
+        return imwrite(path, frame, **kwargs)
+
+    monkeypatch.setattr(output_utils.imageio, "imwrite", imwrite_spy)
+    monkeypatch.setattr(output_utils.tempfile, "tempdir", str(tmp_path))
+
+    output_utils.warm_image_writer()
+
+    assert len(written) == 1
+    assert written[0][0].endswith(".jpg") and written[0][1] == {"quality": 75}
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_video_with_audio_uses_single_pass_encoder(tmp_path, monkeypatch):
     output_path = tmp_path / "sample.mp4"
     calls = []
@@ -84,18 +102,15 @@ def test_video_with_audio_uses_single_pass_encoder(tmp_path, monkeypatch):
         def write(*_args, **_kwargs):
             pass
 
-    def mimsave_spy(path, frames, **kwargs):
+    def encode_spy(path, frames, **kwargs):
         calls.append((path, frames, kwargs))
         assert kwargs["audio_path"].endswith(".wav")
-        assert kwargs["audio_codec"] == "aac"
+        assert kwargs["quality"] == 5
 
     def fail_legacy_mux(**_kwargs):
         raise AssertionError("the two-pass mux path should not run")
 
-    monkeypatch.setattr(output_utils.imageio, "mimsave", mimsave_spy)
-    # The one-pass mimsave only runs with imageio's FFMPEG plugin present;
-    # force that branch even in venvs where imageio-ffmpeg is absent.
-    monkeypatch.setattr(output_utils, "_imageio_ffmpeg_plugin_available", lambda: True)
+    monkeypatch.setattr(output_utils, "_save_video_ffmpeg", encode_spy)
     monkeypatch.setattr(output_utils, "scipy_wavfile", FakeWavFile)
     monkeypatch.setattr(output_utils, "_maybe_mux_audio_into_mp4", fail_legacy_mux)
 
@@ -115,6 +130,61 @@ def test_video_with_audio_uses_single_pass_encoder(tmp_path, monkeypatch):
     assert len(calls) == 1
 
 
+def test_x264_preset_reaches_every_video_save_path(tmp_path, monkeypatch):
+    presets = []
+
+    class FakeWavFile:
+        @staticmethod
+        def write(*_args, **_kwargs):
+            pass
+
+    def parallel_save(samples, _paths, **kwargs):
+        presets.append(("parallel", kwargs["x264_preset"]))
+        return [False] * len(samples)
+
+    def direct_save(**kwargs):
+        presets.append(("direct", kwargs["x264_preset"]))
+        return False
+
+    def encode_spy(_path, _frames, **kwargs):
+        encoder = "single-pass" if "audio_path" in kwargs else "ffmpeg"
+        presets.append((encoder, kwargs["x264_preset"]))
+
+    monkeypatch.setattr(output_utils, "_try_save_cuda_videos_direct", parallel_save)
+    monkeypatch.setattr(output_utils, "_try_save_cuda_video_direct", direct_save)
+    monkeypatch.setattr(output_utils, "_save_video_ffmpeg", encode_spy)
+    monkeypatch.setattr(output_utils, "scipy_wavfile", FakeWavFile)
+
+    output_utils.save_outputs(
+        [torch.zeros((3, 1, 2, 3)), torch.zeros((3, 1, 2, 3))],
+        DataType.VIDEO,
+        fps=24,
+        save_output=True,
+        build_output_path=lambda idx: str(tmp_path / f"sample_{idx}.mp4"),
+        x264_preset="ultrafast",
+    )
+    save_materialized_output(
+        MaterializedOutput(
+            sample=None,
+            frames=[_rgb_frame()],
+            audio=np.zeros((320, 2), dtype=np.float32),
+            fps=24,
+        ),
+        DataType.VIDEO,
+        str(tmp_path / "with_audio.mp4"),
+        audio_sample_rate=32000,
+        x264_preset="ultrafast",
+    )
+
+    assert {encoder for encoder, _ in presets} == {
+        "parallel",
+        "direct",
+        "ffmpeg",
+        "single-pass",
+    }
+    assert {preset for _, preset in presets} == {"ultrafast"}
+
+
 def test_video_audio_single_pass_failure_falls_back(tmp_path, monkeypatch):
     output_path = tmp_path / "sample.mp4"
     calls = []
@@ -125,16 +195,12 @@ def test_video_audio_single_pass_failure_falls_back(tmp_path, monkeypatch):
         def write(*_args, **_kwargs):
             pass
 
-    def mimsave_spy(path, frames, **kwargs):
+    def encode_spy(path, frames, **kwargs):
         calls.append((path, frames, kwargs))
         if "audio_path" in kwargs:
             raise RuntimeError("unsupported audio input")
 
-    monkeypatch.setattr(output_utils.imageio, "mimsave", mimsave_spy)
-    # This test pins the mimsave-based one-pass -> two-pass audio fallback;
-    # force that branch even when imageio-ffmpeg is absent (then the silent
-    # write would otherwise go through the ffmpeg-pipe fallback instead).
-    monkeypatch.setattr(output_utils, "_imageio_ffmpeg_plugin_available", lambda: True)
+    monkeypatch.setattr(output_utils, "_save_video_ffmpeg", encode_spy)
     monkeypatch.setattr(output_utils, "scipy_wavfile", FakeWavFile)
     monkeypatch.setattr(
         output_utils,
@@ -160,66 +226,6 @@ def test_video_audio_single_pass_failure_falls_back(tmp_path, monkeypatch):
     assert "audio_path" not in calls[1][2]
     assert len(mux_calls) == 1
 
-
-def test_video_audio_two_pass_skips_one_pass_without_ffmpeg_plugin(
-    tmp_path, monkeypatch, caplog
-):
-    # imageio-ffmpeg absent (PyAV world): the one-pass mimsave uses
-    # FFMPEG-plugin-only audio kwargs, so it must not even be attempted --
-    # the two-pass fallback should engage quietly, without the scary
-    # "failed to encode in one pass" warning.
-    output_path = tmp_path / "sample.mp4"
-    pipe_calls = []
-    mux_calls = []
-
-    def fail_mimsave(*_args, **_kwargs):
-        raise AssertionError(
-            "one-pass mimsave must not be attempted without imageio-ffmpeg"
-        )
-
-    monkeypatch.setattr(output_utils.imageio, "mimsave", fail_mimsave)
-    monkeypatch.setattr(output_utils, "_imageio_ffmpeg_plugin_available", lambda: False)
-    monkeypatch.setattr(
-        output_utils,
-        "_save_video_mp4_via_ffmpeg_pipe",
-        lambda **kwargs: pipe_calls.append(kwargs),
-    )
-    monkeypatch.setattr(
-        output_utils,
-        "_maybe_mux_audio_into_mp4",
-        lambda **kwargs: mux_calls.append(kwargs),
-    )
-
-    materialized = MaterializedOutput(
-        sample=None,
-        frames=[_rgb_frame()],
-        audio=np.zeros((320, 2), dtype=np.float32),
-        fps=24,
-    )
-    with caplog.at_level(logging.INFO):
-        save_materialized_output(
-            materialized,
-            DataType.VIDEO,
-            str(output_path),
-            audio_sample_rate=32000,
-        )
-
-    assert len(pipe_calls) == 1
-    assert len(mux_calls) == 1
-    assert "imageio FFMPEG plugin unavailable" in caplog.text
-    assert "Failed to encode video and audio in one pass" not in caplog.text
-
-
-@pytest.mark.parametrize(
-    ("height", "available_cpus", "expected_threads"),
-    [
-        (768, 256, 24),
-        (720, 256, 22),
-        (2160, 16, 24),
-        (4320, 256, 128),
-        (16, 1, 1),
-    ],
-)
 def test_x264_auto_thread_count(monkeypatch, height, available_cpus, expected_threads):
     monkeypatch.setattr(
         output_utils.os,
@@ -301,3 +307,11 @@ def test_multiple_videos_use_parallel_direct_save_with_serial_fallback(
     assert kwargs["fps"] == 24
     assert len(serial_calls) == 1
     assert serial_calls[0]["save_file_path"] == paths[1]
+
+
+def test_video_output_preserves_pinned_encoder(monkeypatch):
+    monkeypatch.setattr(shutil, "which", lambda _: "/system/ffmpeg")
+    monkeypatch.setattr(
+        output_utils.imageio_ffmpeg, "get_ffmpeg_exe", lambda: "/pinned/ffmpeg"
+    )
+    assert output_utils._resolve_ffmpeg_exe() == "/pinned/ffmpeg"
