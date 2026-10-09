@@ -17,7 +17,7 @@
 #   make --enable-mixed-chunk safe and fix the QSA verify ring collision.
 #   * = picked with local modifications, see the entries)
 # branch : qwennext-stack
-# tip    : dc85a2d5e3   (the stack.txt commit sits above it)
+# tip    : e7b4901d03   (the stack.txt commit sits above it)
 # base   : upstream sgl-project/sglang main @ 7ad55e4386 ([HiCache] TMA-staged
 #          host<->device KV transfer kernel (sm_90+) (#40278), 2026-09-21)
 # synced : upstream main @ f209e67767 (#39643, 2026-09-28) MERGED IN as
@@ -26,6 +26,8 @@
 #          sections. Entry shas below stay valid.
 # updated: 2026-10-08 (10-08: diffusion PR batch entries 136-155 -- 20 open
 #          PRs applied onto the stack; server restart OWED to activate.
+#          10-08b: entry 156 -- prod SP Wan VAE decode crash (regression
+#          from the #38650 pick) fixed; the same restart makes it live.
 #          09-28: upstream merge #2 + entries 95-117, see
 #          UPSTREAM MERGE #2; 09-21: full rebuild on the 09-21 main tip + 7 newly-mined PRs
 #          appended #39333 #33778 #38977 #39977 #40480 #39880 #40235, the
