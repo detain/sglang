@@ -2785,7 +2785,7 @@ class TestQwen3CoderDetector(unittest.TestCase):
         JSON; it also carries a Hebrew abbreviation with an inner quote (יו"ר).
         Purpose: the detector drops the escaping, then escapes the inner quote, and returns an object.
         """
-        text = """<tool_call>
+        text = r"""<tool_call>
 <function=TodoWrite>
 <parameter=todos>
 [{\"content\": \"יו\"ר הוועדה פתח את הדיון\", \"status\": \"pending\"}]

@@ -34,7 +34,7 @@ def _unescape_prequoted(value: str) -> str:
     not JSON (a backslash outside any string). When every quote in the value is backslash-escaped, dropping the
     backslashes recovers the object the model meant (inner quotes are then handled by _escape_inner_quotes)."""
     stripped = value.strip()
-    if not (stripped.startswith(('{\\"', '[\\"')) and '"' in stripped):
+    if not (stripped.startswith(("{", "[")) and '\\"' in stripped):
         return value
     if re.search(r'(?<!\\)"', stripped):
         return value
