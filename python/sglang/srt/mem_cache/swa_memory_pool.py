@@ -70,6 +70,10 @@ class SWAKVPool(BaseSWAKVPool):
             "enable_memory_saver": enable_memory_saver,
             "device": device,
         }
+        swa_head_num = kwargs.pop("swa_head_num", None)
+        swa_head_dim = kwargs.pop("swa_head_dim", None)
+        swa_v_head_dim = kwargs.pop("swa_v_head_dim", None)
+
         if full_kv_pool_kwargs is None:
             full_kv_pool_kwargs = {
                 **common_kwargs,
@@ -78,14 +82,30 @@ class SWAKVPool(BaseSWAKVPool):
                 "allocation_label": "Full",
                 **kwargs,
             }
-            full_kv_pool_kwargs.pop("swa_head_num", None)
-            full_kv_pool_kwargs.pop("swa_head_dim", None)
-            full_kv_pool_kwargs.pop("swa_v_head_dim", None)
         if swa_kv_pool_kwargs is None:
+            effective_swa_head_num = (
+                swa_head_num if swa_head_num is not None else head_num
+            )
+            effective_swa_head_dim = (
+                swa_head_dim if swa_head_dim is not None else head_dim
+            )
+            effective_swa_v_head_dim = (
+                swa_v_head_dim
+                if swa_v_head_dim is not None
+                else (
+                    swa_head_dim
+                    if swa_head_dim is not None
+                    else kwargs.get("v_head_dim", head_dim)
+                )
+            )
             swa_kv_pool_kwargs = {
                 **common_kwargs,
-                "head_num": head_num,
-                "head_dim": head_dim,
+                "head_num": effective_swa_head_num,
+                "head_dim": effective_swa_head_dim,
+                "v_head_dim": effective_swa_v_head_dim,
+                "swa_head_num": swa_head_num,
+                "swa_head_dim": swa_head_dim,
+                "swa_v_head_dim": swa_v_head_dim,
                 "allocation_label": "SWA",
                 **kwargs,
             }
@@ -269,7 +289,7 @@ class SWAKVPool(BaseSWAKVPool):
             )
         else:
             pool.set_kv_buffer(
-                None,
+                layer,
                 loc,
                 cache_k,
                 cache_v,
@@ -277,6 +297,92 @@ class SWAKVPool(BaseSWAKVPool):
                 v_scale,
                 layer_id_override=layer_id_pool,
             )
+
+    def set_kv_buffer_prefix_valid(
+        self,
+        layer: RadixAttention,
+        loc_2d: torch.Tensor,
+        commit_lens: torch.Tensor,
+        cache_k: torch.Tensor,
+        cache_v: torch.Tensor,
+        k_scale: Optional[float] = None,
+        v_scale: Optional[float] = None,
+        layer_id_override: Optional[int] = None,
+    ):
+        layer_id = (
+            layer_id_override if layer_id_override is not None else layer.layer_id
+        )
+        layer_id_pool, is_swa_layer = self.layers_mapping[layer_id]
+        pool = self.swa_kv_pool if is_swa_layer else self.full_kv_pool
+        pool.set_kv_buffer_prefix_valid(
+            layer,
+            loc_2d,
+            commit_lens,
+            cache_k,
+            cache_v,
+            k_scale,
+            v_scale,
+            layer_id_override=layer_id_pool,
+        )
+
+    @property
+    def is_quantized_kv_cache(self) -> bool:
+        return getattr(self.full_kv_pool, "is_quantized_kv_cache", False)
+
+    @property
+    def quant_method(self):
+        return getattr(self.full_kv_pool, "quant_method", None)
+
+    @property
+    def k_scale_buffer(self):
+        return getattr(self.full_kv_pool, "k_scale_buffer", None)
+
+    @property
+    def v_scale_buffer(self):
+        return getattr(self.full_kv_pool, "v_scale_buffer", None)
+
+    @property
+    def native_k_scale_buffer(self):
+        return getattr(self.full_kv_pool, "native_k_scale_buffer", None)
+
+    @property
+    def native_v_scale_buffer(self):
+        return getattr(self.full_kv_pool, "native_v_scale_buffer", None)
+
+    @property
+    def dq_k_buffer(self):
+        return getattr(self.full_kv_pool, "dq_k_buffer", None)
+
+    @property
+    def dq_v_buffer(self):
+        return getattr(self.full_kv_pool, "dq_v_buffer", None)
+
+    def get_raw_kv_buffer(
+        self, layer_id: int
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        self._wait_for_layer(layer_id)
+        layer_id_pool, is_swa_layer = self.layers_mapping[layer_id]
+        pool = self.swa_kv_pool if is_swa_layer else self.full_kv_pool
+        return pool.get_raw_kv_buffer(layer_id_pool)
+
+    def get_dequant_workspace(self) -> tuple[torch.Tensor, torch.Tensor]:
+        return self.full_kv_pool.get_dequant_workspace()
+
+    def get_flashinfer_dequant_workspace_kv_buffer(self, layer, *args, **kwargs):
+        self._wait_for_layer(layer.layer_id)
+        layer_id_pool, is_swa_layer = self.layers_mapping[layer.layer_id]
+        pool = self.swa_kv_pool if is_swa_layer else self.full_kv_pool
+        return pool.get_flashinfer_dequant_workspace_kv_buffer(
+            layer, *args, layer_id_override=layer_id_pool, **kwargs
+        )
+
+    def get_flashinfer_decode_dequant_workspace_kv_buffer(self, layer, *args, **kwargs):
+        self._wait_for_layer(layer.layer_id)
+        layer_id_pool, is_swa_layer = self.layers_mapping[layer.layer_id]
+        pool = self.swa_kv_pool if is_swa_layer else self.full_kv_pool
+        return pool.get_flashinfer_decode_dequant_workspace_kv_buffer(
+            layer, *args, layer_id_override=layer_id_pool, **kwargs
+        )
 
     def set_mla_kv_buffer(
         self,

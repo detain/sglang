@@ -40,6 +40,8 @@ def _make_backend():
     )
     backend.prefill_wrappers_paged = [Mock()]
     backend.prefill_wrappers_verify = [Mock()]
+    backend.prefill_wrappers_ragged = [Mock()]
+    backend.prefill_wrapper_ragged = None
     backend.prefill_cuda_graph_metadata = {2: [Mock()]}
     backend.draft_extend_cuda_graph_metadata = {2: [Mock()]}
     # A previous prompt/full-prefill graph can leave these populated. Neither

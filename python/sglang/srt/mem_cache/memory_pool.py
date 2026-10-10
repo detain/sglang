@@ -109,6 +109,16 @@ GB = 1024 * 1024 * 1024
 _is_cuda = is_cuda()
 _is_npu = is_npu()
 _is_cpu = is_cpu()
+
+
+def _safe_zeros(shape, dtype, device):
+    try:
+        return torch.zeros(shape, dtype=dtype, device=device)
+    except (NotImplementedError, RuntimeError):
+        buf = torch.empty(shape, dtype=torch.uint8, device=device).zero_()
+        return buf.view(dtype)
+
+
 _is_xpu = is_xpu()
 _cpu_has_amx_support = cpu_has_amx_support()
 _is_hip = is_hip()
@@ -2211,7 +2221,7 @@ class MHATokenToKVPool(KVCache):
             if swa_v_head_dim is not None
             else v_head_dim
             if v_head_dim is not None
-            else head_dim
+            else self.head_dim
         )
 
         # Layout: NHD (default) | HND (SGLANG_USE_HND_KVCACHE) | vectorized_5d (ROCm AITER).
@@ -2506,7 +2516,7 @@ class MHATokenToKVPool(KVCache):
                     x = self._kv_vector_x
                     # K: (num_blocks, H, D_k // X, page, X)
                     self.k_buffer = [
-                        torch.zeros(
+                        _safe_zeros(
                             (
                                 num_blocks,
                                 self.head_num,
@@ -2521,7 +2531,7 @@ class MHATokenToKVPool(KVCache):
                     ]
                     # V: (num_blocks, H, page // X, D_v, X)
                     self.v_buffer = [
-                        torch.zeros(
+                        _safe_zeros(
                             (
                                 num_blocks,
                                 self.head_num,
@@ -2537,11 +2547,11 @@ class MHATokenToKVPool(KVCache):
                 else:
                     k_shape, v_shape = self._kv_buffer_shapes()
                     self.k_buffer = [
-                        torch.zeros(k_shape, dtype=self.store_dtype, device=self.device)
+                        _safe_zeros(k_shape, dtype=self.store_dtype, device=self.device)
                         for _ in range(self.layer_num)
                     ]
                     self.v_buffer = [
-                        torch.zeros(v_shape, dtype=self.store_dtype, device=self.device)
+                        _safe_zeros(v_shape, dtype=self.store_dtype, device=self.device)
                         for _ in range(self.layer_num)
                     ]
 
@@ -3281,6 +3291,23 @@ class MHATokenToKVPool(KVCache):
                 "KV rows must match loc_2d size: "
                 f"{tuple(cache_k.shape)=} {tuple(cache_v.shape)=} {tuple(loc_2d.shape)=}."
             )
+
+        if self.is_quantized_kv_cache:
+            row_offsets = torch.arange(loc_2d.shape[1], device=loc_2d.device)
+            valid_mask = row_offsets[None, :] < commit_lens.to(torch.int64)[:, None]
+            valid_idx = torch.nonzero(valid_mask.reshape(-1), as_tuple=False).flatten()
+            if valid_idx.numel() == 0:
+                return
+            self.set_kv_buffer(
+                layer,
+                loc_2d.reshape(-1).index_select(0, valid_idx),
+                cache_k.index_select(0, valid_idx),
+                cache_v.index_select(0, valid_idx),
+                k_scale,
+                v_scale,
+                layer_id_override=layer_id,
+            )
+            return
 
         if loc_2d.device != self.k_buffer[0].device:
             loc_2d = loc_2d.to(device=self.k_buffer[0].device, non_blocking=True)

@@ -807,7 +807,12 @@ class NVFP4KVCacheMethod(KVCacheQuantMethodBase):
         )
 
     def compute_cell_size(
-        self, head_num: int, head_dim: int, num_layers: int, kv_size: int
+        self,
+        head_num: int,
+        head_dim: int,
+        num_layers: int,
+        kv_size: int,
+        include_dequant_workspace: bool = True,
     ) -> int:
         # FP4 data: per-layer, K+V
         fp4_size = head_num * (head_dim // 2) * num_layers * 2 * kv_size
@@ -819,6 +824,8 @@ class NVFP4KVCacheMethod(KVCacheQuantMethodBase):
         scale_size = one_scale_layout_size * (
             int(self.needs_linear_scale_buffer()) + int(self.needs_native_fp4_scales())
         )
+        if not include_dequant_workspace:
+            return fp4_size + scale_size
         # Dequant workspace is shared across layers, not multiplied by num_layers.
         dq_dtype = self.dequant_workspace_dtype()
         dq_size = (
@@ -992,6 +999,7 @@ _FP8_E4M3 = torch.float8_e4m3fn
 _TORCH_FP4 = getattr(torch, "float4_e2m1fn_x2", None)
 _BF16 = torch.bfloat16
 _NVFP4_DQ_KV_PREFILL_BACKENDS = frozenset({"flashinfer"})
+_NVFP4_DQ_KV_DECODE_BACKENDS = frozenset({"flashinfer"})
 _NVFP4_KV_PREFILL_BACKENDS = frozenset({"trtllm_mha"})
 _NVFP4_KV_DECODE_BACKENDS = frozenset({"trtllm_mha"})
 _FP4_MX_MHA_BACKENDS = frozenset(
@@ -1067,6 +1075,7 @@ KV_CACHE_ATTENTION_ACCESS_REGISTRY: dict[str, tuple[KVCacheAttentionAccess, ...]
     ),
     NVFP4KVCacheMethod.name: (
         _dq_workspace(_PREFILL, _NVFP4_DQ_KV_PREFILL_BACKENDS, _NVFP4_SCALE, _FP8_E4M3),
+        _dq_workspace(_DECODE, _NVFP4_DQ_KV_DECODE_BACKENDS, _NVFP4_SCALE, _FP8_E4M3),
         _native_fp4(_PREFILL, _NVFP4_KV_PREFILL_BACKENDS, _NVFP4_SCALE, _TORCH_FP4),
         _native_fp4(_DECODE, _NVFP4_KV_DECODE_BACKENDS, _NVFP4_SCALE, _TORCH_FP4),
     ),
