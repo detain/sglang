@@ -15,7 +15,7 @@
 
 import logging
 import math
-from typing import Dict, List, Optional, Sequence, Set, Union
+from typing import Any, Dict, List, Optional, Sequence, Set, Union
 
 import msgspec
 
@@ -39,8 +39,38 @@ TOP_K_ALL = 1 << 30
 MAX_STOP_COUNT = 32
 MAX_STOP_REGEX_LEN = 256
 MAX_STOP_REGEX_COUNT = 32
+# Parallel samples per request. Applied before fan-out so a huge n cannot
+# replicate the prompt and take the tokenizer/scheduler down. Beam search
+# does not use this cap.
+MAX_PARALLEL_SAMPLES = 128
 
 logger = logging.getLogger(__name__)
+
+
+def validate_sample_count(n: Any, beam_width: Optional[int] = None) -> None:
+    """Reject an n that would replicate the prompt or slice beam results.
+
+    Beam search (beam_width > 1) does not replicate the prompt, so n is not
+    capped at MAX_PARALLEL_SAMPLES. It is stored as num_return and used as a
+    slice, so 0 drops every sequence and a negative n drops from the end.
+    """
+    if beam_width is not None and beam_width > 1:
+        if type(n) is not int or n < 1:
+            raise ValueError(f"n must be an integer >= 1, got {n}.")
+        return
+    if type(n) is not int or not 1 <= n <= MAX_PARALLEL_SAMPLES:
+        raise ValueError(
+            f"n must be an integer in [1, {MAX_PARALLEL_SAMPLES}], got {n}."
+        )
+
+
+def validate_top_logprobs_num(value: Any, vocab_size: int) -> None:
+    """Reject a top-logprobs width that torch.topk cannot serve for this vocab."""
+    if type(value) is not int or not 0 <= value <= vocab_size:
+        raise ValueError(
+            f"top_logprobs_num must be an integer in [0, vocab_size({vocab_size})], "
+            f"got {value}."
+        )
 
 
 # Private transport from the OpenAI request renderer to scheduler-side
@@ -230,10 +260,13 @@ class SamplingParams(msgspec.Struct, kw_only=True, array_like=True):
             raise ValueError(f"top_p must be in (0, 1], got {self.top_p}.")
         if not 0.0 <= self.min_p <= 1.0:
             raise ValueError(f"min_p must be in [0, 1], got {self.min_p}.")
-        if self.top_k < 1 or self.top_k == -1:
+        if self.top_k != TOP_K_ALL and (self.top_k < 1 or self.top_k > vocab_size):
             raise ValueError(
-                f"top_k must be -1 (disable) or at least 1, got {self.top_k}."
+                f"top_k must be -1 (disable) or in [1, vocab_size({vocab_size})], "
+                f"got {self.top_k}."
             )
+        # Same bound io_struct applies before prompt replication.
+        validate_sample_count(self.n, self.beam_width)
         if not -2.0 <= self.frequency_penalty <= 2.0:
             raise ValueError(
                 f"frequency_penalty must be in [-2, 2], got {self.frequency_penalty}."

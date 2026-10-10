@@ -28,7 +28,8 @@ from sglang.srt.managers.schedule_batch import (
     MultimodalInputFormat,
     MultimodalProcessorOutput,
 )
-from sglang.srt.sampling.sampling_params import SamplingParams
+from sglang.srt.runtime_context import get_context
+from sglang.srt.sampling.sampling_params import MAX_PARALLEL_SAMPLES, SamplingParams
 from sglang.srt.utils.cuda_ipc_transport_utils import CudaIpcTensorTransportProxy
 from sglang.srt.utils.msgpack_utils import _restore_torch_tensor, enc_hook, ext_hook
 from sglang.test.ci.ci_register import (
@@ -700,6 +701,101 @@ class TestGenerateReqInputNormalization(CustomTestCase):
 
         # Modalities should be set for all 3 examples
         self.assertEqual(req.modalities, ["image", "image", "image"])
+
+    def test_parallel_sampling_n_above_max_raises_before_fan_out(self):
+        """A huge n must 400 before text is replicated."""
+        req = GenerateReqInput(
+            text="Hello",
+            sampling_params={"n": MAX_PARALLEL_SAMPLES + 1},
+        )
+        with self.assertRaisesRegex(ValueError, r"n must be an integer in \[1,"):
+            req.normalize_batch_and_arguments()
+        self.assertEqual(req.text, "Hello")
+
+    def test_explicit_null_n_stays_a_single_request(self):
+        """JSON null matches a missing n: one sample, no fan-out."""
+        req = GenerateReqInput(text="Hello", sampling_params={"n": None})
+        req.normalize_batch_and_arguments()
+        self.assertEqual(req.text, "Hello")
+        self.assertEqual(req.parallel_sample_num, 1)
+
+    def test_beam_n_above_max_parallel_does_not_fan_out(self):
+        req = GenerateReqInput(
+            text="Hello",
+            sampling_params={
+                "n": MAX_PARALLEL_SAMPLES + 1,
+                "beam_width": MAX_PARALLEL_SAMPLES + 8,
+            },
+        )
+        req.normalize_batch_and_arguments()
+        self.assertEqual(req.text, "Hello")
+        self.assertEqual(req.parallel_sample_num, 1)
+
+    def test_beam_n_below_one_raises_before_fan_out(self):
+        """A non-positive beam n must 400 before it can become num_return.
+
+        n == 0 would return no sequences. n == -1 would slice from the end.
+        """
+        for n in (0, -1):
+            req = GenerateReqInput(
+                text="Hello",
+                sampling_params={"n": n, "beam_width": 4},
+            )
+            with self.assertRaisesRegex(ValueError, r"n must be an integer >= 1"):
+                req.normalize_batch_and_arguments()
+            self.assertEqual(req.text, "Hello")
+
+    def test_parallel_sampling_validates_every_request_n(self):
+        """A later request is bounded on its own, not by the first item.
+
+        The first item is beam search, so its n may exceed MAX_PARALLEL_SAMPLES. The second
+        is not, and the same n must 400 before either prompt is copied.
+        """
+        req = GenerateReqInput(
+            text=["Hello", "World"],
+            sampling_params=[
+                {"n": MAX_PARALLEL_SAMPLES + 1, "beam_width": MAX_PARALLEL_SAMPLES + 8},
+                {"n": MAX_PARALLEL_SAMPLES + 1},
+            ],
+        )
+        with self.assertRaisesRegex(ValueError, r"n must be an integer in \[1,"):
+            req.normalize_batch_and_arguments()
+        self.assertEqual(req.text, ["Hello", "World"])
+
+    def test_tokenized_generate_rejects_top_logprobs_past_vocab(self):
+        """Logprob validation must reject a k torch.topk cannot serve."""
+        from types import SimpleNamespace
+
+        from sglang.srt.managers.tokenizer_manager import TokenizerManager
+
+        vocab_size = 32
+        # _validate_one_request reads the published exec config first.
+        override = get_context().override_server_args()
+        override.install()
+        self.addCleanup(override.restore)
+        manager = TokenizerManager.__new__(TokenizerManager)
+        manager.context_len = 128
+        manager.num_reserved_tokens = 0
+        manager.allow_auto_truncate = False
+        manager.validate_total_tokens = False
+        manager.is_generation = True
+        manager.model_config = SimpleNamespace(
+            vocab_size=vocab_size, joint_head_config=None
+        )
+        req = GenerateReqInput(
+            text="Hello",
+            sampling_params={},
+            top_logprobs_num=vocab_size + 1,
+        )
+        with self.assertRaisesRegex(ValueError, "top_logprobs_num"):
+            manager._validate_one_request(req, [1])
+
+        accepted = GenerateReqInput(
+            text="Hello",
+            sampling_params={},
+            top_logprobs_num=vocab_size,
+        )
+        manager._validate_one_request(accepted, [1])
 
     def test_parallel_sampling_preserves_reasoning_controls(self):
         single = GenerateReqInput(

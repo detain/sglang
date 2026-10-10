@@ -16,6 +16,7 @@ import msgspec
 
 from sglang.srt.sampling.sampling_params import (
     MAX_LEN,
+    MAX_PARALLEL_SAMPLES,
     MAX_REQUEST_REASONING_END_TOKEN_IDS,
     MAX_STOP_COUNT,
     MAX_STOP_REGEX_COUNT,
@@ -24,6 +25,7 @@ from sglang.srt.sampling.sampling_params import (
     TOP_K_ALL,
     SamplingParams,
     get_max_seq_length,
+    validate_top_logprobs_num,
 )
 from sglang.test.test_utils import CustomTestCase
 
@@ -210,6 +212,60 @@ class TestSamplingParamsVerify(CustomTestCase):
         sp.top_k = -2  # bypass __init__ conversion
         with self.assertRaises(ValueError):
             sp.verify(self.VOCAB_SIZE)
+
+    def test_top_k_at_vocab_size_valid(self):
+        self._make(top_k=self.VOCAB_SIZE).verify(self.VOCAB_SIZE)
+
+    def test_top_k_all_sentinel_valid(self):
+        sp = self._make()
+        sp.top_k = TOP_K_ALL
+        sp.verify(self.VOCAB_SIZE)
+
+    def test_top_k_above_vocab_raises(self):
+        with self.assertRaisesRegex(ValueError, "top_k must be -1"):
+            self._make(top_k=self.VOCAB_SIZE + 1).verify(self.VOCAB_SIZE)
+
+    def test_top_k_int32_overflow_raises(self):
+        with self.assertRaisesRegex(ValueError, "top_k must be -1"):
+            self._make(top_k=2**31).verify(self.VOCAB_SIZE)
+
+    def test_n_boundaries_valid(self):
+        self._make(n=1).verify(self.VOCAB_SIZE)
+        self._make(n=MAX_PARALLEL_SAMPLES).verify(self.VOCAB_SIZE)
+
+    def test_n_zero_raises(self):
+        with self.assertRaisesRegex(ValueError, r"n must be an integer in \[1,"):
+            self._make(n=0).verify(self.VOCAB_SIZE)
+
+    def test_n_above_max_raises(self):
+        with self.assertRaisesRegex(ValueError, r"n must be an integer in \[1,"):
+            self._make(n=MAX_PARALLEL_SAMPLES + 1).verify(self.VOCAB_SIZE)
+
+    def test_beam_n_may_exceed_max_parallel_samples(self):
+        """Beam search does not fan out, so n is not capped at MAX_PARALLEL_SAMPLES."""
+        self._make(n=200, beam_width=256).verify(self.VOCAB_SIZE)
+
+    def test_beam_n_below_one_raises(self):
+        """A non-positive beam n is stored as num_return and slices the sequences."""
+        for n in (0, -1):
+            with self.assertRaisesRegex(ValueError, r"n must be an integer >= 1"):
+                self._make(n=n, beam_width=4).verify(self.VOCAB_SIZE)
+
+    def test_beam_n_above_beam_width_passes_verify(self):
+        """n above beam_width is the coordinator's error, not verify's."""
+        self._make(n=8, beam_width=4).verify(self.VOCAB_SIZE)
+
+    def test_top_logprobs_num_boundaries_valid(self):
+        validate_top_logprobs_num(0, self.VOCAB_SIZE)
+        validate_top_logprobs_num(self.VOCAB_SIZE, self.VOCAB_SIZE)
+
+    def test_top_logprobs_num_negative_raises(self):
+        with self.assertRaisesRegex(ValueError, "top_logprobs_num"):
+            validate_top_logprobs_num(-1, self.VOCAB_SIZE)
+
+    def test_top_logprobs_num_above_vocab_raises(self):
+        with self.assertRaisesRegex(ValueError, "top_logprobs_num"):
+            validate_top_logprobs_num(self.VOCAB_SIZE + 1, self.VOCAB_SIZE)
 
     # --- frequency_penalty ---
     def test_frequency_penalty_below_minus_two_raises(self):
