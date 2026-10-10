@@ -1,6 +1,6 @@
 # stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
 #
-# STACK: qwennext-stack-155-2026-10-08
+# STACK: qwennext-stack-161-2026-10-10
 #   main+pr36787+pr37275+pr38144+pr38209+pr36644+pr39862+pr39809+pr39893+local_hicache_qsa_fixes
 #   +pr39614+pr39978+pr40002+pr39065+pr40501+pr40175+pr40362+pr39391+pr37061+pr39333+pr33778
 #   +pr38977+pr39977+pr40480+pr39880+pr40235+pr39807+cpu-triage+boot-fix+plan_updates_perf
@@ -10,21 +10,31 @@
 #   +diffusion-batch-2026-10-08(pr27673+pr28690*+pr32513+pr32550*+pr33036*+pr33588*
 #    +pr36399+pr36767+pr37460*+pr38650+pr39212+pr40493+pr40588+pr40755+pr41340*
 #    +pr41944+pr42249+pr42928*+pr43028*+pr43064*)
-#   (entries 1-155; *=squash/ported, see commit messages. 10-08 added entries
+#   (entries 1-161; *=squash/ported, see commit messages. 10-10 added
+#   entries 157-161: parser batch A (Qwen3-Coder tool-call fixes + sampling
+#   upper bounds), on top of upstream merge #3 (see synced).
+#   10-08 added entries
 #   136-155: 20 diffusion PRs (4 more evaluated-skipped, see NOT INCLUDED).
 #   09-28 added 22 entries: 9 new PR blocks, new head
 #   commits of #38144/#39614/#39977/#40778, and 7 local fixes; then 118-125
 #   make --enable-mixed-chunk safe and fix the QSA verify ring collision.
 #   * = picked with local modifications, see the entries)
 # branch : qwennext-stack
-# tip    : e7b4901d03   (the stack.txt commit sits above it)
+# tip    : 12e7933f68   (the stack.txt commit sits above it)
 # base   : upstream sgl-project/sglang main @ 7ad55e4386 ([HiCache] TMA-staged
 #          host<->device KV transfer kernel (sm_90+) (#40278), 2026-09-21)
 # synced : upstream main @ f209e67767 (#39643, 2026-09-28) MERGED IN as
 #          2e228b5ce5 on top of entry 95 (second merge; the first was
 #          d34f7b2326 as a87ae32c42 after entry 91). See the UPSTREAM MERGE
 #          sections. Entry shas below stay valid.
-# updated: 2026-10-08 (10-08: diffusion PR batch entries 136-155 -- 20 open
+#          THIRD merge 10-09: main @ 87845cda2b (#43301, 699 commits) merged
+#          as c0ace50b68 on top of the entry-156 header sync c4925776ae,
+#          follow-up b5f59fda03 (stale-test/dead-code fallout); resolutions
+#          in the merge commit messages.
+# updated: 2026-10-10 (10-10: parser batch A entries 157-161 -- #42448 head
+#          revision delta, #42050, #42579, #42776 (closed, applied), #42779
+#          (closed, ported); all live only after the same owed restart.
+#          10-08: diffusion PR batch entries 136-155 -- 20 open
 #          PRs applied onto the stack; server restart OWED to activate.
 #          10-08b: entry 156 -- prod SP Wan VAE decode crash (regression
 #          from the #38650 pick) fixed; the same restart makes it live.
@@ -1357,6 +1367,42 @@ STACK, IN BUILD ORDER (bottom first)
       # gate + bit-identical eager chain (also gates the non-cached
       # conv1/conv2 calls + defer_bias). Regression test in test_layout.py.
       # Upstream main has the same latent hole. LIVE ONLY AFTER RESTART.
+
+  Parser batch A (2026-10-10, Qwen3-Coder tool-call + sampling bounds):
+        157. 523afcec52  PR #42448  pre-escaped object recovery -- head
+      # revision delta only (SQUASHED from commits 4121345ab1+df7735dd3b).
+      # Commit 1 was already entry 20 (f93fa2e21b, patch-id identical);
+      # commit 2's PR head revised entry 21's gate: fire on startswith({,[)
+      # + any \" (was: escape immediately after opener) + raw-string test
+      # fixture (old non-raw literal silently dropped the backslashes, so
+      # the test exercised the wrong path).
+        158. 3f70f2b015  PR #42050  preserve large int tool args (cherry-pick -x, clean)
+      # int() before float() in the int-typed _convert_param_value branch;
+      # new test_qwen3_coder_numeric_precision.py (4P+156 subtests).
+        159. e3d8172b58  PR #42579  linear block scan, was quadratic findall (cherry-pick -x, test conflict)
+      # detect_and_parse uses _iter_tool_call_bodies (str.find scan).
+      # Conflicts: (1) test insertion-point vs entries 89/108 -- kept both;
+      # (2) the PR deletes self.tool_call_regex but our entry 89 uses its
+      # .sub for normal_text -- added equivalent linear
+      # _strip_complete_tool_calls (verified 20k differential fuzz vs old
+      # re.sub, 0 mismatches).
+        160. 2c81a6e3d3  PR #42776  keep string "null" / invalid bools as written (CLOSED, applied + streaming parity fix)
+      # Closed unreviewed (author self-closed; issue #42764 still open,
+      # upstream main still converts null text unconditionally -- real bug,
+      # no maintainer objection). Cherry-pick clean, but broke our
+      # streaming parity test (11 subfails): 732e85217's string fast path
+      # had its own old-rule mirror -- now gated by
+      # _schema_allows_null(schema) (entry only opens for type:"string"
+      # schemas). Tests: function_call 647P after.
+        161. 12e7933f68  PR #42779  reject oversized top_k/logprobs/n (CLOSED, ported via net file-restricted diff)
+      # 5 commits fb97e98ac3..f8ecafa514; all 4 sagearc threads addressed
+      # by the author's own later commits, never re-reviewed; gh pr diff
+      # unusable (38-commit drift) -- ported git diff
+      # abed685de1..pr42779 restricted to the PR's 10 files (verified
+      # contamination-free). MAX_PARALLEL_SAMPLES=128 + top_k/top_logprobs
+      # vocab bounds, python + rust mirrors. Test adapted to our
+      # __new__-manager idiom (exec-config override + joint_head_config).
+      # sampling+io_struct 289P; rust cargo test to_scheduler 31P.
 
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
