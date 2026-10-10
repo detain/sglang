@@ -1,6 +1,6 @@
 # stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
 #
-# STACK: qwennext-stack-177-2026-10-10
+# STACK: qwennext-stack-178-2026-10-10
 #   main+pr36787+pr37275+pr38144+pr38209+pr36644+pr39862+pr39809+pr39893+local_hicache_qsa_fixes
 #   +pr39614+pr39978+pr40002+pr39065+pr40501+pr40175+pr40362+pr39391+pr37061+pr39333+pr33778
 #   +pr38977+pr39977+pr40480+pr39880+pr40235+pr39807+cpu-triage+boot-fix+plan_updates_perf
@@ -10,7 +10,7 @@
 #   +diffusion-batch-2026-10-08(pr27673+pr28690*+pr32513+pr32550*+pr33036*+pr33588*
 #    +pr36399+pr36767+pr37460*+pr38650+pr39212+pr40493+pr40588+pr40755+pr41340*
 #    +pr41944+pr42249+pr42928*+pr43028*+pr43064*)
-#   (entries 1-171; *=squash/ported, see commit messages. 10-10 added
+#   (entries 1-178; *=squash/ported, see commit messages. 10-10 added
 #   entries 157-161: parser batch A (Qwen3-Coder tool-call fixes + sampling
 #   upper bounds), on top of upstream merge #3 (see synced). 10-10b added
 #   entries 162-166: SM120 batch B (#42863 PCIe-IPC vocab gathers, #42566
@@ -25,8 +25,12 @@
 #   CUTLASS-MoE autotune prefill range, #43356 NVFP4 spec-decode graphs
 #   (inert on fp8_e4m3 KV), #42736 prefill-sized FlashInfer autotune now
 #   DEFAULT-ON -- behavior change next restart --, #42767* QSA prefill-chunk
-#   page alignment ported to the prefix_len/extend_end API; #43247 skipped,
-#   see NOT INCLUDED).
+#   page alignment ported to the prefix_len/extend_end API; #43247 was
+#   skipped here, applied 10-10e as entry 178).
+#   10-10e added entry 178: #43247 NVFP4-KV FlashInfer decode access +
+#   Gemma4 text config -- skip REVERSED per user direction (RDXA + NVDA
+#   NVFP4 trialings of Qwen3.8-Flash-Next make NVFP4 KV an active future
+#   config; carries merged-in PR #42419 fp8-scales-drop in its net diff).
 #   10-08 added entries
 #   136-155: 20 diffusion PRs (4 more evaluated-skipped, see NOT INCLUDED).
 #   09-28 added 22 entries: 9 new PR blocks, new head
@@ -34,7 +38,7 @@
 #   make --enable-mixed-chunk safe and fix the QSA verify ring collision.
 #   * = picked with local modifications, see the entries)
 # branch : qwennext-stack
-# tip    : 3d1e6881e7   (the stack.txt commit sits above it)
+# tip    : 8ef534cfd5   (the stack.txt commit sits above it)
 # base   : upstream sgl-project/sglang main @ 7ad55e4386 ([HiCache] TMA-staged
 #          host<->device KV transfer kernel (sm_90+) (#40278), 2026-09-21)
 # synced : upstream main @ f209e67767 (#39643, 2026-09-28) MERGED IN as
@@ -45,7 +49,16 @@
 #          as c0ace50b68 on top of the entry-156 header sync c4925776ae,
 #          follow-up b5f59fda03 (stale-test/dead-code fallout); resolutions
 #          in the merge commit messages.
-# updated: 2026-10-10 (10-10c: Qwen4/HiCache batch C entries 167-171 --
+# updated: 2026-10-10 (10-10e: entry 178 -- PR #43247 applied as squash
+#          (skip reversed: NVFP4 KV = active future config for the
+#          RDXA/NVDA NVFP4 trialings; 4 conflicts union-resolved in
+#          flashinfer_backend/memory_pool/pool_configurator/common.py;
+#          --kv-cache-dtype=nvfp4 + --decode-attention-backend=flashinfer
+#          now accepted on SM120; GPU window debt: NVFP4-KV e2e numerics).
+#          10-10d: batch D entries 172-177 -- see STACK block above
+#          (header bump to 177 omitted the updated:/entries/lines; fixed
+#          here).
+#          10-10c: Qwen4/HiCache batch C entries 167-171 --
 #          #42400 PLE backing-file reuse (only environ.py context
 #          conflict), #42701 write-through D2H fence (composes with merge
 #          #3's degrade-always + bounded-join resolutions in the same
@@ -1643,6 +1656,58 @@ STACK, IN BUILD ORDER (bottom first)
       # one step instead of splitting. Full test_prefill_adder battery
       # 51P+48sub green (all 118-125 alignment invariants included).
 
+        178. 8ef534cfd5  PR #43247*  FlashInfer decode attention access for
+      # NVFP4 KV cache + Gemma4 text config (weignerg, OPEN). SKIPPED in
+      # batch D; skip REVERSED per user direction 10-10e: RDXA and NVDA
+      # NVFP4 variants of Qwen3.8-Flash-Next are being trialed, so
+      # NVFP4-KV/FP4 paths are active future configs (see human memory).
+      # Squash of net diff 5b5d721239..pr43247 (24 commits incl. two
+      # rebased-main merges + merge of still-OPEN PR #42419 whose 3 commits
+      # arrive inside -- drops fp8 scales under nvfp4 KV), 20 files landed;
+      # toolchain.py excluded (== entry 65 b41acabb3d), test_nvfp4_moe_
+      # backend_selection.py absent from delta (== entry 63 8a7c77411b);
+      # git-cherry supersession + contamination check: every staged file
+      # traces to a PR non-merge commit, per-file PR-net==applied-delta
+      # byte-identity verified (loader/swa_memory_pool/fp4_kv_cache_quant_
+      # method), modelopt_quant delta lacks exactly entry-63's 19 lines.
+      # No #43247 hits in f209e67767..origin/main. CONFLICTS (4): (a)
+      # flashinfer_backend.py x4 -- UNION our KVLocPlan plan= kwarg (from
+      # the kv-loc work) with the PR's per-wrapper head_dim/num_kv_heads/
+      # num_qo_heads kwargs at all 4 call_begin_forward sites; PR replaces
+      # entry-175's single-wrapper custom_kv_indices RuntimeError with
+      # real forwarding (swa slide call + gated in-place full->swa
+      # translate) and restructures ragged wrappers (new
+      # prefill_wrappers_ragged list + PrefillMetadata field); (b)
+      # memory_pool.py -- PR's is_quantized_kv_cache early-return in
+      # set_kv_buffer_prefix_valid taken WITHOUT theirs' fp8 conversion
+      # preamble (our fused-scale paths intact); _safe_zeros() Float4
+      # alloc hunks auto-merged; (c) pool_configurator.py -- took PR's
+      # has_heterogeneous SWA cell-size branch + HybridSWA FP4 branch
+      # (include_dequant_workspace=False), our self.kv_cache_dtype_str
+      # spelling + _compute_qsa_cell_size tail preserved; (d) common.py
+      # make_layers -- PR's per-layer empty_cache OOM fix inside OUR
+      # layer_stack/neighbour wrapper. ENABLEMENT: --kv-cache-dtype=nvfp4
+      # on SM120 now defaults to --decode-attention-backend=flashinfer
+      # (trtllm_mha still allowed; SM100 stays trtllm_mha-pinned);
+      # 'flashinfer' added to KV4_ATTENTION_MHA_BACKEND_CHOICES;
+      # flashinfer decode reads NVFP4 via dequant workspace (nvfp4 scale
+      # -> fp8_e4m3 decode input; cell math in compute_cell_size);
+      # Gemma4 text-config fix = get_hf_text_config
+      # transformer_layer_config (dflash speculators) + AutoConfig-failure
+      # raw-config fallback + model-hook allowlist -- inert for NEXTN
+      # prod, cheap insurance. Test adaptation: nvfp4_speculative __new__
+      # stub gained prefill_wrappers_ragged/prefill_wrapper_ragged -> 6P.
+      # Battery: 178-file set (fp4_kv_cache_quant_method,
+      # nvfp4_moe_backend, flashinfer_nvfp4_spec, pool_configurator,
+      # server_args, qsa_kv_pool, swa-pool, kv-loc-plan, modelopt-nvfp4,
+      # ple_staging 37/37) = 636P/6S + 136 subtest-skips; only reds:
+      # fp4_eagle 13 subfail = entry-175 ENV class (CVD=9 is_cuda False), test_kernels_namespace inventory FAIL
+      # re-confirmed PRE-EXISTING at 1785187981 (batch-C qwen4_short_conv
+      # entry owed -- NOT this PR); ruff repo-ruleset clean; PR's
+      # ruff-format drift fixed in 9 files (cosmetic). GPU WINDOW DEBTS:
+      # NVFP4-KV e2e + flashinfer dq-workspace numerics on real SM120.
+      # LIVE ONLY AFTER PROD RESTART (same owed restart as 136-177).
+
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
 ==============================================================================
@@ -1676,21 +1741,15 @@ EVALUATED AND DELIBERATELY NOT INCLUDED
 
   Batch D 2026-10-10 -- evaluated, NOT included:
   PR #43247 (FlashInfer decode access for NVFP4 KV + Gemma4 text config,
-      24 commits / ~22 files) -- SKIPPED. Rationale: (1) the NVFP4-KV family
-      (Float4_e2m1fn_x2 buffers, SWAKVPool wiring, flashinfer/trtllm NVFP4
-      accessors, dequant-workspace cell math) is inert for us -- prod KV is
-      fp8_e4m3 and nothing selects nvfp4; (2) the Gemma4 pieces are
-      model-gated (56f5c31877 only guards an attribute inside
-      _apply_gemma4_attention_overrides -- NOT the #43392-style nested
-      sub-config class, which we applied standalone as entry 173; e52738c898
-      gemma4 model-hook allowlist; d9c1551b0d gemma4_mm.py); (3) the two
-      speculator-config fixes target AutoConfig-failure and
-      transformer_layer_config in dflash speculators -- we run NEXTN;
-      (4) surface area lands on flashinfer_backend/memory_pool/
-      pool_configurator where our stack carries heavy local deltas (7/24/20
-      commits) -- risk asymmetry is bad for dead-for-us code. Re-evaluate if
-      NVFP4 KV ever becomes a candidate (perf-audit listed bf16-KV as skip,
-      fp4-KV never proposed).
+      24 commits / 20 files landed) -- NO LONGER HERE: applied as entry 178
+      (10-10e), skip REVERSED per user direction -- RDXA and NVDA NVFP4
+      variants of Qwen3.8-Flash-Next are being trialed, so the NVFP4-KV
+      family is an ACTIVE FUTURE config, not dead code. The batch-D
+      rationale (prod KV fp8_e4m3 => inert; risk asymmetry on
+      flashinfer_backend/memory_pool/pool_configurator) stands for the
+      fp8-only world but the user overrode it; the heavily-customized
+      files' conflicts were union-resolved (KVLocPlan x head_dim kwargs,
+      fused-scale paths preserved, our make_layers wrapper kept).
 
   PR #39807 -- NO LONGER HERE: restored 2026-09-21 as entries 63-65 (see
       STACK section). Its earlier "dropped" listing in this file was a
