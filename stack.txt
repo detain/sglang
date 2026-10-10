@@ -38,7 +38,7 @@
 #   make --enable-mixed-chunk safe and fix the QSA verify ring collision.
 #   * = picked with local modifications, see the entries)
 # branch : qwennext-stack
-# tip    : d1c4438c73   (the stack.txt commit sits above it)
+# tip    : b05a7c1c51   (the stack.txt commit sits above it)
 # base   : upstream sgl-project/sglang main @ 7ad55e4386 ([HiCache] TMA-staged
 #          host<->device KV transfer kernel (sm_90+) (#40278), 2026-09-21)
 # synced : upstream main @ f209e67767 (#39643, 2026-09-28) MERGED IN as
@@ -55,6 +55,13 @@
 #          flashinfer_backend/memory_pool/pool_configurator/common.py;
 #          --kv-cache-dtype=nvfp4 + --decode-attention-backend=flashinfer
 #          now accepted on SM120; GPU window debt: NVFP4-KV e2e numerics).
+#          10-10g: entry-178 BOOT CRASH fixed by b05a7c1c51 (rides with
+#          entry 178): #43247's has_heterogeneous cell-size branch did
+#          getattr(layer_info, '*_attention_layer_ids', []) but our
+#          ModelLayerInfo (#40983) defaults those to None on non-SWA
+#          models -> TypeError at memory-pool init on every TP rank for
+#          Qwen3.8-Flash-Next. Now coalesces None -> []; pool_configurator
+#          60P+26sub. Prod relaunch confirmation still owed.
 #          10-10f: post-178 sync -- test_kernels_namespace inventory red
 #          (fused_qwen4_direct_decode_conv, added by #43370 commit
 #          516178025d, never got a KernelSpec; proven pre-existing at
@@ -1727,6 +1734,16 @@ STACK, IN BUILD ORDER (bottom first)
       # ruff-format drift fixed in 9 files (cosmetic). GPU WINDOW DEBTS:
       # NVFP4-KV e2e + flashinfer dq-workspace numerics on real SM120.
       # LIVE ONLY AFTER PROD RESTART (same owed restart as 136-177).
+      # BOOT-CRASH follow-up (b05a7c1c51, found on first prod relaunch
+      # 10-10): the PR's has_heterogeneous branch in DefaultPool-
+      # Configurator._compute_cell_size used getattr(layer_info,
+      # '*_attention_layer_ids', []) -- our ModelLayerInfo (#40983)
+      # always defines them, None for non-hybrid-SWA models, so the []
+      # default never fired and Qwen3.8-Flash-Next (Mamba hybrid, no SWA)
+      # died with "'NoneType' object is not iterable" on all 4 ranks.
+      # Fix reads the fields directly with `or []`. The 178 battery
+      # missed it: test_pool_configurator's stub helper coerces None ids
+      # to [] before building layer_info, so None never reaches the code.
 
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
