@@ -38,7 +38,7 @@
 #   make --enable-mixed-chunk safe and fix the QSA verify ring collision.
 #   * = picked with local modifications, see the entries)
 # branch : qwennext-stack
-# tip    : 8ef534cfd5   (the stack.txt commit sits above it)
+# tip    : d1c4438c73   (the stack.txt commit sits above it)
 # base   : upstream sgl-project/sglang main @ 7ad55e4386 ([HiCache] TMA-staged
 #          host<->device KV transfer kernel (sm_90+) (#40278), 2026-09-21)
 # synced : upstream main @ f209e67767 (#39643, 2026-09-28) MERGED IN as
@@ -55,9 +55,25 @@
 #          flashinfer_backend/memory_pool/pool_configurator/common.py;
 #          --kv-cache-dtype=nvfp4 + --decode-attention-backend=flashinfer
 #          now accepted on SM120; GPU window debt: NVFP4-KV e2e numerics).
+#          10-10f: post-178 sync -- test_kernels_namespace inventory red
+#          (fused_qwen4_direct_decode_conv, added by #43370 commit
+#          516178025d, never got a KernelSpec; proven pre-existing at
+#          1785187981) fixed by d1c4438c73, rides with entry 170; kernels
+#          dir green (169P, CVD=9). CAVEATS refreshed for the 10-09 prod
+#          venv rebuild (torch 2.14.1 / triton 3.8.0 / flashinfer
+#          0.7.0.post1 / sglang-kernel 0.4.9 wheel; 09-22/09-17 pin notes
+#          marked HISTORY; PCIe-IPC gathers entries 162-164 still INERT --
+#          flashinfer.comm in 0.7.0.post1 still lacks PcieIpcAllGather-
+#          Workspace, verified) + #42736 flip + retune + fp4_eagle
+#          CUDA-true-runner debts.
 #          10-10d: batch D entries 172-177 -- see STACK block above
 #          (header bump to 177 omitted the updated:/entries/lines; fixed
-#          here).
+#          here). Batch D carries dd48c60644 (Max-Q MoE JSONs mirrored
+#          triton_3_7_1/ -> triton_3_8_0/ as interim config shim for the
+#          venv bump -- REAL retune owed, CAVEATS) and 575ebf692b/#42736*
+#          (DEFAULT-FLIP: prefill-sized FlashInfer autotune always on
+#          unless --disable-flashinfer-autotune -- extra ~16384-dummy-
+#          forward warmup cost lands on the NEXT prod restart).
 #          10-10c: Qwen4/HiCache batch C entries 167-171 --
 #          #42400 PLE backing-file reuse (only environ.py context
 #          conflict), #42701 write-through D2H fence (composes with merge
@@ -1559,6 +1575,10 @@ STACK, IN BUILD ORDER (bottom first)
       # test_qwen4_ngram/short_conv/ple_projection 5P+27skip -- the skips
       # are Triton-compile GPU-window debt. qwen4_exp.py ruff format drift
       # (1510-1515/3123, noted at entry 167) fixed by the PR's own reformat.
+      # Inventory follow-up post-178 (d1c4438c73): commit 516178025d added
+      # fused_qwen4_direct_decode_conv without a KernelSpec -- registered
+      # in mamba/__init__.py (TRITON/CUDA, inventory-only like its three
+      # qwen4 siblings); ngram module verified complete. See CAVEATS.
         171. 3d1e6881e7  LOCAL  fix: PLE-staging test parallel stub missing num_dp_ranks
       # Owed red test_eager_validates_before_warmup: root cause NOT the
       # _eager_max_bs==2 assert (passes unchanged) -- SimpleNamespace stub
@@ -1952,15 +1972,24 @@ CAVEATS
     /root/sglang/.venv is editable to the OLD checkout /root/sglang/sglang.prev;
     THIS repo was verified via a hardlink clone at .venv2 -- see next caveat.)
 
-  * LIVE VENV (2026-09-22): /root/sglang/.venv is now editable to THIS repo
+  * LIVE VENV (2026-10-09 user rebuild): /root/sglang/.venv (PROD) now runs
+    torch 2.14.1 / triton 3.8.0 / flashinfer 0.7.0.post1 / sglang-kernel
+    0.4.9 wheel -- SUPERSEDES the 09-22 pin note and the 09-17 AOT-0.4.7
+    note below (kept as HISTORY). Consequences: entry 172's triton_3_8_0/
+    config mirrors are what the prod venv now looks up; entries 162-164's
+    PCIe-IPC vocab gathers STAY INERT -- flashinfer.comm 0.7.0.post1
+    verified lacking PcieIpcAllGatherWorkspace (still waits on the #40709
+    class bump). The .venv2 verification venv is UNCHANGED at triton
+    3.7.1/flashinfer 0.6.18 -- CVD=9 batteries run there, not on prod pins.
+  * HISTORY (2026-09-22): /root/sglang/.venv is now editable to THIS repo
     (sglang 0.5.21.dev550+gdb9d0720f). Refresh procedure with the server
     stopped: source ~/sglang/.venv/bin/activate; cd /root/sglang/sglang;
     uv pip install -e python --dry-run   # review: must not move torch/flashinfer
     uv pip install -e python
     /tmp/opencode/constraints.txt NO LONGER EXISTS (tmp cleaned) -- the
-    dry-run is now the guard. Pins in use: torch 2.13.0 / triton 3.7.1 /
-    flashinfer 0.6.18 / xgrammar 0.2.7.
-  * AOT sglang-kernel 0.4.7 is the wheel built on 09-17 from sglang.prev
+    dry-run is now the guard. Pins in use [SUPERSEDED 10-09, see above]:
+    torch 2.13.0 / triton 3.7.1 / flashinfer 0.6.18 / xgrammar 0.2.7.
+  * HISTORY: AOT sglang-kernel 0.4.7 is the wheel built on 09-17 from sglang.prev
     (python/sglang/kernels/aot/dist/). Not rebuilt on 09-22: this tree's AOT
     sources only DROP ops (speculative kernels moved to JIT, #40033) and add an
     H200 GLM-5.2 w4a8 config (sm90); topk.cu matches. The old wheel is a
@@ -1973,6 +2002,33 @@ CAVEATS
     next install -e -- pip check noise only.
     [diffusion] pulls st_attn/vsa/modelopt and makes serve --help render the
     Diffusion section -- that is expected, not a bug.
+
+  * Max-Q MoE JSON retune OWED (GPU window): the triton_3_8_0/ dirs are
+    byte-mirrors of triton_3_7_1/ (entry 172 dd48c60644), an interim shim
+    so the 10-09 venv bump finds configs -- values are 3.7.1-tuned.
+    Retuner protocol (entry 126): benchmark/kernels/fused_moe_triton/
+    tuning_fused_moe_triton_sep.py on real routing dumps (48-layer x3
+    topk_ids captures via a temporary _forward_router_experts hook),
+    up + down projections, BLOCK_SIZE_M pinned to the shared
+    moe_align_block_size sort. The exact 09-17 E2 retune CLI is NOT
+    documented anywhere in stack.txt -- entry 126's recipe is the closest
+    recorded protocol; follow it.
+  * #42736 DEFAULT-FLIP (entry 176 575ebf692b): SGLANG_FLASHINFER_AUTO-
+    TUNE_EXTEND deprecated; prefill-sized EXTEND autotune is ALWAYS ON
+    unless --disable-flashinfer-autotune. The NEXT prod restart pays an
+    extra ~16384-token dummy forward per rank in prefill warmup (prod:
+    chunked 16384, prefill CUDA graphs off) -- measure it; runtime
+    prefill kernels get prefill-sized tuning in exchange.
+  * fp4_eagle spec tests (entry 175 class): 13 sub-fails under
+    CUDA_VISIBLE_DEVICES="9" are ENVIRONMENTAL -- the gating predicate
+    calls is_cuda() -> torch.cuda.is_available() = False; reproduced
+    IDENTICALLY on pure upstream in a worktree. Need a CUDA-true runner
+    (GPU window); upstream CPU CI must run with an accelerator visible.
+  * test_kernels_namespace inventory red -- FIXED by d1c4438c73 (post-
+    178, rides with entry 170): #43370's fused_qwen4_direct_decode_conv
+    never got a KernelSpec; test_reclassified_public_entry_points_are_
+    inventoried red proven pre-existing at 1785187981. Kernels dir now
+    169P under CVD=9.
 
   * Run test files PER FILE, the way CI does -- one process over a directory
     lets published/reset contexts leak between files in both directions.
@@ -2063,6 +2119,12 @@ REBUILDING FROM SCRATCH
   # section), then entries 92-95. Then git merge f209e67767 (resolutions
   # in UPSTREAM MERGE #2) and entries 96-117 (cherry-pick -x the listed
   # upstream shas; local entries from this branch), then 118-135 (local),
-  # then 136-155 (diffusion batch).
+  # then 136-155 (diffusion batch). Then 156 + UPSTREAM MERGE #3 (main @
+  # 87845cda2b merged as c0ace50b68 + follow-up b5f59fda03 -- see that
+  # section), then in batch order A(157-161, docs e5e47e56d1) B(162-166,
+  # docs c12638ef94) C(167-171, docs d0ec9a7ef3) D+172-178 (docs
+  # 1785187981 + 344518e658) -- cherry-pick -x the plain entry shas;
+  # SQUASH/PORTED entries per their recorded net-diff method; the
+  # d1c4438c73 kernels-inventory fix rides with entry 170.
   # Post-build CPU battery (54 files) expectations are in CAVEATS/known-
   # failing; anything NOT on that list is a real regression.
