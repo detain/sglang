@@ -303,8 +303,15 @@ def test_eager_validates_before_warmup(monkeypatch):
     mr.spec_algorithm.is_none.return_value = True
     mr.model_config.is_encoder_decoder = False
     mr.model.validate_runner_support = validate
+    # num_dp_ranks is read by BaseRunner.__init__ since upstream #41818
+    # (a9c97c9f69), landed in merge #3; dp_size=1 -> 1 rank.
     parallel = SimpleNamespace(
-        tp_size=1, dp_size=1, pp_size=1, attn_tp_size=1, attn_tp_rank=0
+        tp_size=1,
+        dp_size=1,
+        num_dp_ranks=1,
+        pp_size=1,
+        attn_tp_size=1,
+        attn_tp_rank=0,
     )
     # eager_runner no longer imports get_parallel (#40638); patch where read.
     for module in (br, er):
