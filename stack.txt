@@ -1,6 +1,6 @@
 # stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
 #
-# STACK: qwennext-stack-171-2026-10-10
+# STACK: qwennext-stack-177-2026-10-10
 #   main+pr36787+pr37275+pr38144+pr38209+pr36644+pr39862+pr39809+pr39893+local_hicache_qsa_fixes
 #   +pr39614+pr39978+pr40002+pr39065+pr40501+pr40175+pr40362+pr39391+pr37061+pr39333+pr33778
 #   +pr38977+pr39977+pr40480+pr39880+pr40235+pr39807+cpu-triage+boot-fix+plan_updates_perf
@@ -20,6 +20,13 @@
 #   backing-file reuse, #42701 write-through D2H fence, #43387 Mamba
 #   spec-truncation checkpoint donation, #43370 PLE hot-path fusion,
 #   + local stale-test-stub fix).
+#   10-10d added entries 172-177: batch D (Max-Q MoE JSON mirror for the
+#   venv's new triton 3.8.0, #43392 Qwen3-VL sub-config objects, #43363
+#   CUTLASS-MoE autotune prefill range, #43356 NVFP4 spec-decode graphs
+#   (inert on fp8_e4m3 KV), #42736 prefill-sized FlashInfer autotune now
+#   DEFAULT-ON -- behavior change next restart --, #42767* QSA prefill-chunk
+#   page alignment ported to the prefix_len/extend_end API; #43247 skipped,
+#   see NOT INCLUDED).
 #   10-08 added entries
 #   136-155: 20 diffusion PRs (4 more evaluated-skipped, see NOT INCLUDED).
 #   09-28 added 22 entries: 9 new PR blocks, new head
@@ -1548,6 +1555,94 @@ STACK, IN BUILD ORDER (bottom first)
       # neither file) => stale stack-test stub, not a lost delta. Stub gets
       # num_dp_ranks=1 (faithful for dp_size=1); file 37/37 green.
 
+        172. dd48c60644  LOCAL  configs(moe): mirror Max-Q tuned JSONs into triton_3_8_0/
+      # Prod venv (/root/sglang/.venv -- NOT .venv2, which is still triton
+      # 3.7.1/FI 0.6.18) rebuilt to triton 3.8.0; live log showed fallback
+      # warnings for E=128,N=640 Max-Q up+down. Copied ALL 5 Max-Q JSONs
+      # (E=64/128/256; E=128 & E=256 have _down too, E=64 up-only) verbatim
+      # from triton_3_7_1/; each parses. INTERIM ONLY: values are 3.7.1-tuned
+      # -- retune on a GPU window is owed (entry 27 protocol).
+
+        173. 443d9aa9c0  PR #43392  preserve Qwen3-VL sub-config objects
+      # Qwen3VLConfig/Qwen3VLMoeConfig.__init__ silently LEFT text_config/
+      # vision_config UNSET when passed as objects (the from_dict path).
+      # Clean cherry-pick -x; no local deltas on qwen3_vl.py. DIRECTLY
+      # RELEVANT: prod passes nested {"text_config":{...}} --json-model-
+      # override-args (see cmdline); get_config's recursion already kept the
+      # sub-config a PretrainedConfig, but any from_dict/to_dict roundtrip
+      # after an update() hit the unset-hole. Verified CPU-side: yarn
+      # rope_parameters survives as object through update + to_dict/from_dict
+      # + direct-object __init__ for both classes. Shipped test 1P+6sub.
+
+        174. db3486baad  PR #43363  CUTLASS MoE autotune range -> prefill chunks
+      # Both cutlass_fused_moe call sites now pass ONE per-server
+      # tune_max_num_tokens = min(prefill-chunk * attn-dp, FlashInfer default
+      # 8192) instead of next_power_of_2(M) per call, so startup autotune
+      # covers prefill-sized buckets (prod: fp8_gemm_backend=cutlass,
+      # chunked 16384 -> bucket 8192 tuned top). PD-decode servers keep the
+      # per-call value. Conflict: runtime_context import union only (kept our
+      # breakable _is_stream_capturing import); local capturing deltas intact.
+      # FI version gate: needs flashinfer.fused_moe.utils
+      # get_hybrid_num_tokens_buckets/map_to_hybrid_bucket -- present in BOTH
+      # 0.6.18 (.venv2) and prod 0.7.0.post1; default 8192 verified on both.
+      # Tests: swiglu_params+tune 16P+80sub, placement battery green;
+      # mxfp4 sm90/sm120 files collect-only (4 tests) --
+      # test_dsv4_sm120_load_contract FAILS under CVD=9 because
+      # is_flashinfer_available() is False w/o GPU: PRE-EXISTING env gate,
+      # file untouched by the PR.
+
+        175. 76e6cd0770  PR #43356  FlashInfer NVFP4 spec-decode CUDA-graph-safe
+      # Clean pick despite 7/24/20 local commits on the touched files
+      # (flashinfer_backend/memory_pool/pool_configurator) -- all hunks
+      # landed in unmodified context. INERT on prod: gated on
+      # is_float4_e2m1fn_x2(kv_cache_dtype) (we run fp8_e4m3) + adds
+      # kernels/ops/quantization/nvfp4_kv_cache.py dequant workspace for
+      # graph replay. Tests: flashinfer_nvfp4_speculative 6P; nvfp4 kernel +
+      # pool_configurator battery 13F/60P/6S -- ALL 13 fails are the PR's NEW
+      # fp4_eagle tests hitting is_cuda()==False under CVD=9 inside
+      # is_float4_e2m1fn_x2; reproduced IDENTICALLY on the pure upstream
+      # commit in a throwaway worktree => env-gated, not a stack interaction.
+
+        176. 575ebf692b  PR #42736*  prefill-sized FlashInfer autotune by DEFAULT
+      # **BEHAVIOR CHANGE NEXT RESTART**: SGLANG_FLASHINFER_AUTOTUNE_EXTEND
+      # (perf-audit tier-2 flip) DEPRECATED; the EXTEND-shaped dummy at
+      # max_prefill_tokens now ALWAYS runs at warmup unless
+      # --disable-flashinfer-autotune. Prod: chunked 16384 + prefill CUDA
+      # graphs disabled => startup pays one 16384-token dummy forward per
+      # rank + longer autotune; runtime prefill kernels get prefill-sized
+      # buckets (same theme as #43363). SQUASHED (net diff vs true merge-base
+      # 08fc290f48): branch was mid-rebased -- its 11 --no-merges commits
+      # predate the author's main-merges that folded #42044's
+      # prepare_cp_inputs CP union into the NEW runner_utils/cp_extend.py
+      # (runner_owns_cp_boundary); sequential replay would have silently
+      # dropped that resolution (lives only in merge commits). CP eager path
+      # now: elif cp_active and runner_owns_cp_boundary(model) ->
+      # cp_extend_forward -- our gate + dispatch semantics preserved.
+      # Also: pooled page-table refresh fix for target-verify graph replay
+      # (f3f34f9de9), EXTEND dummy align/bound + linear-attn/sparse caps
+      # (b90892e0b2/b1f4e1e4dc), SpeculativeAlgorithm.dummy-extend method
+      # (92f737f7a5), spec_info/registry helpers. Environ conflict resolved
+      # to the PR tip's final note (b12d051f9e). Empty CI noop 521fc6846e
+      # skipped. Tests: autotune_sync+fp8_blockwise 8P+18skip (GPU gates);
+      # qwen4_exp_ple_staging 37/37 (base_runner/eager_runner touched);
+      # imports OK. GPU-window debt: measure new startup cost + prefill
+      # kernel picks.
+
+        177. 0252ddac9b  PR #42767*  [AMD->port] align unfinished prefill chunks
+      # Ported (API drift: len(req.prefix_indices) -> req.prefix_len; tests
+      # extend_range/set_extend_range -> (prefix_len, extend_end) asserts).
+      # NOT hip-gated: CUDA-visible by design but DORMANT unless the KV pool
+      # exposes prefill_chunk_alignment>1 (default 1 = exact old behavior).
+      # ONLY QSATokenToKVPool does (=page_size) -- i.e. the compression-group
+      # invariant of entries 118/121/125, now enforced at truncation time
+      # too: exact-fill fresh admission, continuation (add_chunked_req
+      # truncated path; new_len<=0 defers the req) and the rem_chunk
+      # Chunked-prefill site. LCM with truncation_align_size + our
+      # kv_shard_granule. Prod effect next restart: chunks never end
+      # mid-page-64/128 group; tiny budgets (<alignment) mid-request defer
+      # one step instead of splitting. Full test_prefill_adder battery
+      # 51P+48sub green (all 118-125 alignment invariants included).
+
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
 ==============================================================================
@@ -1578,6 +1673,24 @@ EVALUATED AND DELIBERATELY NOT INCLUDED
       with our HiCache pair); #39721 rewrites get_prefill_mqa_inputs against
       the pre-#38209 loop (semantic conflict); 1/4-3/4 alone are dead code.
       Local branches pr39721..pr39724 kept.
+
+  Batch D 2026-10-10 -- evaluated, NOT included:
+  PR #43247 (FlashInfer decode access for NVFP4 KV + Gemma4 text config,
+      24 commits / ~22 files) -- SKIPPED. Rationale: (1) the NVFP4-KV family
+      (Float4_e2m1fn_x2 buffers, SWAKVPool wiring, flashinfer/trtllm NVFP4
+      accessors, dequant-workspace cell math) is inert for us -- prod KV is
+      fp8_e4m3 and nothing selects nvfp4; (2) the Gemma4 pieces are
+      model-gated (56f5c31877 only guards an attribute inside
+      _apply_gemma4_attention_overrides -- NOT the #43392-style nested
+      sub-config class, which we applied standalone as entry 173; e52738c898
+      gemma4 model-hook allowlist; d9c1551b0d gemma4_mm.py); (3) the two
+      speculator-config fixes target AutoConfig-failure and
+      transformer_layer_config in dflash speculators -- we run NEXTN;
+      (4) surface area lands on flashinfer_backend/memory_pool/
+      pool_configurator where our stack carries heavy local deltas (7/24/20
+      commits) -- risk asymmetry is bad for dead-for-us code. Re-evaluate if
+      NVFP4 KV ever becomes a candidate (perf-audit listed bf16-KV as skip,
+      fp4-KV never proposed).
 
   PR #39807 -- NO LONGER HERE: restored 2026-09-21 as entries 63-65 (see
       STACK section). Its earlier "dropped" listing in this file was a
