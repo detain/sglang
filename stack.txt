@@ -1,6 +1,6 @@
 # stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
 #
-# STACK: qwennext-stack-166-2026-10-10
+# STACK: qwennext-stack-171-2026-10-10
 #   main+pr36787+pr37275+pr38144+pr38209+pr36644+pr39862+pr39809+pr39893+local_hicache_qsa_fixes
 #   +pr39614+pr39978+pr40002+pr39065+pr40501+pr40175+pr40362+pr39391+pr37061+pr39333+pr33778
 #   +pr38977+pr39977+pr40480+pr39880+pr40235+pr39807+cpu-triage+boot-fix+plan_updates_perf
@@ -10,12 +10,16 @@
 #   +diffusion-batch-2026-10-08(pr27673+pr28690*+pr32513+pr32550*+pr33036*+pr33588*
 #    +pr36399+pr36767+pr37460*+pr38650+pr39212+pr40493+pr40588+pr40755+pr41340*
 #    +pr41944+pr42249+pr42928*+pr43028*+pr43064*)
-#   (entries 1-166; *=squash/ported, see commit messages. 10-10 added
+#   (entries 1-171; *=squash/ported, see commit messages. 10-10 added
 #   entries 157-161: parser batch A (Qwen3-Coder tool-call fixes + sampling
 #   upper bounds), on top of upstream merge #3 (see synced). 10-10b added
 #   entries 162-166: SM120 batch B (#42863 PCIe-IPC vocab gathers, #42566
 #   block-FP8 MoE TP refine + UE8M0, #42451 MiMo prefill gate, #42654
 #   NVFP4 routed deferred finalize, #42087 Qwen3.8 batch invariance).
+#   10-10c added entries 167-171: Qwen4/HiCache batch C (#42400 PLE
+#   backing-file reuse, #42701 write-through D2H fence, #43387 Mamba
+#   spec-truncation checkpoint donation, #43370 PLE hot-path fusion,
+#   + local stale-test-stub fix).
 #   10-08 added entries
 #   136-155: 20 diffusion PRs (4 more evaluated-skipped, see NOT INCLUDED).
 #   09-28 added 22 entries: 9 new PR blocks, new head
@@ -23,7 +27,7 @@
 #   make --enable-mixed-chunk safe and fix the QSA verify ring collision.
 #   * = picked with local modifications, see the entries)
 # branch : qwennext-stack
-# tip    : 84db4beb40   (the stack.txt commit sits above it)
+# tip    : 3d1e6881e7   (the stack.txt commit sits above it)
 # base   : upstream sgl-project/sglang main @ 7ad55e4386 ([HiCache] TMA-staged
 #          host<->device KV transfer kernel (sm_90+) (#40278), 2026-09-21)
 # synced : upstream main @ f209e67767 (#39643, 2026-09-28) MERGED IN as
@@ -34,7 +38,19 @@
 #          as c0ace50b68 on top of the entry-156 header sync c4925776ae,
 #          follow-up b5f59fda03 (stale-test/dead-code fallout); resolutions
 #          in the merge commit messages.
-# updated: 2026-10-10 (10-10b: SM120 batch B entries 162-166 -- #42863
+# updated: 2026-10-10 (10-10c: Qwen4/HiCache batch C entries 167-171 --
+#          #42400 PLE backing-file reuse (only environ.py context
+#          conflict), #42701 write-through D2H fence (composes with merge
+#          #3's degrade-always + bounded-join resolutions in the same
+#          file), #43387 Mamba spec-truncation checkpoint donation
+#          (coexists with b5f59fda03 freed_rows dedup), #43370 PLE
+#          hot-path fusion (+2376 lines, landed in current kernels/ops
+#          layout, JIT registry entries verified) -- Triton kernel
+#          numerics = GPU window debt, not triggered here; local entry
+#          171 closes the owed test_qwen4_exp_ple_staging red (stale
+#          parallel stub since #41818, NOT a lost delta). LIVE ONLY AFTER
+#          PROD RESTART (same owed restart as 136-166).
+#          10-10b: SM120 batch B entries 162-166 -- #42863
 #          (inert until flashinfer>=0.7), #42566 (supersedes entry 41's
 #          is_grouped derivation), #42451 (inert for our model), #42654
 #          (unreachable on SM120), #42087 (batch-invariant mode only).
@@ -1471,6 +1487,66 @@ STACK, IN BUILD ORDER (bottom first)
       # accelerator (module-level set_batch_invariant_mode) -- environmental,
       # predates the PR. Batch-invariance numerics = GPU window, same owed
       # restart as 136-161.
+
+  Qwen4/HiCache batch C (2026-10-10, PLE file reuse + write-through fence + Mamba spec checkpoints + PLE fusion):
+        167. 7ec0355620  PR #42400  skip PLE backing-file rewrite when on-disk table matches
+      # [Qwen4-Exp] Reuse an existing file-backed PLE table when it already
+      # matches the requested spec. Cherry-pick -x; qwen4_exp.py (rebuilt in
+      # merge #3 + our stage-boundary/PLE deltas) and the new test applied
+      # clean. ONLY conflict in environ.py: PR-base context referenced
+      # SGLANG_QWEN4_PLE_FILE_SKIP_DEVICE_CHECK, an upstream-only env our
+      # tree never had (qwen4_exp_ple_table.py on main; PR code does not
+      # touch it) -- dropped. Adds SGLANG_QWEN4_PLE_FILE_REUSE (default on)
+      # + SGLANG_QWEN4_PLE_FILE_REUSE_WINDOWS. test_qwen4_exp_ple_reuse 10P
+      # (CVD=9).
+        168. 44e8d90d98  PR #42701  fence write-through D2H behind load_fence_stream
+      # [HiCache] start_writing now waits device_to_host_stream on
+      # load_fence_stream before submit -- same fence start_loading uses --
+      # so a write-through copy can no longer snapshot host KV mid-forward
+      # (stale-prefix bug). managers/cache_controller.py had OUR merge #3
+      # resolutions (degrade-always #39830, bounded join #40312, adopted
+      # try/finally ack); pick applied clean and verified additive: fence is
+      # a no-op on an idle stream, reset() does not drop load_fence_stream.
+      # HybridCacheController (prod write() path) inherits the fenced
+      # start_writing; side-pool/mamba transfers covered too. Only
+      # start_writing definition in tree. test_hicache_staged_write_back_
+      # dispatch 21P+1skip.
+        169. 87a5d76cec  PR #43387  Mamba no_buffer: donate checkpoint instead of misaligned live state (2 commits -> also df59bff6e0)
+      # [Bugfix] After spec-truncation the live mamba state can lag the
+      # committed KV length; finished() now sets
+      # req.skip_radix_cache_insert=True (via new _mamba_can_cache_finished_
+      # req) when live_state_len != owned_kv_len() so the radix insert takes
+      # the donated checkpoint instead -- both consumers (mem_cache/common.py
+      # :259/:400) exist in-tree (#42270 gate landed). Coexists with our
+      # b5f59fda03 freed_rows dedup (different file + mechanism; helper
+      # early-returns True for ping-pong track buffer #94 path and non-spec).
+      # Shipped test_batch_result_processor_spec_grammar 8P+11sub; commit 2
+      # deletes test/manual repro.
+        170. 85f602e2c6  PR #43370  fuse Qwen3.8-Flash-Next PLE prefill/decode hot paths (2 commits -> also 516178025d)
+      # Perf(+2376): Triton fused_qwen4_varlen_conv under kernels/ops/mamba
+      # + packed-ngram hash/update under kernels/ops/embeddings -- already
+      # the CURRENT RFC layout (upstream #41243 move landed in merge #3),
+      # no relocation needed; JIT registry entries verified via
+      # sglang.kernels.registry (has()/get()), compile NOT triggered (CPUs
+      # only). qwen4_exp.py diverged 860 lines from PR base (our host-
+      # staging prepare_rows/prepare_ple_rows plumbing) -- commit 1 import
+      # conflict resolved, commit 2 two UNION resolutions keeping OUR
+      # _breakable_prepare_ple_batch body shape + adding the PR's
+      # use_packed_ngram kwarg at signature and both call sites. Our
+      # mamba/__init__.py additionally registers #43013's
+      # fill_track_conv_indices (PR base predates it) -- kept.
+      # test_prefill_cuda_graph_runner_helpers 20P+10sub;
+      # test_qwen4_ngram/short_conv/ple_projection 5P+27skip -- the skips
+      # are Triton-compile GPU-window debt. qwen4_exp.py ruff format drift
+      # (1510-1515/3123, noted at entry 167) fixed by the PR's own reformat.
+        171. 3d1e6881e7  LOCAL  fix: PLE-staging test parallel stub missing num_dp_ranks
+      # Owed red test_eager_validates_before_warmup: root cause NOT the
+      # _eager_max_bs==2 assert (passes unchanged) -- SimpleNamespace stub
+      # died in BaseRunner.__init__ reading get_parallel().num_dp_ranks,
+      # added by upstream #41818 (a9c97c9f69) via merge #3. Verified
+      # pre-existing at b5f59fda03 via throwaway worktree (batch C touched
+      # neither file) => stale stack-test stub, not a lost delta. Stub gets
+      # num_dp_ranks=1 (faithful for dp_size=1); file 37/37 green.
 
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
