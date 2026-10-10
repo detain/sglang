@@ -1,6 +1,6 @@
 # stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
 #
-# STACK: qwennext-stack-161-2026-10-10
+# STACK: qwennext-stack-166-2026-10-10
 #   main+pr36787+pr37275+pr38144+pr38209+pr36644+pr39862+pr39809+pr39893+local_hicache_qsa_fixes
 #   +pr39614+pr39978+pr40002+pr39065+pr40501+pr40175+pr40362+pr39391+pr37061+pr39333+pr33778
 #   +pr38977+pr39977+pr40480+pr39880+pr40235+pr39807+cpu-triage+boot-fix+plan_updates_perf
@@ -10,9 +10,12 @@
 #   +diffusion-batch-2026-10-08(pr27673+pr28690*+pr32513+pr32550*+pr33036*+pr33588*
 #    +pr36399+pr36767+pr37460*+pr38650+pr39212+pr40493+pr40588+pr40755+pr41340*
 #    +pr41944+pr42249+pr42928*+pr43028*+pr43064*)
-#   (entries 1-161; *=squash/ported, see commit messages. 10-10 added
+#   (entries 1-166; *=squash/ported, see commit messages. 10-10 added
 #   entries 157-161: parser batch A (Qwen3-Coder tool-call fixes + sampling
-#   upper bounds), on top of upstream merge #3 (see synced).
+#   upper bounds), on top of upstream merge #3 (see synced). 10-10b added
+#   entries 162-166: SM120 batch B (#42863 PCIe-IPC vocab gathers, #42566
+#   block-FP8 MoE TP refine + UE8M0, #42451 MiMo prefill gate, #42654
+#   NVFP4 routed deferred finalize, #42087 Qwen3.8 batch invariance).
 #   10-08 added entries
 #   136-155: 20 diffusion PRs (4 more evaluated-skipped, see NOT INCLUDED).
 #   09-28 added 22 entries: 9 new PR blocks, new head
@@ -20,7 +23,7 @@
 #   make --enable-mixed-chunk safe and fix the QSA verify ring collision.
 #   * = picked with local modifications, see the entries)
 # branch : qwennext-stack
-# tip    : 12e7933f68   (the stack.txt commit sits above it)
+# tip    : 84db4beb40   (the stack.txt commit sits above it)
 # base   : upstream sgl-project/sglang main @ 7ad55e4386 ([HiCache] TMA-staged
 #          host<->device KV transfer kernel (sm_90+) (#40278), 2026-09-21)
 # synced : upstream main @ f209e67767 (#39643, 2026-09-28) MERGED IN as
@@ -31,7 +34,13 @@
 #          as c0ace50b68 on top of the entry-156 header sync c4925776ae,
 #          follow-up b5f59fda03 (stale-test/dead-code fallout); resolutions
 #          in the merge commit messages.
-# updated: 2026-10-10 (10-10: parser batch A entries 157-161 -- #42448 head
+# updated: 2026-10-10 (10-10b: SM120 batch B entries 162-166 -- #42863
+#          (inert until flashinfer>=0.7), #42566 (supersedes entry 41's
+#          is_grouped derivation), #42451 (inert for our model), #42654
+#          (unreachable on SM120), #42087 (batch-invariant mode only).
+#          Numerics + #42863/#42566 e2e deferred to GPU window; same owed
+#          restart as 136-161.
+#          10-10: parser batch A entries 157-161 -- #42448 head
 #          revision delta, #42050, #42579, #42776 (closed, applied), #42779
 #          (closed, ported); all live only after the same owed restart.
 #          10-08: diffusion PR batch entries 136-155 -- 20 open
@@ -1404,6 +1413,65 @@ STACK, IN BUILD ORDER (bottom first)
       # __new__-manager idiom (exec-config override + joint_head_config).
       # sampling+io_struct 289P; rust cargo test to_scheduler 31P.
 
+  SM120 batch B (2026-10-10, PCIe gathers + block-FP8 MoE + prefill gate + NVFP4 + batch invariance):
+        162. 2667daf917  PR #42863  PCIe-IPC vocab all-gathers for TP4 logits/DSpark (3 commits -> also b603cfa1a9, acbc5b47bf)
+      # [SM120] flashinfer PcieIpcAllGatherWorkspace replaces NCCL vocab-
+      # shard all-gather when: one host, TP4, comm.disabled, and installed
+      # flashinfer exposes the API. Cherry-picks clean; NO local deltas on
+      # the six touched files (logits_processor, deepseek_v4_dspark,
+      # parallel_state, vocab_gather, triton_symm_mem_ag, pcie_ipc_ar).
+      # INERT today: flashinfer 0.6.18 lacks PcieIpcAllGatherWorkspace ->
+      # _can_build_pcie_ipc_gather catches, ranks agree on NCCL (b603cfa1a9
+      # makes that collective-safe); activates with a flashinfer>=0.7 bump
+      # (#40709 territory). Tests: test_pcie_ipc_gather_selection 30P+15sub
+      # (CPU CI); test_pcie_ipc_vocab_gather = 4-GPU CI, deferred.
+        163. a77d1dfbf5  PR #42566  block-FP8 MoE TP-shard scale refine + SM120 UE8M0 requant (3 commits -> also 18d738d8cb, 7ddca23aac)
+      # Collides with entry 41 (pick of OPEN #39063, same SM120 UE8M0 fix
+      # via auto-derived is_grouped): PR's explicit grouped_moe= kwarg wins,
+      # is_grouped removed. fp8.py Fp8MoEMethod passes grouped_moe=True;
+      # dense callers unchanged. fp8_utils.py hand-merged -- NEVER
+      # checkout --theirs there (first attempt clobbered the 3642490413
+      # reshape-materialize fix + gfx950 imports; redone markers-only; mode
+      # kept 644). Cookbook keeps OUR PLE bullet + THEIRS MTP-experts bullet.
+      # Fused-MoE config interaction: new w2_block_shape kwarg defaults
+      # None; when set down_config BLOCK_SIZE_K=min(cfg, refined w2 block)
+      # -- only the TP-shard-splits-128-block case (MTP experts 640
+      # intermediate: TP2->320, TP4->160); tuned up-GEMM JSONs untouched.
+      # Tests: test_deepgemm_ue8m0_requant 8P (CPU CI);
+      # test_fp8_moe_tp_block_refine = CUDA CI, deferred.
+        164. 99bfa961da  PR #42451  RTX PRO 6000 long-FP8 asymmetric prefill launch policy
+      # Title says tuning JSONs; content = extend_attention.py gate only.
+      # (128,128,warps8) override fires ONLY for the MiMo TP2 global-attn
+      # signature (Lq=Lk=192, Lv=128, 32q/2kv, FP8 KV, bf16 qkv, page1,
+      # min prefix>=8192, not capturing) -> INERT for Qwen3.8-Flash-Next
+      # (16q heads/256 dim). Adds extend_prefix_lens_cpu kwarg (passed by
+      # triton_backend). Test test_sm120_mimo_extend = 1-gpu-large CI,
+      # deferred; _is_rtx_pro_6000 short-circuits false on CVD=9 verified.
+        165. 2068d31eb8  PR #42654  deferred finalize for NVFP4 routed TRT-LLM runner (squashed)
+      # Union resolution: kept entry 0eb24e7d5b's hidden_pad==0 guard
+      # alongside use_routed_topk/format_is_bypassed. deepseek_v2.py: PR
+      # base pre-dates #42245 (in-tree via merge #3) which REMOVED the
+      # fused-finalize block here -- kept OUR shape, inserted only the PR's
+      # supports_deferred_finalize ternary. Gating: needs
+      # flashinfer_trtllm_routed MoE runner (next9 prod runs
+      # triton/deep_gemm); mm_fp4 trtllm kernels cannot JIT-build on SM120
+      # (perf-audit) -> path unreachable here; no shared default changed.
+      # Test: test_deepseek_v4_amd_tp4 (AMD CI) 12 skip here.
+        166. 84db4beb40  PR #42087  batch-invariance fixes in Qwen3.8 inference kernels
+      # Every hunk gated by is_batch_invariant_mode_enabled(): aten::mm.out
+      # -> matmul_persistent registration; gate-sigmoid-mul warps cap;
+      # qsa_fast_topk -> flashinfer top_k_ragged_transform (deterministic,
+      # tie_break=SMALL, dsa_graph_safe); indexer skips fast_topk shortcut;
+      # sparse_attn _get_best_config -> fixed (32,4,2). sparse_attn.py
+      # conflicted with local sm120 geometry work (d6624db4a2): kept OUR
+      # (total_q, device_index) signature + lru_cache table lookup, gate
+      # inserted on top; kernel.py/qsa_indexer.py auto-merged clean.
+      # Shipped tests collect (8) but are CUDA-CI -> skip here; pre-existing
+      # test_batch_invariant_ops.py cannot even COLLECT without an
+      # accelerator (module-level set_batch_invariant_mode) -- environmental,
+      # predates the PR. Batch-invariance numerics = GPU window, same owed
+      # restart as 136-161.
+
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
 ==============================================================================
@@ -1685,6 +1753,12 @@ CAVEATS
         collect nothing (rust tree extension not built). Environmental.
       - test_qsa_strided_zero_fill.py: OOMs when a live server holds the GPUs
         (wants 2 GiB free). Environmental.
+      - test_batch_invariant_ops.py: collection ERROR on CPU-only host
+        (module-level set_batch_invariant_mode -> no accelerator). Pre-existing,
+        CUDA/AMD-CI test. Likewise test_fp8_moe_tp_block_refine test_triton
+        fails (no CUDA) and batch-B's shipped tests (test_qsa_determinism,
+        test_qwen_batch_invariance, test_pcie_ipc_vocab_gather,
+        test_sm120_mimo_extend) skip/defer -- all GPU-window items.
 
 ==============================================================================
 REBUILDING FROM SCRATCH
