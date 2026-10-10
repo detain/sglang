@@ -501,8 +501,9 @@ class DefaultPoolConfigurator(MemoryPoolConfigurator):
             # cell_size is already a sum over heterogeneous sub-pools.
             return main_pool_bytes + indexer_bytes * full_pool_ratio
         else:
-            swa_layer_ids = getattr(kvc.layer_info, "swa_attention_layer_ids", [])
-            full_layer_ids = getattr(kvc.layer_info, "full_attention_layer_ids", [])
+            # None when the model has no hybrid SWA split (ModelLayerInfo default).
+            swa_layer_ids = kvc.layer_info.swa_attention_layer_ids or []
+            full_layer_ids = kvc.layer_info.full_attention_layer_ids or []
             swa_count = sum(
                 1
                 for i in swa_layer_ids
