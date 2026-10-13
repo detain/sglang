@@ -3948,6 +3948,12 @@ class DeepseekV4Model(nn.Module):
                 tail_in_graph=tail_in_graph,
                 late_dp_counts=late_dp_counts,
             )
+        # Inside a breakable graph the tail must be the capture-time block; an
+        # eager tail here would be gathered live and silently miss the replay.
+        assert tail is None or tail_in_graph or not is_in_breakable_cuda_graph(), (
+            "decoder SWA bounded replay inside the breakable prefill graph needs the "
+            "graph tail block (scatter_indices); the backend built an eager tail"
+        )
         tail_sentinel = positions.new_zeros((1,)) if tail_in_graph else None
         saved_full = None
         # The HIP defer_post gate excludes residual readers. CUDA materializes

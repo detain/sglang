@@ -364,11 +364,26 @@ def validate_deepseek_v41_features(server_args: ServerArgs) -> None:
                 "both servers use the same block size and target/draft KV layout."
             )
 
+    # Late layers see a per-request tail slice, not the captured prefill shape.
+    # The breakable backend is admitted: the tail switch runs as eager breaks and
+    # the tail is a fixed-capacity row block inside the captured segments.
+    graph_tail = cfg.cuda_graph_config.prefill.backend == Backend.BREAKABLE
     incompatible = (
         (
             "the prefill CUDA graph",
             cfg.cuda_graph_config.prefill.backend
             not in (Backend.DISABLED, Backend.BREAKABLE),
+        ),
+        # Only the CUDA backend builds the graph tail block at capture; the HIP
+        # radix backend would hand the model an eager tail.
+        (
+            "the breakable prefill CUDA graph on a platform other than CUDA",
+            graph_tail and not get_platform().is_cuda,
+        ),
+        # The tail block's metadata is built for a rank's full rows.
+        (
+            "the breakable prefill CUDA graph with prefill context parallelism",
+            graph_tail and (cfg.enable_prefill_cp or cfg.attn_cp_size > 1),
         ),
         (
             "DP attention other than attention TP 1 with supported MoE backends",
