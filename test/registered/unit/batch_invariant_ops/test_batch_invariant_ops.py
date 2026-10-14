@@ -14,14 +14,29 @@ from sglang.test.test_utils import CustomTestCase
 register_cuda_ci(est_time=20, stage="nightly", runner_config="1-gpu-large")
 register_amd_ci(est_time=10, suite="nightly-amd-1-gpu-mi35x", nightly=True)
 
-device_type = getattr(torch.accelerator.current_accelerator(), "type", "cpu")
-torch.set_default_device(device_type)
+# set_batch_invariant_mode() resolves a dispatch backend and raises without an
+# accelerator; doing it at import time made the whole file uncollectable on
+# CPU-only hosts (a CUDA *build* with no visible device still reports
+# current_accelerator()=="cuda", so gate on the same predicate the enable path
+# uses). The ops under test only exist with CUDA/XPU; skip the class instead.
+from sglang.srt.utils.common import get_dispatch_device_backend  # noqa: E402
 
-# Just to get the logging out of the way
-with set_batch_invariant_mode(True):
-    pass
+try:
+    get_dispatch_device_backend()
+    _HAS_ACCELERATOR = True
+except RuntimeError:
+    _HAS_ACCELERATOR = False
+
+if _HAS_ACCELERATOR:
+    device_type = getattr(torch.accelerator.current_accelerator(), "type", "cpu")
+    torch.set_default_device(device_type)
+
+    # Just to get the logging out of the way
+    with set_batch_invariant_mode(True):
+        pass
 
 
+@unittest.skipUnless(_HAS_ACCELERATOR, "batch-invariant ops require an accelerator")
 class TestBatchInvariantOps(CustomTestCase):
     @classmethod
     def setUpClass(cls):
