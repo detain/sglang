@@ -705,24 +705,44 @@ class QwenSparseAttnBackend(AttentionBackend):
         group_end_positions = blocks * compress_ratio + (compress_ratio - 1)
         member_rows = None
         prefix_members = None
+        cross_rows = None
+        cross_prefix_members = None
         if row_token_starts is not None:
-            # member_rows index this forward's packed token rows. An unaligned
-            # prefix (a mixed-chunk decode tail, a private chunk-cache tail)
-            # leaves the first group crossing the extend boundary;
-            # prefix_members records how many leading members must come from
-            # the per-request pending ring.
-            group_starts = blocks * compress_ratio
+            # member_rows index this forward's packed token rows.
             member_rows = torch.where(
                 valid,
-                row_token_starts[rows] + group_starts - prefix_lens[rows],
+                row_token_starts[rows] + blocks * compress_ratio - prefix_lens[rows],
                 torch.zeros_like(blocks),
             )
+            # An unaligned prefix (a mixed-chunk decode tail or a private
+            # chunk-cache tail) can leave a group crossing the extend boundary,
+            # so member_rows points before row_token_starts; prefix_members
+            # counts the leading members that must instead come from the
+            # per-request pending ring.
             prefix_members = torch.where(
                 valid,
-                (prefix_lens[rows] - group_starts).clamp(min=0, max=compress_ratio - 1),
+                (prefix_lens[rows] - blocks * compress_ratio).clamp(
+                    min=0, max=compress_ratio - 1
+                ),
                 torch.zeros_like(blocks),
             )
-        return write_locs, group_end_positions, rows, member_rows, prefix_members
+            # start_blocks is prefix_lens // ratio, so only a row's first entry
+            # can straddle; the cross-prefix pass needs those entries alone, not
+            # the whole plan. A row with no entry borrows another's index and is
+            # zeroed here, which routes it to the inert slot downstream.
+            cross_rows = starts.clamp_max(max(capacity - 1, 0))
+            cross_prefix_members = torch.where(
+                counts > 0, prefix_members[cross_rows], torch.zeros_like(cross_rows)
+            )
+        return (
+            write_locs,
+            group_end_positions,
+            rows,
+            member_rows,
+            prefix_members,
+            cross_rows,
+            cross_prefix_members,
+        )
 
     def _qsa_build_write_plan(
         self,
@@ -918,6 +938,8 @@ class QwenSparseAttnBackend(AttentionBackend):
             group_sequence_ids,
             group_member_rows,
             group_prefix_members,
+            group_cross_rows,
+            group_cross_prefix_members,
         ) = self._qsa_build_write_plan(
             forward_batch=forward_batch,
             speculative_paged=speculative_paged,
@@ -959,13 +981,18 @@ class QwenSparseAttnBackend(AttentionBackend):
                 num_groups=self._pending_ring_groups,
             )
             if write_locs.numel():
+                # Paged eager rows read every planned group from the ring;
+                # extend needs only the one entry per row that can straddle.
+                ring_rows = (
+                    slice(None) if group_member_rows is None else group_cross_rows
+                )
                 if group_member_rows is None or has_cross_prefix_group:
                     # Paged rows read every member from the ring; an extend
                     # group crossing an unaligned prefix reads its leading ones.
                     compress_group_ring_locs = build_group_ring_slots(
                         req_pool_indices=row_req_pool_indices,
-                        group_end_positions=group_positions.long(),
-                        sequence_ids=group_sequence_ids.long(),
+                        group_end_positions=group_positions[ring_rows].long(),
+                        sequence_ids=group_sequence_ids[ring_rows].long(),
                         compress_ratio=self.compress_ratio,
                         num_groups=self._pending_ring_groups,
                     )
@@ -1041,6 +1068,8 @@ class QwenSparseAttnBackend(AttentionBackend):
             compress_sequence_ids=group_sequence_ids,
             compress_member_rows=group_member_rows,
             compress_prefix_members=group_prefix_members,
+            compress_cross_rows=group_cross_rows,
+            compress_cross_prefix_members=group_cross_prefix_members,
             has_cross_prefix_group=has_cross_prefix_group,
             decode_page_table=decode_page_table,
             decode_lengths=decode_lengths,
