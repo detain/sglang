@@ -22,6 +22,18 @@ from sglang.multimodal_gen.runtime.utils.hf_diffusers_utils import maybe_downloa
 
 _RANK_PATCH = "sglang.multimodal_gen.runtime.pipelines_core.lora.pipeline.dist.get_rank"
 
+# BaseLayerWithLoRA.merge_lora_weights() hops the materialized weight to
+# get_local_torch_device() before merging (production contract: serve on an
+# accelerator, CPU-offloaded weights are staged up). A CUDA *build* with no
+# visible device (e.g. CUDA_VISIBLE_DEVICES pointing at a missing card) makes
+# that hop raise "No CUDA GPUs are available"; only genuinely device-less
+# torch wheels take the CPU platform here. These asserts are therefore
+# CUDA-true-runner tests and self-skip otherwise.
+_REQUIRES_VISIBLE_CUDA = pytest.mark.skipif(
+    not torch.cuda.is_available(),
+    reason="lora merge path requires a visible CUDA device (get_local_torch_device)",
+)
+
 
 class _TestLoRAPipeline(LoRAPipeline):
     def create_pipeline_stages(self, server_args):
@@ -58,6 +70,7 @@ def _make_pipeline(layer: BaseLayerWithLoRA) -> _TestLoRAPipeline:
     return pipeline
 
 
+@_REQUIRES_VISIBLE_CUDA
 def test_worker_metrics_count_individual_adapters_in_multi_lora():
     pipeline = _make_pipeline(_make_layer())
     pipeline._temporarily_disable_offload = lambda *args, **kwargs: nullcontext([])
@@ -239,6 +252,7 @@ def test_dynamic_lora_reactivates_cached_layers_without_weight_update_context():
     assert layer.lora_B is first_lora_b
 
 
+@_REQUIRES_VISIBLE_CUDA
 def test_merged_lora_still_uses_weight_update_context():
     layer = _make_layer()
     pipeline = _make_pipeline(layer)
@@ -356,6 +370,7 @@ def test_lora_exact_file_url_needs_no_weight_name(tmp_path):
     ]
 
 
+@_REQUIRES_VISIBLE_CUDA
 @pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
 @pytest.mark.parametrize("offloaded", [False, True])
 def test_view_merge_restores_exact_base_after_strength_changes(dtype, offloaded):
@@ -389,6 +404,7 @@ def test_view_merge_restores_exact_base_after_strength_changes(dtype, offloaded)
     assert not layer.merged
 
 
+@_REQUIRES_VISIBLE_CUDA
 def test_cached_merge_restores_untouched_base_view():
     base = torch.nn.Linear(4, 4, bias=False, dtype=torch.bfloat16)
     original = base.weight.detach().clone()
