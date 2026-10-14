@@ -566,6 +566,10 @@ def _decode_reference_video_shared(command: list[str]) -> tuple[Any, int]:
         group.world_size <= 1
         or not sys.platform.startswith("linux")
         or not os.path.isdir("/proc/self/fd")
+        # Some CPython builds have no os.memfd_create at all; that attribute
+        # miss raises AttributeError, which the leader's OSError fallback
+        # below does not catch, so gate it here where every rank agrees.
+        or not hasattr(os, "memfd_create")
     ):
         return _decode_reference_video_local(command)
 

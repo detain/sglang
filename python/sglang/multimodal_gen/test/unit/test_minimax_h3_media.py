@@ -173,6 +173,10 @@ def test_ffprobe_falls_back_when_stream_side_data_is_unknown(monkeypatch):
     assert "stream_side_data" not in material_io._ffprobe_entries
 
 
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux") or not hasattr(os, "memfd_create"),
+    reason="requires Linux memfd (os.memfd_create)",
+)
 def test_video_transform_runs_once_and_qwen_samples_shared_rgb(monkeypatch):
     expected = np.arange(25 * 4 * 6 * 3, dtype=np.uint8).reshape(25, 4, 6, 3)
     commands = []
@@ -217,7 +221,10 @@ def test_video_transform_runs_once_and_qwen_samples_shared_rgb(monkeypatch):
     assert sampled["block_timestamps"] == [0.25, 1.0]
 
 
-@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="requires Linux memfd")
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux") or not hasattr(os, "memfd_create"),
+    reason="requires Linux memfd (os.memfd_create)",
+)
 def test_video_transform_can_share_one_host_decode(monkeypatch):
     expected = np.arange(25 * 4 * 6 * 3, dtype=np.uint8).reshape(25, 4, 6, 3)
     commands = []
@@ -261,7 +268,10 @@ def test_video_transform_can_share_one_host_decode(monkeypatch):
     assert commands[0][-1].startswith("pipe:")
 
 
-@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="requires Linux memfd")
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux") or not hasattr(os, "memfd_create"),
+    reason="requires Linux memfd (os.memfd_create)",
+)
 def test_shared_video_transform_falls_back_when_proc_fd_is_blocked(monkeypatch):
     expected = np.arange(25 * 4 * 6 * 3, dtype=np.uint8).reshape(25, 4, 6, 3)
     commands = []
@@ -306,7 +316,10 @@ def test_shared_video_transform_falls_back_when_proc_fd_is_blocked(monkeypatch):
     assert len(commands) == 2
 
 
-@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="requires Linux memfd")
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux") or not hasattr(os, "memfd_create"),
+    reason="requires Linux memfd (os.memfd_create)",
+)
 def test_shared_video_transform_propagates_any_host_decode_failure(monkeypatch):
     class FakeGroup:
         world_size = 4
