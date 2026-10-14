@@ -12,6 +12,7 @@ from sglang.srt.runtime_context import get_context
 
 BENCHMARK_DIR = Path(__file__).parents[5] / "benchmark" / "kernels" / "fused_moe_triton"
 sys.path.insert(0, str(BENCHMARK_DIR))
+
 import common_utils  # noqa: E402
 
 
@@ -82,6 +83,7 @@ def test_rtx_pro_6000_server_edition_configs_resolve_for_current_triton_runtime(
         for tile in config.values():
             assert tile["BLOCK_SIZE_M"] > 0
             assert tile["BLOCK_SIZE_N"] > 0
+
 
 
 if __name__ == "__main__":

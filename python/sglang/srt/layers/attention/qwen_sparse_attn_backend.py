@@ -39,6 +39,7 @@ from sglang.srt.layers.attention.qsa.metadata import (
 from sglang.srt.layers.attention.qsa.sparse_attn import (
     _resolve_chunk_prefill_kv_source,
     is_fp8_kv_dtype,
+    pack_qsa_prefill_kv,
     qsa_sparse_decode_triton,
     qwen_sparse_fa2_cu_seqlens_triton,
     qwen_sparse_kv_extraction_compact_triton,
@@ -1841,6 +1842,7 @@ class QwenSparseAttnBackend(AttentionBackend):
         k_buffer = pool.get_key_buffer(layer.layer_id)
         v_buffer = pool.get_value_buffer(layer.layer_id)
         scale_kwargs = {}
+        k_scale = v_scale = 1.0
         if is_fp8_kv_dtype(k_buffer.dtype):
             k_scale, v_scale = self._kv_descales(layer, k_buffer.dtype)
             scale_kwargs = {"k_scale": k_scale, "v_scale": v_scale}
@@ -1868,18 +1870,44 @@ class QwenSparseAttnBackend(AttentionBackend):
                 max_q=shared["max_q"],
             )
             return self._pad_extend_output(output, num_output_rows)
-        if "gather_index" not in shared:
+        if "sequence_lens_tensor" not in shared:
             self._build_chunk_prefill_shared(
-                shared, forward_batch, q.device, need_gather=True
+                shared, forward_batch, q.device, need_gather=False
             )
-        gather_index = shared["gather_index"]
         sequence_lens_tensor = shared["sequence_lens_tensor"]
         cu_seqlens_k = shared["cu_seqlens_k"]
         max_q = shared["max_q"]
+        # Upstream #41933's fused pack kernel gathers the pool rows and writes
+        # them in Q's dtype in a single pass (device-only: no host sync, so it
+        # is capture-safe).  With an FP8 pool it plain-casts without applying
+        # the descale -- correct exactly when the descales are unity (the QSA
+        # writer stores unscaled K/V).  For scaled FP8 pools keep the
+        # gather-index path, which descales inside the attention kernel.
+        use_pack = not scale_kwargs or (k_scale == 1.0 and v_scale == 1.0)
+        if use_pack:
+            packed_k, packed_v = pack_qsa_prefill_kv(
+                k=k_buffer,
+                v=v_buffer,
+                req_to_token=self.req_to_token_pool.req_to_token,
+                req_indices=forward_batch.req_pool_indices,
+                cu_k=cu_seqlens_k,
+                total_k=sum(sequence_lens),
+                max_k=max(sequence_lens, default=1),
+                output_dtype=q.dtype,
+            )
+            gathered_k, gathered_v = packed_k, packed_v
+        else:
+            if "gather_index" not in shared:
+                self._build_chunk_prefill_shared(
+                    shared, forward_batch, q.device, need_gather=True
+                )
+            gather_index = shared["gather_index"]
+            gathered_k = k_buffer.index_select(0, gather_index)
+            gathered_v = v_buffer.index_select(0, gather_index)
         output = sparse_gqa_fwd_interface_triton_ck(
             q.contiguous(),
-            k_buffer.index_select(0, gather_index),
-            v_buffer.index_select(0, gather_index),
+            gathered_k,
+            gathered_v,
             topk_indices,
             cu_seqlens_q,
             cu_seqlens_k,
@@ -2102,9 +2130,7 @@ class QwenSparseAttnBackend(AttentionBackend):
                     k_prefix = k_buffer.index_select(0, slots).to(k_full.dtype)
                     v_prefix = v_buffer.index_select(0, slots).to(v_full.dtype)
                     if is_fp8_kv_dtype(k_buffer.dtype):
-                        k_scale, v_scale = self._kv_descales(
-                            layer, k_buffer.dtype
-                        )
+                        k_scale, v_scale = self._kv_descales(layer, k_buffer.dtype)
                         k_prefix = k_prefix * k_scale
                         v_prefix = v_prefix * v_scale
                     k_parts.append(k_prefix)
@@ -2160,9 +2186,11 @@ class QwenSparseAttnBackend(AttentionBackend):
         buffers = self._fa2_scratch.get(key)
         if buffers is None or buffers[0].shape[0] < capacity:
             shape = (capacity, num_kv_heads, head_dim)
+            # Zeroed once: a row is packed only up to its last visible page, so
+            # bytes past it are never written and must not be NaN garbage.
             buffers = (
-                torch.empty(shape, dtype=dtype, device=device),
-                torch.empty(shape, dtype=dtype, device=device),
+                torch.zeros(shape, dtype=dtype, device=device),
+                torch.zeros(shape, dtype=dtype, device=device),
             )
             self._fa2_scratch[key] = buffers
         return buffers[0][:capacity], buffers[1][:capacity]
@@ -2287,6 +2315,8 @@ class QwenSparseAttnBackend(AttentionBackend):
                     if compress_ratio > 1
                     else None
                 ),
+                # trtllm_decode reads each row only up to valid_counts.
+                visible_page_size=page,
             )
         else:
             qwen_sparse_valid_counts_triton(

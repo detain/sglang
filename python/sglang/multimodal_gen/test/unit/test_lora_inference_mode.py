@@ -116,17 +116,14 @@ class _AtenMulCounter(TorchDispatchMode):
         return func(*args, **(kwargs or {}))
 
 
+@pytest.mark.parametrize("quality", ["exact", "lossless"])
 @pytest.mark.parametrize("kind", ["linear", "replicated"])
 @pytest.mark.parametrize("strength", [1.0, 0.5])
-def test_unit_lora_scale_multiplies_delta_at_most_once(kind, strength):
-    """An unmerged LoRA forward multiplies the delta by its scale at most once.
-
-    Every LoRA linear runs per denoising step, so each extra elementwise kernel
-    per call slows LoRA stages (LTX-2 refinement by ~6% per multiply).
-
-    (#43028 adapted to this stack: no forward_batch.runtime_lora_scale yet —
-    that input arrived with #30487, which predates neither pick's base.)
-    """
+@pytest.mark.parametrize("runtime_scale", [None, 1.0, 0.5])
+def test_unit_request_lora_scale_avoids_redundant_multiplies(
+    kind, strength, runtime_scale, quality
+):
+    """Unit scales are skipped; exact retains the nonunit scale order."""
     base = (
         ReplicatedLinear(4, 3, bias=False)
         if kind == "replicated"
@@ -138,6 +135,20 @@ def test_unit_lora_scale_multiplies_delta_at_most_once(kind, strength):
     )
     x = torch.ones(2, 4)
     counter = _AtenMulCounter()
-    with counter:
-        layer(x)
-    assert counter.count == (0 if strength == 1.0 else 1)
+    if runtime_scale is None:
+        with counter:
+            layer(x)
+    else:
+        batch = SimpleNamespace(
+            sampling_params=SimpleNamespace(quality=quality),
+            runtime_lora_scale=runtime_scale,
+        )
+        with set_forward_context(0, None, forward_batch=batch), counter:
+            layer(x)
+    scale = 1.0 if runtime_scale is None else runtime_scale
+    expected_multiplies = (
+        int(strength * scale != 1.0)
+        if runtime_scale is not None and quality == "lossless"
+        else int(strength != 1.0) + int(scale != 1.0)
+    )
+    assert counter.count == expected_multiplies

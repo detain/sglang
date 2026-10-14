@@ -20,7 +20,8 @@ import torch
 import triton  # type: ignore
 import triton.language as tl  # type: ignore
 
-from sglang.kernels.ops.diffusion.common.numerics import round_bf16_to_fp32
+from sglang.kernels.numerics import round_bf16_to_fp32
+from sglang.kernels.ops.diffusion.common.fast_launch import replay_launches
 from sglang.srt.utils.custom_op import register_custom_op
 
 
@@ -70,6 +71,7 @@ def _fake_silu_mul(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     mutates_args=[],
     fake_impl=_fake_silu_mul,
 )
+@replay_launches
 def fused_silu_mul_bitexact(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     """``silu(a) * b``, bit-exact vs the eager two-kernel chain."""
     if not (
@@ -97,6 +99,7 @@ def fused_silu_mul_bitexact(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     return out
 
 
+@replay_launches
 def fused_packed_silu_mul_bitexact(
     x: torch.Tensor, out: torch.Tensor | None = None
 ) -> torch.Tensor:

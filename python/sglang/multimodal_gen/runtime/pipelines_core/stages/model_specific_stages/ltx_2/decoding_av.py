@@ -1,4 +1,5 @@
 import torch
+from diffusers.video_processor import VideoProcessor
 
 from sglang.multimodal_gen.runtime.distributed import get_local_torch_device
 from sglang.multimodal_gen.runtime.managers.memory_managers.component_manager import (
@@ -103,7 +104,50 @@ def _decode_video(stage, batch: Req, server_args: ServerArgs):
     else:
         video = decode_output.sample
 
-    return stage.video_processor.postprocess_video(video, output_type="np")
+    return _postprocess_video(stage, video)
+
+
+def _postprocess_video(stage, video: torch.Tensor):
+    # TODO(merge-4): upstream #43667 also streams video frames straight into
+    # ffmpeg (EncodeWhileDecoding + audio_first ordering + rank-0-only frame
+    # retention) inside its single combined AV stage; that plumbing does not
+    # port cleanly onto the split video/audio decode stages and is unported.
+    if not video.is_cuda:
+        return stage.video_processor.postprocess_video(video, output_type="np")
+    batch_size, channels, num_frames, height, width = video.shape
+    try:
+        host = torch.empty(
+            (batch_size, num_frames, height, width, channels),
+            dtype=torch.float32,
+            device="cpu",
+            pin_memory=True,
+        )
+    except RuntimeError:
+        return stage.video_processor.postprocess_video(video.cpu(), output_type="np")
+
+    # Bound each FP32 conversion to 64 MiB (or one frame), independently
+    # of clip length and batch size. Normalize in the source dtype first.
+    chunk_frames = max(1, (64 * 1024 * 1024) // (channels * height * width * 4))
+    stream = torch.cuda.current_stream(video.device)
+    try:
+        for batch_idx in range(batch_size):
+            for start in range(0, num_frames, chunk_frames):
+                end = min(start + chunk_frames, num_frames)
+                frames = stage.video_processor.postprocess_video(
+                    video[batch_idx : batch_idx + 1, :, start:end], output_type="pt"
+                )
+                frames = (
+                    frames[0]
+                    .permute(0, 2, 3, 1)
+                    .to(dtype=torch.float32, memory_format=torch.contiguous_format)
+                )
+                host[batch_idx, start:end].copy_(frames, non_blocking=True)
+    except torch.cuda.OutOfMemoryError:
+        stream.synchronize()
+        host = None
+        return stage.video_processor.postprocess_video(video.cpu(), output_type="np")
+    stream.synchronize()
+    return host.numpy()
 
 
 def _run_diffusion_decoder(stage, decoder, latents, batch, server_args: ServerArgs):
@@ -258,8 +302,6 @@ class LTX2VideoDecodingStage(DecodingStage):
         # Replaces the convolutional decoder; latents and denormalization are
         # identical either way.
         self.diffusion_decoder = diffusion_decoder
-        from diffusers.video_processor import VideoProcessor
-
         self.video_processor = VideoProcessor(vae_scale_factor=32)
 
     def component_uses(

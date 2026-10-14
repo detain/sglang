@@ -488,6 +488,10 @@ class PipelineConfig:
     def supports_continuous_batching(self):
         return self.task_type in self.continuous_batching_supported_tasks
 
+    def supports_batching_image_conditioning(self):
+        """Return whether image-conditioned requests may join dynamic batches."""
+        return False
+
     def supports_sequential_dit_inference(self):
         """Return whether batched AR is followed by per-request DiT inference."""
         return False

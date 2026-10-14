@@ -302,12 +302,12 @@ def _ltx2_build_batched_perturbation_states(
             cache_key = tuple(keep_values)
             mask = mask_cache.get(cache_key)
             if mask is None:
-                # Fill on device: a host->device copy is illegal inside a
-                # breakable CUDA graph capture.
+                # Build constants on-device: torch.tensor(list, device="cuda")
+                # copies unpinned host memory and fails during BCG capture.
                 mask = values.new_ones((len(keep_values), *([1] * (values.ndim - 1))))
-                for item_idx, keep in enumerate(keep_values):
+                for index, keep in enumerate(keep_values):
                     if not keep:
-                        mask[item_idx] = 0
+                        mask[index].zero_()
                 mask_cache[cache_key] = mask
             states[block_idx] = (mask, False)
     return states
@@ -856,6 +856,7 @@ class LTX2Attention(nn.Module):
                 enable_packed_qkv_input_a2a=self.enable_packed_qkv_input_a2a,
                 # official LTX2 torch_sdpa uses cuDNN; cuda setup disables it
                 allow_cudnn_sdp=True,
+                capture_dense_attention=True,
             )
         else:
             self.attn = USPAttention(
@@ -871,6 +872,7 @@ class LTX2Attention(nn.Module):
                 prefix=f"{prefix}.attn",
                 # official LTX2 torch_sdpa uses cuDNN; cuda setup disables it
                 allow_cudnn_sdp=True,
+                capture_dense_attention=True,
             )
 
     def forward(
