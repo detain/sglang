@@ -19,6 +19,7 @@ register_cpu_ci(est_time=10, suite="base-a-test-cpu")
 
 import shutil
 import tempfile
+import threading
 import unittest
 from datetime import timedelta
 from types import SimpleNamespace
@@ -296,6 +297,12 @@ def _sync_endpoints_on_two_ranks(rank, rendezvous):
         cc = HybridCacheController.__new__(HybridCacheController)
         cc.page_size = _PAGE
         cc.prefetch_hits_sync_groups = [None]
+        # Liveness state the worker-thread collective wrapper reads (#44342);
+        # the real method comes from the class -- a healthy reduce only needs
+        # the flag off.
+        cc.storage_sync_failed = False
+        cc.storage_sync_failure = None
+        cc._storage_sync_lock = threading.Lock()
         # Per-rank shards: each rank holds a different interior endpoint, and
         # only page 8 is stored on both. Reducing per-rank maxima (the old
         # behaviour) would pick an endpoint the peer cannot read.

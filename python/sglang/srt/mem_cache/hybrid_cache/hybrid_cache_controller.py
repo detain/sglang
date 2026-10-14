@@ -17,6 +17,9 @@ from sglang.srt.managers.cache_controller import (
     CacheOperation,
 )
 from sglang.srt.managers.cache_controller import (
+    STORAGE_FAILURE_POLICIES,
+)
+from sglang.srt.managers.cache_controller import (
     HiCacheController as BaseHiCacheController,
 )
 from sglang.srt.managers.cache_controller import (
@@ -326,6 +329,12 @@ class HybridCacheController(BaseHiCacheController):
         self._stop_pp_prefetch_thread()
         super()._stop_storage_threads()
 
+    def _storage_worker_threads(self) -> list[threading.Thread]:
+        threads = super()._storage_worker_threads()
+        if self.pp_prefetch_command_thread is not None:
+            threads.append(self.pp_prefetch_command_thread)
+        return threads
+
     @staticmethod
     def supports_page_envelope_host(storage_backend: str | None) -> bool:
         """Only opt in backends whose FULL object is the complete shared page."""
@@ -454,6 +463,26 @@ class HybridCacheController(BaseHiCacheController):
             raise ValueError(
                 "hicache_storage_pass_prefix_keys must be bool, got "
                 f"{type(hicache_storage_pass_prefix_keys).__name__}"
+            )
+        # #44342's sync knobs are the controller's (attach pops and applies
+        # them); validate them HERE too, non-consuming, so a bad extra-config
+        # fails at parse time -- boot and runtime PUT alike -- while the
+        # values still flow down to HiCacheController._apply_storage_sync_config.
+        policy = extra_config.get("storage_failure_policy", "disable")
+        if policy not in STORAGE_FAILURE_POLICIES:
+            raise ValueError(
+                f"storage_failure_policy must be one of {STORAGE_FAILURE_POLICIES}, "
+                f"got {policy!r}"
+            )
+        timeout = extra_config.get("storage_sync_timeout", None)
+        if timeout is not None and (
+            isinstance(timeout, bool)
+            or not isinstance(timeout, (int, float))
+            or timeout <= 0
+        ):
+            raise ValueError(
+                f"storage_sync_timeout must be a positive number of seconds, "
+                f"got {timeout!r}"
             )
 
         return (
@@ -1212,6 +1241,9 @@ class HybridCacheController(BaseHiCacheController):
 
         # Every rank queries and allocates in ticket order on the worker.
         # Admission waits for the normal completion ACK, including misses.
+        # (Fork shape: the ticket thread runs the hit query itself, so the
+        # collective #44342 guards here does not exist; its failure hook
+        # lives on the ticket thread's unconditional exit instead.)
         operation.is_pp_broadcast = True
         state = PPPrefetchState(ticket=ticket, operation=operation)
         with self.pp_prefetch_state_lock:
@@ -1310,7 +1342,10 @@ class HybridCacheController(BaseHiCacheController):
                 return False
             thread = self.pp_prefetch_command_thread
             if thread is not None and not thread.is_alive():
-                raise RuntimeError(f"PP HiCache ticket thread exited: req={rid}")
+                if self.storage_failure_policy == "raise":
+                    raise RuntimeError(f"PP HiCache ticket thread exited: req={rid}")
+                # Not ready: the rank-agreed health drop retires the ticket.
+                return False
             return state.ready_event.is_set()
 
     def take_ready_pp_prefetch(self, rid: str) -> Optional[PPPrefetchState]:
@@ -1448,10 +1483,13 @@ class HybridCacheController(BaseHiCacheController):
                 if operation.pool_transfers:
                     self._resolve_sidecar_kv_derived_pool_transfers(operation)
                 self.prefetch_buffer.put(operation)
-            except Exception:
+            except Exception as e:
                 logger.exception("PP HiCache ticket processing failed.")
                 # Query/allocation failures already follow the agreed ACK path.
-                # An unexpected failure cannot safely continue the collectives.
+                # An unexpected failure cannot safely continue the collectives:
+                # the broadcast is the PP agreement itself, so the thread exits
+                # and the rank-agreed health bit retires its tickets.
+                self._record_storage_sync_failure(e, "PP ticket thread")
                 return
             finally:
                 if is_source and objects:
@@ -1568,11 +1606,14 @@ class HybridCacheController(BaseHiCacheController):
             + restorable_mask,
             dtype=torch.int,
         )
-        self._all_reduce(
+        if not self._storage_sync_all_reduce(
             packed,
             torch.distributed.ReduceOp.MIN,
             self.prefetch_hits_sync_groups,
-        )
+        ):
+            # No agreed boundary: a miss that carries no verdict to learn from.
+            operation.query_pool_hit_pages = {}
+            return 0
         reduced = packed.tolist()
         operation.query_pool_hit_pages = {
             pool: pages
@@ -2154,11 +2195,12 @@ class HybridCacheController(BaseHiCacheController):
                 [ack.pool_hits.get(pool.value, 0) for pool in PoolName],
                 dtype=torch.int,
             )
-            self._all_reduce(
+            if not self._storage_sync_all_reduce(
                 packed,
                 torch.distributed.ReduceOp.MIN,
                 self.prefetch_completion_sync_groups,
-            )
+            ):
+                packed.zero_()
             for i, pool in enumerate(PoolName):
                 ack.pool_hits[pool.value] = packed[i].item()
 

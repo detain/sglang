@@ -303,6 +303,9 @@ class TestSparseCheckpointCacheDrain(CustomTestCase):
         cache.tree_core = SimpleNamespace(page_size=_PAGE_SIZE)
         cache.cache_controller = controller
         cache.host_memory_mode = "cache"
+        # Fork stub (stack entry 290) bypasses __init__; #44342's hit drain
+        # reads the rank-agreed health bit, so memoize it healthy here.
+        cache.storage_unavailable = False
         cache.buffer_pipeline = None
         cache.page_size = cache.prefetch_threshold = _PAGE_SIZE
         cache.enable_storage_metrics = False
