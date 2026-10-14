@@ -921,11 +921,22 @@ class TestPPPrefetchTicket(unittest.TestCase):
             c.is_pp_prefetch_ready("hit")
         c.storage_failure_policy = "disable"
         self.assertFalse(c.is_pp_prefetch_ready("hit"))
-        # Fork shape (#43344, the PR's 60c5f3ed7f rebase resolution): the hit
-        # query runs ON THE TICKET THREAD, so PP0's submission path performs
-        # no storage sync collective here; a later request stays ticketed and
-        # the rank-agreed health drop retires its ticket.
+        # The TP-local hit groups did not fail, so a later request is still
+        # ticketed; PP0's degraded verdict then retires every pending ticket,
+        # and a ticket PP0 declared ready never blocks a dead stage. (Fork
+        # shape: #43344 put the hit query on the ticket thread, so the PP0
+        # submission path runs no storage sync collective -- this is also the
+        # PR's own 60c5f3ed7f rebase resolution.)
         self.assertTrue(self.submit("next").decision)
+        self.cache.pp_rank = 0
+        self.cache.storage_unavailable = True
+        for rid in ("hit", "next"):
+            self.assertTrue(
+                self.cache.check_prefetch_progress(CacheRequestHandle(rid, 0))
+            )
+        self.assertEqual(c.pp_prefetch_decisions, {})
+        with self.assertRaisesRegex(RuntimeError, "ticket thread exited"):
+            c.take_ready_pp_prefetch("hit")
 
     def test_idle_source_broadcasts_empty_then_processes_ticket_and_stop(self):
         c = self.c
