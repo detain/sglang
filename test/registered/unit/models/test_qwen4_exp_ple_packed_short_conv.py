@@ -46,8 +46,8 @@ def _layer(device, dtype):
         short_conv_dilation=DILATION,
         conv_channels=CHANNELS,
     )
-    layer._short_conv_packed = (
-        lambda *a: qwen4_exp.Qwen4ExpPLELayer._short_conv_packed(layer, *a)
+    layer._short_conv_packed = lambda *a: qwen4_exp.Qwen4ExpPLELayer._short_conv_packed(
+        layer, *a
     )
     return layer
 
@@ -70,9 +70,12 @@ def _batch(lengths, device, pad_tokens=0):
         row_width=max(lengths),
         req_indices=req,
         token_offsets=offsets,
+        query_start_loc=starts,
         valid_tokens=offsets < lengths_t.index_select(0, req),
         state_indices=torch.arange(1, len(lengths) + 1, device=device),
         ngram_context=None,
+        ngram_input_ids=None,
+        ngram_history=None,
         ngram_eos_token_id=None,
     )
 

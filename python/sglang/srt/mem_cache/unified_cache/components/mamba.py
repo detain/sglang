@@ -832,6 +832,7 @@ class MambaComponent(TreeComponent):
         )
         self.tree_core._update_evictable_leaf_sets(node)
         self.cache._free_values(device_frees, host_frees)
+
     def prepare_buffer_load_back(
         self, req: Req, staged: list[PoolTransfer]
     ) -> Optional[BufferLoadBackContext]:

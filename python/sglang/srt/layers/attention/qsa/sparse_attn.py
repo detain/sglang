@@ -759,6 +759,13 @@ def sparse_gqa_packed_decode_triton(q, k, v, indices, cu_q, cu_k, kv_lens, scale
         cu_k,
         kv_lens,
         scale,
+        # The kernel gained per-tensor K/V descale slots after `scale` when
+        # FP8-pool support landed. The only in-tree caller (the HIP FA-varlen
+        # decode path in qwen_sparse_attn_backend) feeds packed scratch that
+        # was already dequantized with the real scales, and QSA stores unscaled
+        # K/V for direct callers, so both descales are unit here.
+        _unit_scale(None),
+        _unit_scale(None),
         indices.shape[-1],
         q.stride(0),
         q.stride(1),
@@ -780,6 +787,7 @@ def sparse_gqa_packed_decode_triton(q, k, v, indices, cu_q, cu_k, kv_lens, scale
         BLOCK_M=block_m,
         BLOCK_N=block_n,
         HEAD_DIM=head_dim,
+        KV_IS_FP8=is_fp8_kv_dtype(k.dtype),
         num_warps=warps,
         num_stages=stages,
     )
