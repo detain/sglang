@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Real ModelOpt calibration -> native fused PiGemma FP8 -> graph replay."""
 
+import importlib.util
 import tempfile
 import unittest
 from pathlib import Path
@@ -86,6 +87,12 @@ def tiny_core():
     return core.cuda()
 
 
+# Calibration needs NVIDIA ModelOpt and the whole path runs on CUDA tensors;
+# CUDA CI keeps both, CPU-only runners skip cleanly.
+@unittest.skipUnless(
+    importlib.util.find_spec("modelopt") is not None and torch.cuda.is_available(),
+    "requires modelopt and a CUDA device",
+)
 class TestPi05ModelOptFp8CUDA(CustomTestCase):
     @classmethod
     def setUpClass(cls):

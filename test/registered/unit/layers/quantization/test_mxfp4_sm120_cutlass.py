@@ -99,6 +99,13 @@ def test_dsv4_sm120_load_contract(monkeypatch, request):
     platform.install()
     request.addfinalizer(platform.restore)
 
+    # __init__ hard-requires FlashInfer at construction, but this contract test
+    # only inspects the delegated create_weights kwargs (no kernels launch), so
+    # satisfy the guard instead of skipping CPU runners.
+    monkeypatch.setattr(
+        adapter_module, "is_flashinfer_available", lambda: True, raising=False
+    )
+
     captured = {}
 
     class _Fp8Method:
