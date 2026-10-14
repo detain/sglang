@@ -7550,9 +7550,7 @@ class UnifiedRadixCacheSuite:
         # pool can't satisfy even after evict -> no staging, the hit parks
         with (
             mock.patch.object(cache.swa_kv_pool_host, "alloc", return_value=None),
-            mock.patch.object(
-                cache.swa_kv_pool_host, "available_size", return_value=0
-            ),
+            mock.patch.object(cache.swa_kv_pool_host, "available_size", return_value=0),
             mock.patch.object(cache, "evict_host", autospec=True) as evict_host,
         ):
             self.assertIsNone(swa.alloc_prefetch_staging(sw))

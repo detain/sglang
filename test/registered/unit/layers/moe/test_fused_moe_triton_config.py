@@ -85,7 +85,6 @@ def test_rtx_pro_6000_server_edition_configs_resolve_for_current_triton_runtime(
             assert tile["BLOCK_SIZE_N"] > 0
 
 
-
 if __name__ == "__main__":
     import sys
 

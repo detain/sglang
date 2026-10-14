@@ -18,9 +18,10 @@ import sys
 import tempfile
 import traceback
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import torch
 import torch.distributed as dist

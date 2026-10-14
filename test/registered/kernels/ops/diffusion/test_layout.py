@@ -705,7 +705,6 @@ def test_wan_cached_conv_chunk_loop_bitwise(pads_temporal_only):
         assert torch.equal(got_payload, ref_cache[:, :, -CACHE_T:])
 
 
-
 def test_run_cached_causal_conv_falls_back_for_convs_without_epilogue():
     """SpatialParallelCausalConv3d (SP-decoded Wan VAE) keeps the plain
     ``forward(x, cache_x=None)`` signature; passing the #38650 epilogue
@@ -714,7 +713,6 @@ def test_run_cached_causal_conv_falls_back_for_convs_without_epilogue():
     detect epilogue support and keep the bit-identical eager chain."""
     import torch.nn as nn
     import torch.nn.functional as Fn
-    from sglang.multimodal_gen.runtime.models.vaes import wanvae as _wv
     from sglang.multimodal_gen.runtime.models.vaes.wanvae import (
         WanCausalConv3d,
         _conv_supports_epilogue,
@@ -770,6 +768,7 @@ def test_run_cached_causal_conv_falls_back_for_convs_without_epilogue():
         conv.bias,
     )
     assert torch.equal(got, man)
+
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))

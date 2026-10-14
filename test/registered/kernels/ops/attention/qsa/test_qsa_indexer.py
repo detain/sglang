@@ -505,7 +505,9 @@ if __name__ == "__main__":
 
 @pytest.mark.parametrize("fused", [True, False])
 @pytest.mark.parametrize("prefix_members", [1, 2, 3])
-def test_cross_prefix_group_matches_in_chunk_compress(fused, prefix_members, monkeypatch):
+def test_cross_prefix_group_matches_in_chunk_compress(
+    fused, prefix_members, monkeypatch
+):
     """A group crossing an unaligned extend prefix (a mixed-chunk decode tail,
     a private chunk-cache tail) recompresses its prefix-side members from the
     pending ring; the result must equal the same group compressed with every
@@ -551,8 +553,12 @@ def test_cross_prefix_group_matches_in_chunk_compress(fused, prefix_members, mon
         sequence_ids=torch.tensor([0], device=device),
         compress_ratio=RATIO,
     )
-    pool.set_qsa_key_state_buffer(0, ring[0, :prefix_members], group_keys[:prefix_members])
-    pool.set_qsa_rope_position_buffer(ring[0, :prefix_members], rope[:, :prefix_members])
+    pool.set_qsa_key_state_buffer(
+        0, ring[0, :prefix_members], group_keys[:prefix_members]
+    )
+    pool.set_qsa_rope_position_buffer(
+        ring[0, :prefix_members], rope[:, :prefix_members]
+    )
 
     token_k = torch.cat([group_keys[prefix_members:], prefill_keys])
     row_rope = torch.cat(

@@ -122,6 +122,7 @@ from sglang.srt.utils import (
     is_sm121,
     logger,
 )
+
 if TYPE_CHECKING:
     from sglang.srt.model_executor.runner.base_runner import BaseRunner
 

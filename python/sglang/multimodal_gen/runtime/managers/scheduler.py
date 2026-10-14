@@ -2021,8 +2021,8 @@ class Scheduler(SchedulerWarmupMixin, SchedulerPostTrainingMixin, SchedulerDisag
             submitted = stage_worker.try_submit(
                 "finalize",
                 ticket,
-                lambda state=state: (
-                    continuous_coordinator.finalize_completed_request(state)
+                lambda state=state: continuous_coordinator.finalize_completed_request(
+                    state
                 ),
             )
             if not submitted:
@@ -2288,7 +2288,10 @@ class Scheduler(SchedulerWarmupMixin, SchedulerPostTrainingMixin, SchedulerDisag
 
         # getattr: unit tests drive event_loop() on __new__-built
         # schedulers without server_args; a real scheduler always has it.
-        if getattr(getattr(self, "server_args", None), "batching_mode", None) == "continuous":
+        if (
+            getattr(getattr(self, "server_args", None), "batching_mode", None)
+            == "continuous"
+        ):
             if not self._continuous_batching_enabled_for_pipeline():
                 raise RuntimeError(
                     "continuous batching is not enabled for this pipeline"
