@@ -967,6 +967,13 @@ class TestEagleConfigurator(CustomTestCase):
             config = cfg.calculate_pool_sizes(10_000_000, page_size=1)
         return cfg, config
 
+    # FP4 pricing routes through is_float4_e2m1fn_x2, which embeds an is_cuda()
+    # gate; without an accelerator visible the configurator legitimately falls to
+    # non-FP4 sizing, so these pricing asserts are CUDA-true-runner tests.
+    @unittest.skipUnless(
+        torch.cuda.is_available(),
+        "fp4_eagle pricing needs is_cuda()==True (accelerator visible)",
+    )
     def test_fp4_eagle_prices_each_workers_selected_buffers(self):
         # Four heads * 64 elements. SM100 mixed mode owns linear/native scales
         # and a shared FP8 workspace. SM120 reuses linear scales for native reads.
@@ -983,6 +990,10 @@ class TestEagleConfigurator(CustomTestCase):
                 self.assertEqual(cfg._cell_size, expected)
                 self.assertLessEqual(config.max_total_num_tokens * expected, 10_000_000)
 
+    @unittest.skipUnless(
+        torch.cuda.is_available(),
+        "fp4_eagle pricing needs is_cuda()==True (accelerator visible)",
+    )
     def test_fp4_eagle_reserves_implicit_mtp_private_pool(self):
         # The resolver keeps eagle_draft_num_layers=None for path-less MTP.
         # Its draft-mode KV layer count must still reserve a separate FP4 pool.
@@ -1002,6 +1013,10 @@ class TestEagleConfigurator(CustomTestCase):
                 self.assertEqual(cfg._cell_size, expected)
                 self.assertLessEqual(config.max_total_num_tokens * expected, 10_000_000)
 
+    @unittest.skipUnless(
+        torch.cuda.is_available(),
+        "fp4_eagle pricing needs is_cuda()==True (accelerator visible)",
+    )
     def test_fp4_eagle_draft_backend_keeps_allocator_selected_buffers(self):
         from sglang.srt.layers.quantization.fp4_kv_cache_quant_method import (
             NVFP4KVCacheMethod,
@@ -1041,6 +1056,10 @@ class TestEagleConfigurator(CustomTestCase):
                     method.needs_dequant_workspace(), target_prefill == "flashinfer"
                 )
 
+    @unittest.skipUnless(
+        torch.cuda.is_available(),
+        "fp4_eagle pricing needs is_cuda()==True (accelerator visible)",
+    )
     def test_fp4_eagle_respects_draft_dtype_override(self):
         for draft_dtype, expected in [
             ("bf16", 14_848),
