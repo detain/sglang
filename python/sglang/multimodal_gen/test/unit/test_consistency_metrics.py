@@ -1,3 +1,4 @@
+import importlib.util
 import math
 from types import SimpleNamespace
 
@@ -13,6 +14,13 @@ from sglang.multimodal_gen.test.test_utils import (
     compute_psnr,
     compute_ssim,
     save_consistency_failure_artifact,
+)
+
+
+# compute_ssim/compute_psnr lazily import skimage inside test_utils.
+requires_skimage = pytest.mark.skipif(
+    importlib.util.find_spec("skimage") is None,
+    reason="requires scikit-image for SSIM/PSNR",
 )
 
 
@@ -471,6 +479,7 @@ def test_threshold_metadata_merges_platform_override():
     assert metadata["cases"]["case_a"]["psnr_threshold"] == 12.0
 
 
+@requires_skimage
 def test_pixel_metrics_identical_image():
     image = _solid_image(128)
 
@@ -483,6 +492,7 @@ def test_pixel_metrics_identical_image():
     assert mean_abs_diff == 0.0
 
 
+@requires_skimage
 def test_pixel_metrics_detect_different_image():
     image = _solid_image(128)
     other = _solid_image(0)
@@ -496,6 +506,7 @@ def test_pixel_metrics_detect_different_image():
     assert mean_abs_diff > 8.0
 
 
+@requires_skimage
 def test_compare_with_gt_passes_for_identical_image(monkeypatch):
     gt_image = _solid_image(128)
 
@@ -527,6 +538,7 @@ def test_compare_with_gt_passes_for_identical_image(monkeypatch):
     assert result.max_mean_abs_diff == 0.0
 
 
+@requires_skimage
 def test_compare_with_gt_uses_worst_frame_for_video(monkeypatch):
     gt_frame_0 = _solid_image(128)
     gt_frame_1 = _solid_image(128)
@@ -569,6 +581,7 @@ def test_compare_with_gt_uses_worst_frame_for_video(monkeypatch):
     )
 
 
+@requires_skimage
 def test_save_consistency_failure_artifact(tmp_path, monkeypatch):
     gt_image = _solid_image(128)
     bad_image = _solid_image(0)
