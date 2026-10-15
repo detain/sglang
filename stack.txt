@@ -1,6 +1,6 @@
 # stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
 #
-# STACK: qwennext-stack-204-2026-10-15
+# STACK: qwennext-stack-206-2026-10-15
 #   main+pr36787+pr37275+pr38144+pr38209+pr36644+pr39862+pr39809+pr39893+local_hicache_qsa_fixes
 #   +pr39614+pr39978+pr40002+pr39065+pr40501+pr40175+pr40362+pr39391+pr37061+pr39333+pr33778
 #   +pr38977+pr39977+pr40480+pr39880+pr40235+pr39807+cpu-triage+boot-fix+plan_updates_perf
@@ -10,7 +10,7 @@
 #   +diffusion-batch-2026-10-08(pr27673+pr28690*+pr32513+pr32550*+pr33036*+pr33588*
 #    +pr36399+pr36767+pr37460*+pr38650+pr39212+pr40493+pr40588+pr40755+pr41340*
 #    +pr41944+pr42249+pr42928*+pr43028*+pr43064*)
-#   (entries 1-204; *=squash/ported, see commit messages. 10-10 added
+#   (entries 1-206; *=squash/ported, see commit messages. 10-10 added
 #   entries 157-161: parser batch A (Qwen3-Coder tool-call fixes + sampling
 #   upper bounds), on top of upstream merge #3 (see synced). 10-10b added
 #   entries 162-166: SM120 batch B (#42863 PCIe-IPC vocab gathers, #42566
@@ -53,6 +53,13 @@
 #   The prod venv ALSO moved flashinfer 0.7.0.post1 -> 0.7.1 (venv-only,
 #   no repo diff): PCIe-IPC entries 162-164 NOW ACTIVE next restart,
 #   #44115 re-skipped -- see CAVEATS.
+#   10-15 apply-m added entries 205-206: NVFP4-under-EP load/ID pair --
+#   205 #31503 EP-slices ModelOpt NVFP4 input scales on the default MoE
+#   runner path (fixes the 512-vs-128 _compute_gemm1_alphas crash that
+#   killed the NVFP4 checkpoint load under EP4), 206 #44480
+#   StandardDispatcher gives local expert ids to a layer whose built
+#   runner needs them even under a global-ids --moe-runner-backend pin
+#   (flashinfer_cutlass + triton-fallback FP8 MTP experts).
 #   10-08 added entries
 #   136-155: 20 diffusion PRs (4 more evaluated-skipped, see NOT INCLUDED).
 #   09-28 added 22 entries: 9 new PR blocks, new head
@@ -60,7 +67,7 @@
 #   make --enable-mixed-chunk safe and fix the QSA verify ring collision.
 #   * = picked with local modifications, see the entries)
 # branch : qwennext-stack
-# tip    : c8792c2aac   (the stack.txt commit sits above it)
+# tip    : 213138cadd   (the stack.txt commit sits above it)
 # base   : upstream sgl-project/sglang main @ 7ad55e4386 ([HiCache] TMA-staged
 #          host<->device KV transfer kernel (sm_90+) (#40278), 2026-09-21)
 # synced : upstream main @ f209e67767 (#39643, 2026-09-28) MERGED IN as
@@ -2294,6 +2301,61 @@ STACK, IN BUILD ORDER (bottom first)
       # CPU-porting rejected: can_use_fused_rmsnorm_modulation
       # hard-requires x.is_cuda). 6F -> 6S, 24P unchanged in the pair;
       # ruff repo ruleset + format clean.
+
+        205. 474ded7310  PR #31503  EP-slice ModelOpt NVFP4 input scales on the default MoE runner path (fixes 512-vs-128 load crash under EP)
+      # Prod NVFP4-trialing crash: ModelOptNvFp4FusedMoEMethod.
+      # process_weights_after_loading raised RuntimeError "size of
+      # tensor a (512) must match tensor b (128)" in
+      # _compute_gemm1_alphas -- w13/w2_input_scale are registered
+      # GLOBAL ([num_experts]=512, _sglang_require_global_experts)
+      # while w13/w2_weight_scale_2 are EP-LOCAL (128 under EP4), and
+      # the default `else` (triton-runner) branch never sliced the
+      # input scales. Fix: hoist the cutedsl-local _slice_scale to a
+      # shared helper and in the else branch slice BOTH input scales
+      # when layer.moe_ep_size > 1. EP=1 byte-identical (guarded).
+      # megamoe branch keeps _input_scale_to_local_experts (untouched);
+      # cutedsl behavior unchanged. NOTE the triton runner itself still
+      # raises NotImplementedError for NVFP4 at apply(): this port
+      # restores load-time shape consistency only -- for the NVFP4
+      # trial use --moe-runner-backend auto (SM120 auto-resolves to
+      # flashinfer_cutlass per create_moe_runner) or flashinfer_cutlass,
+      # NOT triton. Port conflict: single 3-way conflict removing the
+      # nested def (our tree's wrap-drifted copy) -- dropped in favor of
+      # the hoisted helper. Battery CVD=9: modelopt/nvfp4 MoE quant CPU
+      # files 31P/3S/40sub; spec dir 333P/9S/180sub EXACT;
+      # kernels_namespace 76P; disagg wire 79P/70sub; QSA pinned debt
+      # 152F/88P/134S unchanged. GPU debt: NVFP4 ckpt load e2e under
+      # EP4 on 4xSM120 (the actual trial boot). from apply-m.
+
+        206. 213138cadd  PR #44480  map expert ids for layers whose runner needs local ids under EP (NVFP4+flashinfer_cutlass with triton-fallback FP8 draft experts)
+      # StandardDispatcher now consults the layer's ACTUALLY-BUILT
+      # runner (quant_method.runner.runner_backend via new
+      # _built_runner_backend in create_moe_dispatcher) in addition to
+      # the global --moe-runner-backend: a flashinfer_cutlass pin that
+      # falls back to triton for FP8 experts -- Qwen3.8-Flash-Next-
+      # NVFP4 keeps its MTP experts FP8 block-scaled -- now gets LOCAL
+      # expert ids on that layer, fixing the illegal-memory/wrong-
+      # experts on the NEXTN draft extend under EP (upstream repro
+      # tp2/ep2). skip_local_expert_mapping refactored to module-level
+      # _keeps_global_expert_ids(backend); the runner only ever turns
+      # the mapping ON (every other flag follows the global backend);
+      # hard ValueError for LoRA+EP on such mixed-convention layers
+      # (LoRA pool keys experts by the global convention). get_lora()
+      # reads alongside get_parallel (established runtime_context
+      # pattern). git apply -3 CLEAN 4/4 (layer.py, standard.py, new
+      # test, test_mem_pool_ep_unit.py AST harness -- execs the now-
+      # extracted _keeps_global_expert_ids + Optional/MoeRunnerBackendLike
+      # stubs; our local drift in that file untouched). Battery CVD=9:
+      # new test file 6P/1F -- the 1F
+      # (test_triton_runner_gets_local_ids_under_cutlass_pin) creates
+      # dispatch tensors via get_device(), which raises
+      # NotImplementedError with no visible platform -- CUDA-window
+      # class, left as-is per policy; test_mem_pool_ep_unit 49P/4sub;
+      # moe placement+extensions 13P; kernels_namespace 76P; spec dir
+      # 333P/9S/180sub EXACT; QSA debt unchanged. GPU debt: with entry
+      # 205 -- flashinfer_cutlass+EP e2e of the NVFP4 target + FP8 triton
+      # draft experts on 4xSM120 (NEXTN draft extend expert-id mapping
+      # correctness). from apply-m.
 
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
