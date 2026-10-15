@@ -36,6 +36,7 @@ def _coins(seeds, seq_lens):
     )
 
 
+@unittest.skipUnless(torch.cuda.is_available(), "seeded coins require a CUDA GPU")
 class TestSeededVerifyCoins(CustomTestCase):
     def test_seeded_coins_are_reproducible(self):
         coins_a, final_a = _coins([12345, 67890, 12345], [7, 9, 7])

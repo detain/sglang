@@ -41,6 +41,9 @@ DTYPE = torch.float16
 
 
 @unittest.skipUnless(_HAS_FLASHINFER, "requires flashinfer")
+@unittest.skipUnless(
+    torch.cuda.is_available(), "fast_prefill_plan requires a CUDA GPU + flashinfer"
+)
 class TestFastPrefillPlan(CustomTestCase):
     def setUp(self):
         torch.manual_seed(0)
