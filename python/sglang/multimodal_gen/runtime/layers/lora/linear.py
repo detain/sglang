@@ -17,6 +17,8 @@ from sglang.multimodal_gen.configs.sample.sampling_params import quality_allows
 from sglang.multimodal_gen.runtime.distributed import (
     get_local_torch_device,
     get_tp_rank,
+    split_tensor_along_last_dim,
+    tensor_model_parallel_all_reduce,
 )
 from sglang.multimodal_gen.runtime.layers.linear import (
     ColumnParallelLinear,
@@ -859,6 +861,59 @@ class RowParallelLinearWithLoRA(BaseLayerWithLoRA):
         snapshot_base: bool = True,
     ) -> None:
         super().__init__(base_layer, lora_rank, lora_alpha, snapshot_base)
+
+    def forward(self, input_: torch.Tensor):
+        # Upstream #43501/#43028 quality-gated row-parallel path, lost in the
+        # merge #4 resolution: the bias enters the GEMM epilogue only above
+        # the exact tier; exact requests add it after the reduce, keeping the
+        # reference chain bit-for-bit.
+        if self.disable_lora or (self.merged and not self.has_lora_output_offset):
+            return self.base_layer(input_)
+
+        runtime_lora_scale = self._runtime_lora_scale()
+        if runtime_lora_scale == 0.0:
+            return self.base_layer(input_)
+
+        if self.base_layer.input_is_parallel:
+            input_parallel = input_
+        else:
+            tp_rank = get_tp_rank()
+            splitted_input = split_tensor_along_last_dim(
+                input_, num_partitions=self.base_layer.tp_size
+            )
+            input_parallel = splitted_input[tp_rank].contiguous()
+        bias = self.base_layer.bias
+        # Lossless tier: the bias goes into the GEMM epilogue on rank 0, as in
+        # RowParallelLinear, instead of a separate pass after the reduce.
+        bias_in_gemm = (
+            bias is not None
+            and not self.base_layer.skip_bias_add
+            and _request_allows_lossless()
+        )
+        output_parallel = self.base_layer.quant_method.apply(
+            self.base_layer,
+            input_parallel,
+            bias=bias if bias_in_gemm and self.base_layer.tp_rank == 0 else None,
+        )
+        if not self.merged and not self.disable_lora:
+            output_parallel = self._add_lora_delta(
+                output_parallel, input_parallel, runtime_lora_scale
+            )
+
+        if self.base_layer.reduce_results and self.base_layer.tp_size > 1:
+            output_ = tensor_model_parallel_all_reduce(output_parallel)
+        else:
+            output_ = output_parallel
+
+        if not self.base_layer.skip_bias_add:
+            output = (
+                output_ + bias if bias is not None and not bias_in_gemm else output_
+            )
+            output_bias = None
+        else:
+            output = output_
+            output_bias = self.base_layer.bias
+        return self._add_lora_output_offset(output), output_bias
 
     def _add_lora_output_offset(self, output):
         if self.base_layer.tp_rank != 0:
