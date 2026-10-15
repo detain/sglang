@@ -1091,10 +1091,16 @@ def get_perf_baseline_platform() -> str:
         return _normalize_perf_baseline_platform(override)
     if current_platform.is_xpu():
         return "xpu_b60"
-    if current_platform.is_sm120():
-        return "5090"
-    if current_platform.is_blackwell():
-        return "b200"
+    try:
+        if current_platform.is_sm120():
+            return "5090"
+        if current_platform.is_blackwell():
+            return "b200"
+    except Exception:
+        # CUDA builds on a host with no visible accelerator raise from the
+        # capability query; this helper runs at import time for CPU-only unit
+        # tests, where the perf-baseline selection is inert anyway.
+        return "h100"
     return "h100"
 
 
