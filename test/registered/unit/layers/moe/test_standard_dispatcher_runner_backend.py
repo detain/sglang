@@ -8,6 +8,7 @@ hold (an illegal memory access on the draft extend of
 nvidia/Qwen3.8-Flash-Next-NVFP4 at --tp 2 --ep 2).
 """
 
+import unittest
 from types import SimpleNamespace
 
 import pytest
@@ -79,6 +80,9 @@ def test_global_backend_still_decides_without_a_runner(cutlass_pin):
     assert dispatcher.skip_local_expert_mapping
 
 
+@unittest.skipUnless(
+    torch.cuda.is_available(), "dispatch with real tensors needs a visible CUDA device"
+)
 def test_triton_runner_gets_local_ids_under_cutlass_pin(cutlass_pin):
     dispatcher = standard.StandardDispatcher(
         _config(), runner_backend=MoeRunnerBackend.TRITON
