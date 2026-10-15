@@ -16,7 +16,7 @@ so a pool sized exactly at the lazy ratio skips that boundary's checkpoint.
 """
 
 import unittest
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 
 import torch
 
@@ -423,6 +423,16 @@ class TestExtraMambaCacheSizing(unittest.TestCase):
             pp_size=pp_size,
             model_config=SimpleNamespace(num_hidden_layers=4),
             _calculate_mamba_ratio=lambda: 2,
+            hybrid_gdn_config=None,
+        )
+        # The scratch accounting now routes through the configurator's own
+        # helpers (PR #42388); bind them so the stub charges what the real
+        # code charges instead of re-implementing the formula.
+        fake._linear_lossless_verify_enabled = MethodType(
+            KVCacheConfigurator._linear_lossless_verify_enabled, fake
+        )
+        fake._spec_intermediate_bytes = MethodType(
+            KVCacheConfigurator._spec_intermediate_bytes, fake
         )
         args = dict(
             disable_radix_cache=False,

@@ -196,6 +196,7 @@ def _accept_pattern(d):
     return last, track, track_idx
 
 
+@unittest.skipIf(not torch.cuda.is_available(), "CUDA is required")
 class TestGdnLosslessVerify(CustomTestCase):
     def _run_pair(self, d, h, hv, ssm_dtype, seed, pp_rows=False):
         spec_slots = 8 if pp_rows else N
