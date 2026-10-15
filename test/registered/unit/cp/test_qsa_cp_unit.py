@@ -1,5 +1,6 @@
 """CPU checks for QSA's zigzag-only context parallel entrypoints."""
 
+import functools
 import sys
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -253,7 +254,13 @@ def test_qsa_cp_cached_prefix_matches_full_context_attention(
         token_to_kv_pool=pool,
         req_to_token_pool=SimpleNamespace(req_to_token=req_to_token),
         _pad_extend_output=QwenSparseAttnBackend._pad_extend_output,
+        _kv_descales=QwenSparseAttnBackend._kv_descales,
     )
+    # _forward_extend_cp stores through _store_kv (FP8 out-of-place scaling
+    # path for real fp8 pools). With the stub pool's unit descales it reduces
+    # to the plain set_kv_buffer call the mock above implements. Bind it with
+    # partial because SimpleNamespace attributes carry no instance receiver.
+    backend._store_kv = functools.partial(QwenSparseAttnBackend._store_kv, backend)
     batch = SimpleNamespace(
         attn_cp_metadata=meta,
         seq_lens_cpu=seq_lens,
