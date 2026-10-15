@@ -11,6 +11,9 @@ from sglang.multimodal_gen.runtime.layers.usp import _merge_attention_partials
 from sglang.multimodal_gen.runtime.platforms import AttentionBackendEnum
 
 _LAYER = "sglang.multimodal_gen.runtime.layers.attention.layer"
+# _usp_input_all_to_all_qkv runs the collective from the usp module and reads
+# the world size there, so the same knobs must be patched in both namespaces.
+_USP = "sglang.multimodal_gen.runtime.layers.usp"
 
 
 def _sdpa(q, k, v, scale):
@@ -81,6 +84,7 @@ class RingReplicatedBase(unittest.TestCase):
                     _ring_pair_via_impl(impl, q, k, v)
                 ),
             ),
+            patch(f"{_USP}.get_ulysses_parallel_world_size", return_value=1),
         )
 
     def _rand(self, s):
@@ -95,7 +99,7 @@ class TestRingReplicatedPrefix(RingReplicatedBase):
         v = self._rand(self.REP + self.S_SHARD)
 
         ps = self._patches()
-        with ps[0], ps[1], ps[2], ps[3], ps[4], ps[5], ps[6], ps[7]:
+        with ps[0], ps[1], ps[2], ps[3], ps[4], ps[5], ps[6], ps[7], ps[8]:
             out = obj.forward(q, k, v, num_replicated_prefix=self.REP)
 
         # One local ring chunk + rep partial merged == full attention.
@@ -110,7 +114,7 @@ class TestRingReplicatedPrefix(RingReplicatedBase):
         v = self._rand(self.REP + self.S_SHARD)
 
         ps = self._patches()
-        with ps[0], ps[1], ps[2], ps[3], ps[4], ps[5], ps[6], ps[7]:
+        with ps[0], ps[1], ps[2], ps[3], ps[4], ps[5], ps[6], ps[7], ps[8]:
             out = obj.forward(q, k, v, num_replicated_kv_prefix=self.REP)
 
         ref = _sdpa(q, k, v, obj.softmax_scale)
@@ -125,7 +129,7 @@ class TestRingReplicatedSuffix(RingReplicatedBase):
         v = self._rand(self.S_SHARD + self.REP)
 
         ps = self._patches()
-        with ps[0], ps[1], ps[2], ps[3], ps[4], ps[5], ps[6], ps[7]:
+        with ps[0], ps[1], ps[2], ps[3], ps[4], ps[5], ps[6], ps[7], ps[8]:
             out = obj.forward(q, k, v, num_replicated_suffix=self.REP)
 
         ref = _sdpa(q, k, v, obj.softmax_scale)
@@ -153,6 +157,10 @@ class TestRingReplicatedSuffix(RingReplicatedBase):
             patch(
                 f"{_LAYER}.get_sp_group",
                 return_value=SimpleNamespace(ulysses_group=None),
+            ),
+            patch(
+                f"{_LAYER}._usp_input_all_to_all_qkv",
+                side_effect=lambda q, k, v: (q, k, v),
             ),
             patch("torch.distributed.all_gather", side_effect=_fake_gather),
         ):
