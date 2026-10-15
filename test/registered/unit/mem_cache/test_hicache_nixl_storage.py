@@ -15,9 +15,16 @@ from dataclasses import replace
 from types import SimpleNamespace
 from unittest import mock
 
+import pytest
 import torch
 
-from sglang.srt.mem_cache.hicache_storage import (
+# HiCacheNixl imports nixl._api at module scope; absent (non-NIXL) hosts must
+# skip collection, not error out of it.
+pytest.importorskip(
+    "nixl", reason="NIXL HiCache storage backend requires the nixl package"
+)
+
+from sglang.srt.mem_cache.hicache_storage import (  # noqa: E402
     HiCacheStorageConfig,
     PoolName,
     PoolTransfer,

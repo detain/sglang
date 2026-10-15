@@ -11,7 +11,13 @@ from types import ModuleType, SimpleNamespace
 from typing import Optional
 from unittest.mock import MagicMock, patch
 
-import mori.umbp  # noqa: F401
+import pytest
+
+# UMBPStore links AMD mori; the side-effect import below must not break
+# collection on non-AMD hosts (file is registered AMD-CI only).
+pytest.importorskip("mori.umbp", reason="UMBPStore requires AMD mori")
+
+import mori.umbp  # noqa: E402, F401
 import torch
 
 from sglang.test.ci.ci_register import register_amd_ci
