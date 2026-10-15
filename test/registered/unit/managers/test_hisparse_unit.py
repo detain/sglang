@@ -12,6 +12,7 @@ import unittest
 from array import array
 from types import SimpleNamespace
 
+import pytest
 import torch
 
 from sglang.srt.managers.schedule_batch import ReqKvInfo
@@ -34,7 +35,13 @@ register_cuda_ci(est_time=11, stage="base-b", runner_config="1-gpu-small")
 register_amd_ci(est_time=10, suite="stage-b-test-1-gpu-small-amd")
 register_xpu_ci(est_time=60, suite="stage-b-test-1-gpu-xpu")
 
-DEVICE = get_device()
+try:
+    DEVICE = get_device()
+except RuntimeError:
+    pytest.skip(
+        "hisparse device pools and kernels need an accelerator",
+        allow_module_level=True,
+    )
 
 
 # ---------------------------------------------------------------------------
