@@ -73,6 +73,12 @@ def _run_draft(kern_inputs, topk, steps, page_size, nb, kw):
     return kv_i, kv_p
 
 
+_HAS_CUDA = torch.cuda.is_available()
+
+
+@unittest.skipUnless(
+    _HAS_CUDA, "KV index grid kernels require a CUDA GPU (triton launches)"
+)
 class TestSpecKvIndicesGrid(CustomTestCase):
     def test_draft_grid_equivalence(self):
         torch.manual_seed(0)
