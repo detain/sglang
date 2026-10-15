@@ -152,6 +152,14 @@ def test_stream_matches_cpu_postprocessing(tmp_path, dtype, audio):
     assert cpu_path.read_bytes() == stream_path.read_bytes()
 
 
+@pytest.mark.skip(
+    reason=(
+        "tests the single-stage EncodeWhileDecoding ordering of upstream #43667, "
+        "which this fork deliberately leaves unported for the split video/audio "
+        "decode stages (TODO(merge-4) in ltx_2/decoding_av.py); the stage has no "
+        "_decode_audio method to patch in this design"
+    )
+)
 @pytest.mark.parametrize(
     "eligible,path,saved",
     [
