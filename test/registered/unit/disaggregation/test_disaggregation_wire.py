@@ -952,6 +952,7 @@ class TestQwen4StateWire(unittest.TestCase):
         pool.get_state_layer_ids = lambda: [2]
         pool.page_size = 4
         pool.qsa_compress_ratio = 2
+        pool.qsa_num_groups = 1
         pool.qsa_compressed_page_size = 2
         pool.full_attention_layer_id_mapping = {}
         pool.qsa_key_state_buffer_pool = []
