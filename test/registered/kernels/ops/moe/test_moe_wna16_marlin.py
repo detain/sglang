@@ -411,6 +411,10 @@ def test_fused_marlin_moe_non_gated_relu2():
     torch.testing.assert_close(output, output_ref, rtol=0.04, atol=0.04)
 
 
+@pytest.mark.skipif(
+    not (is_sm80_supported() or is_sm90_supported()),
+    reason="Marlin MoE GEMM launch test requires CUDA SM8X/SM9X",
+)
 @pytest.mark.parametrize("m", [123, 2304])
 @pytest.mark.parametrize("has_bias", [False, True])
 def test_fused_marlin_moe_large_non_ep_schedule(m, has_bias):
@@ -584,6 +588,10 @@ def test_fused_marlin_moe_nvfp4_non_gated_padded_intermediate_launches():
     assert out.shape == (m, hidden_size)
 
 
+@pytest.mark.skipif(
+    not torch.cuda.is_available(),
+    reason="Marlin repack runs through the gptq_marlin_repack CUDA kernel",
+)
 def test_prepare_moe_nvfp4_marlin_repacks_experts_in_place():
     """Marlin preparation must not hold a second copy of a layer's experts: large NVFP4
     MoE checkpoints ran out of memory at load time while every expert was duplicated."""
