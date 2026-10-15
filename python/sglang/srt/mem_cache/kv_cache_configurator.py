@@ -3106,6 +3106,31 @@ class KVCacheConfigurator:
             assert get_spec().speculative_num_draft_tokens is not None
             assert get_schedule().max_running_requests is not None
 
+        # Speculation may set a default request limit whose state cache does not fit.
+        # Preserve fitting pools, but auto-fit an oversized default to leave KV memory.
+        auto_fit_spec_state = False
+        if (
+            get_memory().disable_radix_cache
+            and reserves_spec_state
+            and not get_schedule().max_running_requests_is_explicit
+        ):
+            # Include the padding slot in the state reservation.
+            request_slots = get_schedule().max_running_requests // self.attn_dp_size + 1
+            # NOTE(fork): charge the verify scratch through _spec_intermediate_bytes
+            # (the same call the ratio-based branch below makes) instead of the
+            # full-snapshot cost stage_per_req * num_draft_tokens. Byte-identical
+            # unless --enable-linear-lossless-verify narrows the scratch to
+            # (u, k, g), where the naive factor would over-state the requirement
+            # and auto-fit a state pool that actually fits.
+            state_bytes_per_slot = (
+                stage_per_req
+                + self._spec_intermediate_bytes(1, pp_layer_scale)
+                + extra_per_slot
+            )
+            required_state_bytes = request_slots * state_bytes_per_slot
+            available_cache_bytes = total_rest_memory * (1 << 30)
+            auto_fit_spec_state = required_state_bytes >= available_cache_bytes
+
         if get_schedule().max_mamba_cache_size is not None:
             # Use explicitly set max_mamba_cache_size
             get_context().override(
@@ -3129,6 +3154,7 @@ class KVCacheConfigurator:
         elif (
             get_memory().disable_radix_cache
             and get_schedule().max_running_requests is not None
+            and not auto_fit_spec_state
         ):
             # Use explicitly set max_running_requests when radix cache is disabled
             get_context().override(
