@@ -1,6 +1,6 @@
 # stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
 #
-# STACK: qwennext-stack-206-2026-10-15
+# STACK: qwennext-stack-208-2026-10-15
 #   main+pr36787+pr37275+pr38144+pr38209+pr36644+pr39862+pr39809+pr39893+local_hicache_qsa_fixes
 #   +pr39614+pr39978+pr40002+pr39065+pr40501+pr40175+pr40362+pr39391+pr37061+pr39333+pr33778
 #   +pr38977+pr39977+pr40480+pr39880+pr40235+pr39807+cpu-triage+boot-fix+plan_updates_perf
@@ -10,7 +10,7 @@
 #   +diffusion-batch-2026-10-08(pr27673+pr28690*+pr32513+pr32550*+pr33036*+pr33588*
 #    +pr36399+pr36767+pr37460*+pr38650+pr39212+pr40493+pr40588+pr40755+pr41340*
 #    +pr41944+pr42249+pr42928*+pr43028*+pr43064*)
-#   (entries 1-206; *=squash/ported, see commit messages. 10-10 added
+#   (entries 1-208; *=squash/ported, see commit messages. 10-10 added
 #   entries 157-161: parser batch A (Qwen3-Coder tool-call fixes + sampling
 #   upper bounds), on top of upstream merge #3 (see synced). 10-10b added
 #   entries 162-166: SM120 batch B (#42863 PCIe-IPC vocab gathers, #42566
@@ -60,6 +60,15 @@
 #   StandardDispatcher gives local expert ids to a layer whose built
 #   runner needs them even under a global-ids --moe-runner-backend pin
 #   (flashinfer_cutlass + triton-fallback FP8 MTP experts).
+#   10-15b added entries 207-208: NVFP4 trial follow-up pair --
+#   207 #38900 Qwen4 loader releases its params_dict snapshot before
+#   quantization post-processing (PLE shard helper self-reference kept
+#   pre-repack Parameters alive until cyclic GC -- NVFP4 load
+#   peak-memory growth), 208 #43524 NVFP4-KV prefill double
+#   global-scale fix (workspace-reading paged + ragged cached-prefix
+#   consumers stop re-applying k/v_scale_float; correctness for
+#   --kv-cache-dtype=nvfp4, inert on fp8_e4m3 KV). Plus the entry-206
+#   dispatcher device-test gate as a standalone commit (99694ade95).
 #   10-08 added entries
 #   136-155: 20 diffusion PRs (4 more evaluated-skipped, see NOT INCLUDED).
 #   09-28 added 22 entries: 9 new PR blocks, new head
@@ -67,7 +76,7 @@
 #   make --enable-mixed-chunk safe and fix the QSA verify ring collision.
 #   * = picked with local modifications, see the entries)
 # branch : qwennext-stack
-# tip    : 213138cadd   (the stack.txt commit sits above it)
+# tip    : bebd2f95e3   (the stack.txt commit sits above it)
 # base   : upstream sgl-project/sglang main @ 7ad55e4386 ([HiCache] TMA-staged
 #          host<->device KV transfer kernel (sm_90+) (#40278), 2026-09-21)
 # synced : upstream main @ f209e67767 (#39643, 2026-09-28) MERGED IN as
@@ -2350,12 +2359,72 @@ STACK, IN BUILD ORDER (bottom first)
       # (test_triton_runner_gets_local_ids_under_cutlass_pin) creates
       # dispatch tensors via get_device(), which raises
       # NotImplementedError with no visible platform -- CUDA-window
-      # class, left as-is per policy; test_mem_pool_ep_unit 49P/4sub;
+      # class; SINCE GATED 10-15b with
+      # @unittest.skipUnless(torch.cuda.is_available()) per the
+      # registered-unit convention (99694ade95): 6P/1S on CVD=9, still
+      # runs on CUDA CI; test_mem_pool_ep_unit 49P/4sub;
       # moe placement+extensions 13P; kernels_namespace 76P; spec dir
       # 333P/9S/180sub EXACT; QSA debt unchanged. GPU debt: with entry
       # 205 -- flashinfer_cutlass+EP e2e of the NVFP4 target + FP8 triton
       # draft experts on 4xSM120 (NEXTN draft extend expert-id mapping
       # correctness). from apply-m.
+
+        207. c350ece9de  PR #38900  release Qwen4 loader parameter snapshot before quantization post-processing (fixes NVFP4 load peak-memory growth)
+      # load_qwen4_exp_ple_shard kept a self-reference through a
+      # function attribute (_warned_downcast), forming
+      # function->closure->self-cell->params_dict retention that pinned
+      # the loader-format Parameters (and the whole snapshot dict)
+      # alive after load_weights returned -- quantization
+      # post-processing replaces those Parameters, so the dead copies
+      # waited on cyclic GC (visible NVFP4 load peak-memory growth).
+      # Fix: per-call `nonlocal ple_warned_downcast` flag (warns once
+      # per load_weights call -- PR test pins that; the retention
+      # cycle is gone; params_dict itself falls out of scope with the
+      # helper). git apply -3 CLEAN zero conflicts despite +860L
+      # host-staging drift in qwen4_exp.py: landed hunks are
+      # loader-region only; _BreakablePLEBatch/prepare_rows staging and
+      # the stale params_dict.pop drop verified intact. New
+      # test_qwen4_loader_lifetime.py 3P/4sub CPU (no CUDA needed --
+      # exercises the real loader via __new__); red-check of the
+      # lifetime assert is structural (gc disabled, weakref released).
+      # Battery CVD=9: ple_staging 37P EXACT; prefill graph runner
+      # helpers 22P/14sub EXACT; sibling qwen4 PLE suites (hash/
+      # packed_short_conv/projection/reuse/table/prefetch_buffers)
+      # 44P/11S; kernels test_qwen4_short_conv 16S (all-CUDA-gated,
+      # collection intact); import smoke ok. GPU debt: actual
+      # peak-memory drop on the NVFP4 ckpt EP4 load (with entries
+      # 205-206 trial boot).
+
+        208. bebd2f95e3  PR #43524  do not re-apply NVFP4 global K/V scales when prefill reads the FP8 dequant workspace
+      # Entry-178 dequant-workspace restore already applies
+      # packed*block_scale*global_scale, but two forward_extend
+      # consumers still passed layer.k/v_scale_float: (1) the paged
+      # prefill overlay call and (2) the ragged cached-prefix paged
+      # read (o2 of the ragged+paged split merged via
+      # _safe_merge_state) -- doubling the checkpoint scales for
+      # non-unit values with --kv-cache-dtype=nvfp4 (wrong logits/
+      # outputs). Fix: k_scale/v_scale become None exactly when
+      # prefill_uses_dequant_workspace; ordinary fp8_e4m3/legacy reads
+      # keep their scales (workspace=False arms pin this). git apply
+      # -3 landed both hunks CLEAN on the heavily-customized file
+      # (KVLocPlan sync-free plan, entry-175 ragged wrapper lists,
+      # dq_page_table all survive; git diff = +18/-4 pure PR
+      # semantics). PR test adapted to the stack (stub-only, semantics
+      # untouched): forward_metadata gains prefill_wrappers_ragged=None
+      # (entry-175 list route falls back to the backend attr) and the
+      # batch stub gains a plain-prefill forward_mode (our workspace
+      # read starts with the target-verify/draft-extend reject guard).
+      # Red/green verified: 2 SUBFAILED (workspace=True arms) at
+      # pre-fix HEAD, 1P/4sub green post-fix -- numerically checks
+      # paged+ragged prefill and the cached-prefix merge against a
+      # hand-computed attention reference with k_scale=2/v_scale=4.
+      # Battery CVD=9: test_flashinfer_nvfp4_speculative 6P EXACT
+      # (other dequant_workspace consumer file); spec dir 333P/9S/
+      # 180sub EXACT; spec_kv_indices_grid 3S; kv_loc_plan 14P;
+      # pcie_sel+pcie_ar 64P/30sub (= pinned 30+34/15+15 union);
+      # flashinfer_backend import smoke ok. GPU debt: nvfp4-KV prefill
+      # scale correctness e2e when the trial actually runs
+      # --kv-cache-dtype=nvfp4 (inert on prod fp8_e4m3 KV).
 
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
