@@ -2017,6 +2017,7 @@ def test_weights_stay_on_the_mapping_when_copies_do_not_fit(tmp_path, monkeypatc
     assert not manager._consolidated_cpu_weights.get(0)
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
 def test_weights_are_copied_when_they_fit(tmp_path, monkeypatch):
     if not pathlib.Path("/proc/self/maps").exists():
         pytest.skip("needs /proc to tell a mapping from anonymous memory")
@@ -2069,6 +2070,7 @@ def test_the_mapped_store_survives_the_placeholder(tmp_path, monkeypatch):
     ), "the byte counter and the store must describe the same weights"
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
 def test_only_the_layers_the_budget_covers_are_pinned(tmp_path, monkeypatch):
     if not pathlib.Path("/proc/self/maps").exists():
         pytest.skip("needs /proc to tell a mapping from anonymous memory")
@@ -2090,6 +2092,7 @@ def test_only_the_layers_the_budget_covers_are_pinned(tmp_path, monkeypatch):
     assert not (pinned & mapped), "a layer is in one store or the other"
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
 def test_pins_are_given_back_when_they_do_not_fit_the_host(tmp_path, monkeypatch):
     if not pathlib.Path("/proc/self/maps").exists():
         pytest.skip("needs /proc to tell a mapping from anonymous memory")
@@ -2114,6 +2117,7 @@ def test_pins_are_given_back_when_they_do_not_fit_the_host(tmp_path, monkeypatch
     assert pinned == {0}
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
 def test_replacing_an_anonymous_original_is_not_charged_as_new(tmp_path, monkeypatch):
     if not pathlib.Path("/proc/self/maps").exists():
         pytest.skip("needs /proc to tell a mapping from anonymous memory")
@@ -2151,6 +2155,7 @@ def test_replacing_an_anonymous_original_is_not_charged_as_new(tmp_path, monkeyp
     assert all(manager._consolidated_cpu_weights.get(i) for i in range(4))
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
 def test_every_layer_is_pinned_when_the_budget_covers_them(tmp_path, monkeypatch):
     if not pathlib.Path("/proc/self/maps").exists():
         pytest.skip("needs /proc to tell a mapping from anonymous memory")
@@ -2321,6 +2326,7 @@ def test_non_layer_parking_follows_memory_performance_mode(monkeypatch):
     assert not relaxed.park_non_layer_weights_between_uses
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
 def test_parking_leaves_streamed_layer_weights_alone(monkeypatch):
     """Only the parameters no manager streams are moved to the host."""
     comp = _ParkableResidentComponent(4)
@@ -2368,6 +2374,7 @@ def test_parking_is_skipped_when_the_card_has_room(monkeypatch):
     assert not comp._parked_non_layer_weights
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
 def test_parking_happens_when_the_headroom_is_small(monkeypatch):
     comp = _ParkableResidentComponent(4)
     comp.configure_layerwise_offload(_server_args(performance_mode="memory"))
@@ -2376,6 +2383,7 @@ def test_parking_happens_when_the_headroom_is_small(monkeypatch):
     assert comp._parked_non_layer_weights
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
 def test_host_copies_are_given_back_when_room_appears(monkeypatch):
     """Skipping must not leave host memory held for a park that will not happen."""
     comp = _ParkableResidentComponent(4)
@@ -2390,6 +2398,7 @@ def test_host_copies_are_given_back_when_room_appears(monkeypatch):
     assert not comp._parked_non_layer_weights, "host copies should be released"
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
 def test_releasing_host_copies_restores_placeholders(monkeypatch):
     """When room appears, release host copies but restore parameters from placeholders."""
     local_device = layerwise_offload_mod.current_platform.get_local_torch_device()
