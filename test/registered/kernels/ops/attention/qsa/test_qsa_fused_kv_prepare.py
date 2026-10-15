@@ -14,6 +14,15 @@ from sglang.test.ci.ci_register import register_cuda_ci
 register_cuda_ci(est_time=60, stage="base-b-kernel-unit", runner_config="1-gpu-large")
 
 
+def _unsharded_runtime():
+    """The construction contract every pool publishes, even a __new__ stub."""
+    from sglang.srt.layers.attention.qsa.cache_sharding import (
+        QSACacheShardingRuntime,
+    )
+
+    return QSACacheShardingRuntime(size=1, rank=0, group=None)
+
+
 @pytest.mark.parametrize("requests", [1, 3, 8, 128])
 @pytest.mark.parametrize("width", [1, 4])
 @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float8_e4m3fn])
@@ -121,6 +130,7 @@ def test_qsa_pool_routes_to_fused_prepare(monkeypatch, width):
     storage.dtype = torch.bfloat16
     pool = QSATokenToKVPool.__new__(QSATokenToKVPool)
     pool.full_kv_pool = storage
+    pool.cache_sharding_runtime = _unsharded_runtime()
     cache = torch.zeros(64, 2, 256, device="cuda", dtype=torch.bfloat16)
     pool.get_key_buffer = lambda layer_id: cache
     pool.get_value_buffer = lambda layer_id: cache.clone()
@@ -417,11 +427,14 @@ def test_fused_pool_eligibility(dtype, quantized, wrapped):
     if wrapped:
         pool = QSATokenToKVPool.__new__(QSATokenToKVPool)
         pool.full_kv_pool = storage
+    pool.cache_sharding_runtime = _unsharded_runtime()
     backend = QwenSparseAttnBackend(SimpleNamespace(token_to_kv_pool=pool))
     assert backend._fused_kv_pool_eligible == (not quantized and dtype != torch.float16)
     assert not QwenSparseAttnBackend()._fused_kv_pool_eligible
+    bare = SimpleNamespace()
+    bare.cache_sharding_runtime = _unsharded_runtime()
     assert not QwenSparseAttnBackend(
-        SimpleNamespace(token_to_kv_pool=object())
+        SimpleNamespace(token_to_kv_pool=bare)
     )._fused_kv_pool_eligible
 
 
@@ -447,6 +460,7 @@ def test_defer_expansion_metadata(mode_name, ratio, budget, monkeypatch):
     storage.quant_method = UnquantizedKVCacheMethod()
     pool = QSATokenToKVPool.__new__(QSATokenToKVPool)
     pool.full_kv_pool = storage
+    pool.cache_sharding_runtime = _unsharded_runtime()
     pool.qsa_compress_ratio = ratio
     pool.qsa_block_topk = budget // ratio
     pool.qsa_compressed_page_size = 64 // ratio

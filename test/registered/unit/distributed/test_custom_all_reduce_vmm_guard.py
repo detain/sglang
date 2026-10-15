@@ -13,6 +13,8 @@ falls through to v1. That combination is what these tests pin.
 
 from unittest.mock import Mock
 
+import pytest
+
 from sglang.srt.distributed.device_communicators import custom_all_reduce
 from sglang.test.ci.ci_register import register_cpu_ci
 
@@ -61,6 +63,10 @@ def test_disabled_on_vmm_backed_allocator(monkeypatch):
     assert not hasattr(comm, "_ptr")
 
 
+@pytest.mark.skipif(
+    not hasattr(custom_all_reduce.ops, "meta_size"),
+    reason="custom allreduce ops extension is not loaded on this host",
+)
 def test_guard_does_not_fire_on_cuda_malloc_allocator(monkeypatch):
     """Default allocator -> the guard is transparent and v1 proceeds."""
     created = _patch_v1(monkeypatch, uses_vmm=False)

@@ -316,9 +316,12 @@ def _cross_prefix_case(monkeypatch, use_fused: bool, captured: dict):
         captured["rope"] = rope_positions
         return pooled
 
-    def _capture_fused_store(pool, group_locs, write_locs, source_keys, source_rope):
+    def _capture_fused_store(
+        pool, group_locs, owner_mask, write_locs, source_keys, source_rope
+    ):
         captured["fused"] = SimpleNamespace(
             group_locs=group_locs,
+            owner_mask=owner_mask,
             write_locs=write_locs,
             source_keys=source_keys,
             source_rope=source_rope,
@@ -407,7 +410,9 @@ def test_qsa_cross_prefix_fused_scratch_denotes_the_same_groups(monkeypatch):
     # would mean the scratch rope was gathered from the other group.
     assert fused.source_rope[fused.group_locs[0, 0].long()][0].item() == 8
     assert fused.source_rope[fused.group_locs[1, 0].long()][0].item() == 99
-    # Non-straddling group is routed to the inert reserved slot 0.
+    # Non-straddling group is inert: owner-masked out of the kernel launch and
+    # routed to the reserved slot 0 as a safe address.
+    assert fused.owner_mask.tolist() == [True, False]
     assert fused.write_locs.tolist() == [3, 0]
     assert torch.count_nonzero(pool.compressed) == 0
 
@@ -1274,6 +1279,7 @@ def test_distributed_topk_matches_test_oracle_for_ties_and_ragged_shards():
     )
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("topk", [512, 2048])
 def test_page_sharded_local_topk_matches_global_ids_without_ties(topk):
     torch.manual_seed(20261013 + topk)
@@ -1293,6 +1299,7 @@ def test_page_sharded_local_topk_matches_global_ids_without_ties(topk):
     )
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("topk", [512, 2048])
 def test_page_sharded_local_topk_preserves_score_multiset_at_boundary_ties(topk):
     scores = torch.full(

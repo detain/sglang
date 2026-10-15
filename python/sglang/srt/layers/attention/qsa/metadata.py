@@ -232,43 +232,15 @@ class QSAIndexerMetadata(msgspec.Struct, frozen=True):
                 f"positions={positions.numel()}, mapping={num_valid_tokens}"
             )
         if self.prefill_page_table is not None:
-            # Cache sharding: the pack is a flat index_select of this rank's
-            # local compressed blocks and the ragged ranges clip to the blocks
-            # locally visible per row (no host syncs).
-            if (
-                self.prefill_lengths is None
-                or self.prefill_block_positions is None
-                or self.prefill_cache_indices is None
-            ):
-                raise RuntimeError("QSA local prefill page metadata is incomplete")
-            ratio = self.compress_ratio
-            compressed_buffer = self.token_to_kv_pool.get_qsa_compressed_k_buffer(
-                layer_id
+            # Cache sharding: this rank only scores its local compressed
+            # blocks; keep that path in its own helper so the unsharded
+            # hot-path guards (no eager gather chain) stay source-scoped.
+            return self._get_sharded_prefill_mqa_inputs(
+                layer_id,
+                positions[:num_valid_tokens],
+                query_sequence_ids.long(),
+                sequence_lengths,
             )
-            compressed_keys = compressed_buffer.index_select(
-                0, self.prefill_cache_indices
-            )
-            positions = positions[:num_valid_tokens]
-            cumulative = torch.nn.functional.pad(
-                self.prefill_lengths.to(torch.int32).cumsum(0), (1, 0)
-            ).to(torch.int32)
-            sequence_ids = query_sequence_ids.long()
-            row_starts = cumulative.index_select(0, sequence_ids)
-            visible_blocks = torch.div(
-                positions.to(sequence_lengths.device, dtype=torch.int64) + 1,
-                ratio,
-                rounding_mode="floor",
-            )
-            visible_local = count_visible_local_blocks(
-                self.prefill_block_positions,
-                self.prefill_lengths,
-                sequence_ids,
-                visible_blocks,
-                logical_position_capacity=(self.token_slot_table.shape[1] + ratio - 1)
-                // ratio,
-            )
-            row_ends = row_starts + visible_local
-            return compressed_keys, row_starts, row_ends, sequence_lengths
         if (
             self.prefill_compressed_cu_seqlens is None
             or self.prefill_row_starts is None
@@ -303,6 +275,44 @@ class QSAIndexerMetadata(msgspec.Struct, frozen=True):
             self.prefill_row_ends,
             sequence_lengths,
         )
+
+    def _get_sharded_prefill_mqa_inputs(
+        self,
+        layer_id: int,
+        positions: torch.Tensor,
+        sequence_ids: torch.Tensor,
+        sequence_lengths: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Local-block prefill pack: flat gather + locally visible ragged rows."""
+
+        if (
+            self.prefill_lengths is None
+            or self.prefill_block_positions is None
+            or self.prefill_cache_indices is None
+        ):
+            raise RuntimeError("QSA local prefill page metadata is incomplete")
+        ratio = self.compress_ratio
+        compressed_buffer = self.token_to_kv_pool.get_qsa_compressed_k_buffer(layer_id)
+        compressed_keys = compressed_buffer.index_select(0, self.prefill_cache_indices)
+        cumulative = torch.nn.functional.pad(
+            self.prefill_lengths.to(torch.int32).cumsum(0), (1, 0)
+        ).to(torch.int32)
+        row_starts = cumulative.index_select(0, sequence_ids)
+        visible_blocks = torch.div(
+            positions.to(sequence_lengths.device, dtype=torch.int64) + 1,
+            ratio,
+            rounding_mode="floor",
+        )
+        visible_local = count_visible_local_blocks(
+            self.prefill_block_positions,
+            self.prefill_lengths,
+            sequence_ids,
+            visible_blocks,
+            logical_position_capacity=(self.token_slot_table.shape[1] + ratio - 1)
+            // ratio,
+        )
+        row_ends = row_starts + visible_local
+        return compressed_keys, row_starts, row_ends, sequence_lengths
 
     def get_decode_mqa_inputs(
         self, layer_id: int

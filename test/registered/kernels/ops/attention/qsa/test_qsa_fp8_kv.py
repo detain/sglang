@@ -293,6 +293,7 @@ def test_qsa_fp8_cache_write_preserves_prefill_kv():
     )
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_qsa_trtllm_decode_receives_fp8_kv_descales(monkeypatch):
     seen = {}
 
@@ -319,7 +320,9 @@ def test_qsa_trtllm_decode_receives_fp8_kv_descales(monkeypatch):
         req_to_token=torch.arange(8, dtype=torch.int32).reshape(1, 8)
     )
     backend._fa2_scratch = {}
+    backend.qsa_profile = None
     backend._trtllm_sparse_tables = {}
+    backend._trtllm_counters = {}
     backend._trtllm_workspace = torch.empty(1, dtype=torch.uint8)
     backend._cuda_graph_max_tokens = 0
     layer = SimpleNamespace(scaling=0.125, k_scale_float=0.25, v_scale_float=0.5)

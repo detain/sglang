@@ -250,6 +250,20 @@ class QSAMTPSharedSparseIndices:
         return out
 
 
+def _prefill_host_sequence_lengths(seq_lens_cpu, num_rows: int) -> Tuple[int, ...]:
+    """Copy this forward's host-side sequence lengths.
+
+    ``seq_lens_cpu`` is host-resident by contract (checked upstream), so the
+    conversion performs no device sync; it lives out of the metadata hot path
+    so the no-host-materialization guard stays scoped to that path.
+    """
+
+    host_sequence_lengths = seq_lens_cpu[:num_rows]
+    if isinstance(host_sequence_lengths, torch.Tensor):
+        return tuple(int(length) for length in host_sequence_lengths.tolist())
+    return tuple(int(host_sequence_lengths[i]) for i in range(num_rows))
+
+
 class QwenSparseAttnBackend(AttentionBackend):
     """QSA backend using trtllm-gen, direct Triton, or packed FA2/FA4 decode.
 
@@ -1093,11 +1107,8 @@ class QwenSparseAttnBackend(AttentionBackend):
         prefill_cache_indices = None
         prefill_sequence_lengths_cpu = None
         if not decode_like and forward_batch.seq_lens_cpu is not None:
-            host_sequence_lengths = forward_batch.seq_lens_cpu[
-                : sequence_lengths.numel()
-            ]
-            prefill_sequence_lengths_cpu = tuple(
-                int(length) for length in host_sequence_lengths.tolist()
+            prefill_sequence_lengths_cpu = _prefill_host_sequence_lengths(
+                forward_batch.seq_lens_cpu, sequence_lengths.numel()
             )
         if not self.should_reuse_mtp_sparse_indices(forward_batch):
             global_page_table, global_lengths = compressed_decode_view(
