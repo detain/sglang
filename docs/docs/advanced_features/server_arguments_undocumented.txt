@@ -32,6 +32,7 @@
 --enable-flexkv
 --enable-layernorm-sp
 --enable-lean-attention
+--enable-linear-lossless-verify
 --enable-linear-replayssm
 --enable-linear-replayssm-spec
 --enable-linker-mla-dedup
@@ -66,6 +67,7 @@
 --otlp-service-name
 --prefill-decode-interval
 --prefill-kv-cache-dequant-dtype
+--qsa-cache-sharding-size
 --qsa-indexer-dtype
 --radix-eviction-policy-config
 --return-input-ids
