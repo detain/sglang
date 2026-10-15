@@ -123,11 +123,15 @@ class TestPleClearIsOffloadSafe(CustomTestCase):
         ngram.context = _OffloadedStorage()
         pool = _hybrid_pool(short_conv, ngram)
 
+        generation_before = pool.req_generation.clone()
+
         pool.clear()
 
         self.assertEqual(pool.free_slots, list(range(1, NUM_SLOTS)))
         self.assertTrue(pool.mamba_allocator.cleared)
-        self.assertTrue(bool((pool.req_generation == 0).all()))
+        # Upstream #43439: req_generation must stay monotonic across clear()
+        # (readers detect row reuse by equality), so clearing leaves it intact.
+        self.assertTrue(bool((pool.req_generation == generation_before).all()))
         self.assertTrue(bool((pool.req_index_to_mamba_index_mapping == 0).all()))
 
     def test_disabled_pools_clear_without_storage(self):
