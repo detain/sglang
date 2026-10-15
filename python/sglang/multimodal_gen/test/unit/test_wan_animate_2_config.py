@@ -324,6 +324,9 @@ class _RotatedQuantConfig:
         return UnquantizedLinearMethod()
 
 
+@pytest.mark.skipif(
+    not torch.cuda.is_available(), reason="parallel runtime fixture needs a CUDA device"
+)
 def test_block_refuses_a_checkpoint_with_offline_qk_rotation(monkeypatch):
     # The parent block registers q_rot / k_rot and applies them in its own attention
     # path; forward_ref / forward_gen never do, so loading would be silently wrong.
@@ -439,6 +442,9 @@ def _checkpoint_keys() -> list[str]:
     return keys
 
 
+@pytest.mark.skipif(
+    not torch.cuda.is_available(), reason="parallel runtime fixture needs a CUDA device"
+)
 def test_every_checkpoint_key_maps_onto_a_distinct_dit_parameter():
     """The DiT loads with the shared Wan rules plus the Wan-Animate-2 extras; a rule that
     stops matching leaves a tensor unmapped (skipped with a warning) or lands two tensors on
