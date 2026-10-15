@@ -709,13 +709,13 @@ def test_run_cached_causal_conv_falls_back_for_convs_without_epilogue():
     """SpatialParallelCausalConv3d (SP-decoded Wan VAE) keeps the plain
     ``forward(x, cache_x=None)`` signature; passing the #38650 epilogue
     kwargs there crashed production decode with
-    "unexpected keyword argument 'residual'". The cached-conv runner must
-    detect epilogue support and keep the bit-identical eager chain."""
+    "unexpected keyword argument 'residual'". The cached-conv runner gates
+    the epilogue on isinstance(conv, WanCausalConv3d) (upstream faaff89ceb)
+    and keeps the bit-identical eager chain otherwise."""
     import torch.nn as nn
     import torch.nn.functional as Fn
     from sglang.multimodal_gen.runtime.models.vaes.wanvae import (
         WanCausalConv3d,
-        _conv_supports_epilogue,
         _run_cached_causal_conv,
     )
 
@@ -742,8 +742,9 @@ def test_run_cached_causal_conv_falls_back_for_convs_without_epilogue():
     torch.manual_seed(0)
     c = 8
     conv = PlainCausal(c, c, 3, padding=1)
-    assert not _conv_supports_epilogue(conv)
-    assert _conv_supports_epilogue(WanCausalConv3d(c, c, 3, padding=1))
+    # upstream faaff89ceb gates the epilogue call on the Wan conv class itself
+    assert not isinstance(conv, WanCausalConv3d)
+    assert isinstance(WanCausalConv3d(c, c, 3, padding=1), WanCausalConv3d)
 
     x = torch.randn(1, c, 2, 5, 6)
     h = torch.randn(1, c, 2, 5, 6)
