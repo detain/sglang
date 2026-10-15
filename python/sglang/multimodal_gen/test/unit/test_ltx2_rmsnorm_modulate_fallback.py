@@ -24,8 +24,13 @@ from sglang.kernels.ops.diffusion import can_use_fused_rmsnorm_modulation
 from sglang.kernels.ops.diffusion.common.platform import is_cuda
 
 
-# Not torch.cuda.is_available(): ROCm answers it too, and has no such kernel.
-@unittest.skipUnless(is_cuda(), "the fused kernel is CUDA-only")
+# is_cuda() is a platform-build answer, so it stays True when no device is
+# visible (ROCm also says yes to torch.cuda.is_available and has no such
+# kernel): require the CUDA platform *and* a visible device.
+@unittest.skipUnless(
+    is_cuda() and torch.cuda.is_available(),
+    "the fused kernel is CUDA-only and needs a visible device",
+)
 class TestFusedRmsNormModulationGuard(unittest.TestCase):
     """The guard answers exactly the question the launcher would raise on."""
 

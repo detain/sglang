@@ -765,6 +765,9 @@ def _ensure_single_process_parallel_runtime() -> None:
     maybe_init_distributed_environment_and_model_parallel(tp_size=1, sp_size=1)
 
 
+@pytest.mark.skipif(
+    not torch.cuda.is_available(), reason="parallel runtime fixture needs a CUDA device"
+)
 def test_dit_constructs_only_its_own_blocks():
     """Every block the DiT constructs is the in-context block; the parent's block set is not
     built and then replaced (40 block objects per construction, allocated on whatever device
