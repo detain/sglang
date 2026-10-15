@@ -2214,7 +2214,11 @@ class LayerwiseOffloadManager:
                 mapped_cpu_weights=self._mapped_cpu_weights,
                 weight_metadata=self._weight_metadata,
                 device=self.device,
-                pin_slots=current_platform.is_cuda(),
+                # Pinned staging needs a live accelerator even on a CUDA
+                # build: with no visible device torch's pin_memory path
+                # raises and the whole courier would retire (tests and CPU
+                # runners keep it as a plain pageable-staging thread).
+                pin_slots=current_platform.is_cuda() and torch.cuda.is_available(),
                 # Measured on a GB10: a copy_ straight from file-backed pages ran
                 # at 0.67 GiB/s (the driver stages pageable sources page by
                 # page) and the process's anonymous memory grew past 100 GiB;
@@ -2775,6 +2779,11 @@ class LayerwiseOffloadableModuleMixin:
         """Managed parameter names, including ``*.base_layer.weight`` aliases."""
         names: set[str] = set()
         for manager in self.layerwise_offload_managers:
+            # A manager built with the device module unavailable (CPU-only
+            # host) early-returns from __init__ and never streams anything,
+            # so it owns no weight metadata; park everything it left alone.
+            if not manager.enabled:
+                continue
             for layer_names in manager._weight_metadata.values():
                 for name in layer_names:
                     names.update(offload_param_name_aliases(name))
