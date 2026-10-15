@@ -1,6 +1,6 @@
 # stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
 #
-# STACK: qwennext-stack-178-2026-10-10
+# STACK: qwennext-stack-178-2026-10-14
 #   main+pr36787+pr37275+pr38144+pr38209+pr36644+pr39862+pr39809+pr39893+local_hicache_qsa_fixes
 #   +pr39614+pr39978+pr40002+pr39065+pr40501+pr40175+pr40362+pr39391+pr37061+pr39333+pr33778
 #   +pr38977+pr39977+pr40480+pr39880+pr40235+pr39807+cpu-triage+boot-fix+plan_updates_perf
@@ -49,6 +49,39 @@
 #          as c0ace50b68 on top of the entry-156 header sync c4925776ae,
 #          follow-up b5f59fda03 (stale-test/dead-code fallout); resolutions
 #          in the merge commit messages.
+#          FOURTH merge 10-14: main @ 12dc623102 (#43451, 337 commits)
+#          merged as 8639319153 on top of 3a0e067d4c (entry 178 tip),
+#          follow-ups d6b9eb1c73 (qsa packed-decode descale call-site fix
+#          + stale _PLEBatch test stubs + serving_base/asyncio),
+#          e6158ae56b (autotune-sync Mock/nullcontext imports LOST in
+#          auto-merge + 7-file ruff-format drift) and 1d9ad9272c (PLE
+#          pools pinned off in GDN circular-commit stub). Key upstream
+#          landings: FI req pin 0.7.1 (130e11d50e -- NOT installed in the
+#          prod venv, PCIe-IPC 162-164 still inert until venv bump),
+#          decode-graph max_bs clamp to max_running_requests (33f6b00f32/
+#          #43172), rope_theta preserve 44b44774c3 (entry-173 class),
+#          #43444/#43538 truncation-align boot guard over entry-177's
+#          invariant (UNIONed in schedule_policy), QSA prefill KV pack
+#          #41933 (union with our FP8-descale path), sglang-renderer
+#          crate REMOVED (#43451; our #42779 rust port survives in
+#          sglang-server message/sampling.rs -- upstream landed the
+#          same bound), upstream DSpark series + packed target verify
+#          (#43037) + DFLASH verify mask (#43054). Resolutions in the
+#          merge commit message.
+# updated: 2026-10-14 (merge #4 -- see synced/FOURTH merge above; header
+#          bumped to 178-2026-10-14; no new entries in this batch).
+#          Battery: import smoke srt+multimodal_gen+speculative 100%
+#          (norm_triton lazy-facade CUDA-at-import = known env); mega
+#          single-process unit run CONTAMINATED (2563 phantom fails) --
+#          per-file isolation confirmed all clean incl the 9 spec fails
+#          narrowing to 3 needs-CUDA-true files (eagle_seeded_coins,
+#          fast_prefill_plan = env; ngram_mamba stub fixed); function_call
+#          644P (upstream deleted 3 tests, source untouched); kernels
+#          namespace 71P; hicache/mamba/qsa/ple/pool suites green;
+#          cargo workspace 486P + to_scheduler 31P + radix-tree 931P.
+#          TODO(merge-4) debt: ltx_2/decoding_av.py split-stage design
+#          did NOT port upstream's #43667 EncodeWhileDecoding streaming
+#          + rank-0 retain_decoded_frames gating (marker in file).
 # updated: 2026-10-10 (10-10e: entry 178 -- PR #43247 applied as squash
 #          (skip reversed: NVFP4 KV = active future config for the
 #          RDXA/NVDA NVFP4 trialings; 4 conflicts union-resolved in
@@ -1921,6 +1954,15 @@ WATCH LIST (re-evaluate before next sync)
 CAVEATS
 ==============================================================================
 
+  * MERGE #4 CPU-BATTERY METHOD 2026-10-14: a single-process
+    `pytest test/registered/unit` mega-run reports ~2500 FAILS that all
+    PASS in per-file isolation (import-order/state contamination; the
+    262 collection errors are the known CUDA-at-import env class). Use
+    per-file runs as the merge gate. test_mistral_common_xgrammar.py can
+    HANG (network fetch at import; killed by timeout in sweep -- env).
+    flashinfer requirement is now 0.7.1 (upstream 130e11d50e) but the
+    prod .venv has 0.7.0.post1: PCIe-IPC vocab gathers (entries 162-164)
+    stay INERT until the venv is bumped (user action; do NOT pip here).
   * 09-28 BUILD BOOTED 2026-09-28 (TP2 next8.sh on GPUs 0-1, and the
     118-125 test servers on GPUs 2-3): no import breaks. Entry 102's A/B vs
     --enable-linear-replayssm-spec off is still owed.

@@ -877,6 +877,9 @@ class TestQwen4StateWire(unittest.TestCase):
         pool.page_size = 4
         pool.qsa_compress_ratio = 2
         pool.qsa_compressed_page_size = 2
+        # get_qsa_pending_state_buf_infos fans out per key-state group
+        # (the *qsa_num_groups expansion); a plain pool has one group.
+        pool.qsa_num_groups = 1
         pool.full_attention_layer_id_mapping = {layer_id: 0}
         pool.qsa_key_state_buffer_pool = [torch.zeros((6, 1, 8), dtype=torch.bfloat16)]
         pool.qsa_rope_position_buffer = torch.zeros((6, 3), dtype=torch.int64)

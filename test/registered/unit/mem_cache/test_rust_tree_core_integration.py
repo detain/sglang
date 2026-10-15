@@ -2335,6 +2335,10 @@ def test_hybrid_backup_pool_pressure_preserves_host_victim(backend):
         pool = Mock(can_use_write_back_jit=False)
         pool.alloc.side_effect = lambda count, ct=ct: allocate(count, ct)
         pool.free.side_effect = lambda indices, ct=ct: release(indices, ct)
+        # The host-reclaim path consults available_size() before deciding to
+        # drive eviction; report the simulated free slots (a bare Mock would
+        # leak into `int - Mock` arithmetic).
+        pool.available_size.side_effect = lambda ct=ct: len(free_slots[ct])
         entries.append(
             PoolEntry(
                 name=name,
