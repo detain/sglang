@@ -19,6 +19,14 @@ from dataclasses import dataclass
 from typing import Callable
 
 import torch
+import pytest
+
+if not torch.cuda.is_available():
+    pytest.skip(
+        "bench fixtures build device-backed KV pools (register_cuda_ci / register_amd_ci; CPU CI never runs this file)",
+        allow_module_level=True,
+    )
+
 
 from sglang.kernels.ops.attention.fla.chunk_delta_h import CHUNK_SIZE as FLA_CHUNK_SIZE
 from sglang.srt.configs.mamba_utils import Mamba2CacheParams, Mamba2StateShape

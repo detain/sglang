@@ -1,6 +1,14 @@
 import unittest
 
 import torch
+import pytest
+
+if not torch.cuda.is_available():
+    pytest.skip(
+        'fixtures allocate device="cuda" allocator/pool buffers (register_cuda_ci kernel-unit file; CPU CI never runs this file)',
+        allow_module_level=True,
+    )
+
 
 from sglang.srt.mem_cache.unified_memory_pool import init_unified_swa_pools
 from sglang.srt.runtime_context import publish, reset_context

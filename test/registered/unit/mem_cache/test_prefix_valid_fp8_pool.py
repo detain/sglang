@@ -5,6 +5,14 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import torch
+import pytest
+
+if not torch.cuda.is_available():
+    pytest.skip(
+        "pool fixtures allocate FP8 KV buffers on a real accelerator (register_cuda_ci / register_amd_ci; CPU CI never runs this file)",
+        allow_module_level=True,
+    )
+
 
 from sglang.kernels.ops.quantization.fp8_kernel import fp8_dtype, is_fp8_fnuz
 from sglang.srt.mem_cache.memory_pool import MHATokenToKVPool, _resolve_fused_scale

@@ -1186,6 +1186,10 @@ class TestRadixCache(CustomTestCase):
             # Should have 1 page (split at page_size=2)
             self.assertEqual(len(node.hash_value), 1)
 
+    @unittest.skipUnless(
+        torch.cuda.is_available(),
+        "memory_allocated reads CUDA allocator stats (needs a visible GPU)",
+    )
     def test_memory_allocated(self):
         keys, values = [], []
 
