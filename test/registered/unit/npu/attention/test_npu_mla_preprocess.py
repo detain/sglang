@@ -170,12 +170,15 @@ class TestIsFiaNz(unittest.TestCase):
         ):
             self.assertTrue(is_fia_nz())
 
-    def test_fia_nz_without_mlapo_raises(self):
+    def test_fia_nz_without_mlapo_is_independent(self):
+        # is_fia_nz is a cache-layout switch, not MLAPO-gated: the former
+        # assertion against a missing SGLANG_NPU_USE_MLAPO was deliberately
+        # dropped (see the is_fia_nz docstring) so FIA NZ works on the
+        # ordinary MLA path too.
         with patch.dict(os.environ):
             os.environ.pop("SGLANG_NPU_USE_MLAPO", None)
             os.environ["SGLANG_USE_FIA_NZ"] = "1"
-            with self.assertRaises(AssertionError):
-                is_fia_nz()
+            self.assertTrue(is_fia_nz())
 
 
 if __name__ == "__main__":
