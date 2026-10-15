@@ -1,6 +1,6 @@
 # stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
 #
-# STACK: qwennext-stack-199-2026-10-14
+# STACK: qwennext-stack-204-2026-10-15
 #   main+pr36787+pr37275+pr38144+pr38209+pr36644+pr39862+pr39809+pr39893+local_hicache_qsa_fixes
 #   +pr39614+pr39978+pr40002+pr39065+pr40501+pr40175+pr40362+pr39391+pr37061+pr39333+pr33778
 #   +pr38977+pr39977+pr40480+pr39880+pr40235+pr39807+cpu-triage+boot-fix+plan_updates_perf
@@ -10,7 +10,7 @@
 #   +diffusion-batch-2026-10-08(pr27673+pr28690*+pr32513+pr32550*+pr33036*+pr33588*
 #    +pr36399+pr36767+pr37460*+pr38650+pr39212+pr40493+pr40588+pr40755+pr41340*
 #    +pr41944+pr42249+pr42928*+pr43028*+pr43064*)
-#   (entries 1-199; *=squash/ported, see commit messages. 10-10 added
+#   (entries 1-204; *=squash/ported, see commit messages. 10-10 added
 #   entries 157-161: parser batch A (Qwen3-Coder tool-call fixes + sampling
 #   upper bounds), on top of upstream merge #3 (see synced). 10-10b added
 #   entries 162-166: SM120 batch B (#42863 PCIe-IPC vocab gathers, #42566
@@ -42,6 +42,17 @@
 #   (spec-KV token-block index, speculative grammar masks), 196-198
 #   apply-h (mamba-radix correctness trio), 199 apply-i (batched
 #   hicache write-through backups, default OFF).
+#   10-15 follow-up wave added entries 200-204: 200 #43527 QSA cache
+#   sharding (--qsa-cache-sharding-size default 1 = OFF; SM120 -> NCCL
+#   candidate transport), 201 #39716 tokenizer-clone parallel request
+#   preprocessing (DEFAULT-ON behavior change at restart), 202 #38650
+#   reconcile verdict (upstream faaff89ceb adopted, entry-156 helper
+#   dropped as subsumed), 203 #42388 --enable-linear-lossless-verify
+#   (default OFF; mutually exclusive with --enable-linear-replayssm-
+#   spec), 204 no-GPU test maintenance (hisparse/latch/wan+ltx2 gates).
+#   The prod venv ALSO moved flashinfer 0.7.0.post1 -> 0.7.1 (venv-only,
+#   no repo diff): PCIe-IPC entries 162-164 NOW ACTIVE next restart,
+#   #44115 re-skipped -- see CAVEATS.
 #   10-08 added entries
 #   136-155: 20 diffusion PRs (4 more evaluated-skipped, see NOT INCLUDED).
 #   09-28 added 22 entries: 9 new PR blocks, new head
@@ -49,7 +60,7 @@
 #   make --enable-mixed-chunk safe and fix the QSA verify ring collision.
 #   * = picked with local modifications, see the entries)
 # branch : qwennext-stack
-# tip    : 2f31a7e3fc   (the stack.txt commit sits above it)
+# tip    : c8792c2aac   (the stack.txt commit sits above it)
 # base   : upstream sgl-project/sglang main @ 7ad55e4386 ([HiCache] TMA-staged
 #          host<->device KV transfer kernel (sm_90+) (#40278), 2026-09-21)
 # synced : upstream main @ f209e67767 (#39643, 2026-09-28) MERGED IN as
@@ -67,8 +78,9 @@
 #          e6158ae56b (autotune-sync Mock/nullcontext imports LOST in
 #          auto-merge + 7-file ruff-format drift) and 1d9ad9272c (PLE
 #          pools pinned off in GDN circular-commit stub). Key upstream
-#          landings: FI req pin 0.7.1 (130e11d50e -- NOT installed in the
-#          prod venv, PCIe-IPC 162-164 still inert until venv bump),
+#          landings: FI req pin 0.7.1 (130e11d50e -- prod venv bumped to
+#          0.7.1 2026-10-15, PCIe-IPC 162-164 ACTIVE from the next
+#          restart),
 #          decode-graph max_bs clamp to max_running_requests (33f6b00f32/
 #          #43172), rope_theta preserve 44b44774c3 (entry-173 class),
 #          #43444/#43538 truncation-align boot guard over entry-177's
@@ -87,6 +99,31 @@
 #          batch branched off the then-tip; g->h->i auto-merged the
 #          rust-side overlap). range-diff: patch-identical to source
 #          branches. cargo sglang-radix-tree 932P/0F on the union.
+# updated: 2026-10-15 FOLLOW-UP WAVE (entries 200-204 documented this
+#          commit: apply-j #43527 + apply-k #39716/#38650 + apply-l
+#          #42388 cherry-picked onto main -- all CLEAN zero conflicts
+#          (j/k/l file-sets mutually disjoint; range-diff patch-
+#          identical, 18 apply-l touched files byte-identical to source
+#          tips) -- plus the no-GPU test-maintenance trio. HEADLINE for
+#          the owed restart: entry 201 #39716 is a DEFAULT-ON behavior
+#          change (worker-owned tokenizer clone moves preprocessing off
+#          the HTTP event loop -- watch TTFT/preprocess latency +
+#          memory); entry 200 #43527 defaults OFF (flag at 1 =
+#          parallel_hook early-return, prod byte-safe) but is the TP4
+#          QSA-states capacity lever; entry 203 #42388 defaults OFF and
+#          is the A/B arm vs --enable-linear-replayssm-spec (exclusive
+#          by validation). FI 0.7.1 venv bump (venv-only): entries
+#          162-164 PCIe-IPC vocab gathers go LIVE this restart.
+#          Batteries CVD=9 on the final tree all rc=0 and EXACT vs the
+#          per-agent claims: validation 11P/4sub, spec dir 333P/9S/
+#          180sub, pool_configurator 59P/4S/23sub, kernels namespace
+#          76P, managers3 66P/62sub, mamba_donated 15P/12sub,
+#          track_state_dtype 8P/9sub (#44195 snapshot support intact
+#          alongside the new u/k/g verify buffers), gdn unittests dir
+#          42S outside the documented cutedsl import-time crash (SM100
+#          file, pre-existing); qsa device-cuda debt class 6F+146F
+#          unchanged; the two diffusion no-GPU classes 6F -> 6S. NOT
+#          pushed; LIVE ONLY AFTER RESTART.)
 # updated: 2026-10-15 (entries 179-199 documented this commit: merge #4
 #          as an entry + apply-b..apply-i. HEADLINE for the owed restart:
 #          entry 184 QSA cross-prefix ring READ-BEFORE-STORE and entry
@@ -1545,10 +1582,12 @@ STACK, IN BUILD ORDER (bottom first)
       # flashinfer exposes the API. Cherry-picks clean; NO local deltas on
       # the six touched files (logits_processor, deepseek_v4_dspark,
       # parallel_state, vocab_gather, triton_symm_mem_ag, pcie_ipc_ar).
-      # INERT today: flashinfer 0.6.18 lacks PcieIpcAllGatherWorkspace ->
-      # _can_build_pcie_ipc_gather catches, ranks agree on NCCL (b603cfa1a9
-      # makes that collective-safe); activates with a flashinfer>=0.7 bump
-      # (#40709 territory). Tests: test_pcie_ipc_gather_selection 30P+15sub
+      # INERT at port time: flashinfer 0.6.18 lacked PcieIpcAllGather-
+      # Workspace -> _can_build_pcie_ipc_gather caught it, ranks agreed
+      # on NCCL (b603cfa1a9 makes that collective-safe). [10-15: prod
+      # venv bumped to flashinfer 0.7.1, workspace verified present --
+      # PCIe-IPC path ACTIVATES at the next restart.] Tests:
+      # test_pcie_ipc_gather_selection 30P+15sub
       # (CPU CI); test_pcie_ipc_vocab_gather = 4-GPU CI, deferred.
         163. a77d1dfbf5  PR #42566  block-FP8 MoE TP-shard scale refine + SM120 UE8M0 requant (3 commits -> also 18d738d8cb, 7ddca23aac)
       # Collides with entry 41 (pick of OPEN #39063, same SM120 UE8M0 fix
@@ -1831,9 +1870,9 @@ STACK, IN BUILD ORDER (bottom first)
       # opt-out); #43444 deterministic-hang truncation-align boot/
       # scheduler guard (465253ef52, composes with entry-177's LCM
       # invariant; edge gap: QSA alignment LCM>chunk not covered by the
-      # boot check). FI requirements pin 0.7.1 (130e11d50e) but the prod
-      # venv has 0.7.0.post1 -- PCIe-IPC entries 162-164 STILL INERT;
-      # venv bump owed by user (do NOT pip here). sglang-renderer crate
+      # boot check). FI requirements pin 0.7.1 (130e11d50e) -- [10-15:
+      # venv bump DONE, prod venv now 0.7.1; PCIe-IPC entries 162-164
+      # ACTIVE next restart -- see CAVEATS]. sglang-renderer crate
       # REMOVED (12dc623102/#43451); upstream independently landed the
       # #42779-equivalent vocab bound in sglang-server message/
       # sampling.rs -- nothing to port. Follow-ups: d6b9eb1c73 qsa
@@ -2134,6 +2173,128 @@ STACK, IN BUILD ORDER (bottom first)
       # baseline intact. from apply-i. GPU debt: batched ON-path acks +
       # stale-queued-id-between-insert-and-flush audit.
 
+  Follow-up wave 2026-10-15 (apply-j/k/l + venv bump; all cherry-picks
+  onto main CLEAN zero conflicts -- the three batches' file-sets are
+  mutually disjoint):
+
+        200. 58b60614bc  PR #43527  QSA cache sharding for Qwen3.8 hybrid models (also b20e1197f0 tests)
+      # TP-sharded QSA (indexer/compressed) states: --qsa-cache-sharding-
+      # size (alias --state-cp-size), DEFAULT 1 = OFF -- parallel_hook
+      # early-returns at 1, prod byte-safe. Validation rejects non-QSA /
+      # PP / CP / PD / dcp configs; size must divide TP and match the
+      # KV-head replica group; rank placement tp_rank%size via
+      # runtime_context. NO default flip. Distributed top-k + owner
+      # attention with FP32 LSE merge (new kernels:
+      # sparse_gqa_packed_decode_with_lse_triton,
+      # _qsa_store_compressed_keys, owner_mask on
+      # qsa_index_k_compress_store) + graph comm arena. SM120 Max-Q:
+      # symm-mem static buffers gated sm9x+world4 -> OFF here, so the
+      # candidate transport is the NCCL path (SGLANG_QSA_
+      # CANDIDATE_SYMM_MEM=1 inert on this box). SURVIVAL of our stack
+      # in the 27-hunk hand-resolve: _qsa_write_plan 5-tuple(PR-valid)
+      # x 7-tuple(ours cross-prefix) -> 8-tuple; entry-184 ring
+      # read-before-store snapshot threaded through the sharded design
+      # (owner_rows mask; unsharded keeps legacy slot-0-inert);
+      # (total_q,device_index) sparse_attn sig + batch-invariance gates
+      # intact; FP8 descale x RETURN_LSE union fixed at the 772
+      # launch; capacity: scheduler/tp_worker dropped *kv_shard_
+      # widening (runner logical now includes PageInterleave
+      # allocator.size). Test integration b20e1197f0 (8-tuple unpacks,
+      # pool contract stubs restoring fused_kv_prepare's 12 CPU passes,
+      # CUDA/ops gates). Battery: test_qsa 6F/76P/134S (6F = the
+      # documented device-cuda debt), fused_kv_prepare 146F/12P exact,
+      # kernels namespace 76P, page_interleave 82P/4S/11sub. GPU
+      # debts: e2e --qsa-cache-sharding-size 4 on prod NEXTN 138k
+      # (~4x QSA-states capacity claim), distributed top-k ==
+      # single-rank exactness (NCCL), FP32 LSE merge numerics, graph
+      # comm-buffer capture/replay, fused==eager owner-masked compress,
+      # boot capacity check at TP4. from apply-j.
+
+        201. 3f59be0e2e  PR #39716  tokenizer-clone parallel request preprocessing (4 commits -> also fc30719d32, 13f6513b03, ac7a01ac1e; + 6132729edb stub rename)
+      # **DEFAULT-ON behavior change at the owed restart.** Moves chat
+      # prompt-render + tokenization off the HTTP event loop onto a
+      # worker-owned process: fc30719d32 the preprocessing worker gets
+      # its OWN tokenizer clone (no shared HF backend across threads);
+      # 13f6513b03 short plain-text chats (<=2048 chars, no media)
+      # convert INLINE when the worker is idle; ac7a01ac1e the
+      # tokenizer backend is copied ONCE at startup, not per request
+      # (kills the clone-on-request cost); 3f59be0e2e keeps request
+      # preprocessing off the event loop. Targets the measured
+      # ~1.6-1.7s serialized per-138k-req FIFO preprocess (perf audit
+      # 09-30). RESTART MONITOR: TTFT + preprocess latency + host
+      # memory (extra tokenizer copy/rank). Frozen-zone survival:
+      # entries 157-161 parser fixes + entry-173 mm-bypass +
+      # joint_schema stubs intact -- 6132729edb renames the fake
+      # manager's preprocessor stub to PreprocessExecutor (class moved
+      # in 3f59be0e2e). serving_* tests + managers battery green on the
+      # integrated tree. from apply-k.
+
+        202. 103155f4fe  PR #38650 reconcile  adopt upstream faaff89ceb for the SP Wan conv epilogue guard
+      # Verdict: the PR's follow-up faaff89ceb is ADOPTED and subsumes
+      # our entry-156 e7b4901d03 workaround -- the local
+      # _conv_supports_epilogue helper is DROPPED (upstream gates the
+      # _run_cached_causal_conv fallback + defer_bias correctly on the
+      # kernel's real capability now). The entry-156 regression test
+      # (residual-kwarg TypeError on FP8/SP Wan VAE decode) is KEPT,
+      # re-pointed at the upstream gate (test_layout.py green). Prod
+      # impact: the SP-Wan deferred-conv-bias path stays DORMANT -- no
+      # current SP Wan launches on this box; the 10-08 crash class
+      # cannot recur via the old helper route (gone). from apply-k.
+
+        203. f5a756e8ba  PR #42388  --enable-linear-lossless-verify bit-exact GDN tuple verify (3 commits -> also 655243c77c, 4627acaae9)
+      # Opt-in, DEFAULT OFF (flag default False; ring None -> kernel
+      # CACHE_U_TUPLES False, commit block skipped, scatter unchanged
+      # -- flag-off path byte-identical). Spec target-verify keeps each
+      # draft step's (u, k, g) tuple in a ring instead of full
+      # [HV, V, K] SSM-state snapshots and REPLAYS the accepted prefix
+      # at commit with the verify kernel's exact rounding (PTX/
+      # portable): committed state + outputs bit-identical to snapshot
+      # verify with ~64x less verify scratch; freed memory goes to the
+      # KV pool. MUTUALLY EXCLUSIVE with --enable-linear-replayssm-
+      # spec by validation (BOTH CLI orders rejected); GDN hybrid +
+      # linear draft chain (eagle_topk 1) + Triton verify only. A/B
+      # ARM for a future restart window vs prod's replayssm (two
+      # restarts). 4627acaae9 arg-glue also closes the PRE-EXISTING
+      # #43527 guardrail gaps: _OVERRIDABLE_HOOKS += validate_
+      # replayssm_spec_algorithm + validate_linear_lossless_verify at
+      # pipeline positions; server_arguments_undocumented.txt lists
+      # --qsa-cache-sharding-size (entry-200 leftover) + the new flag.
+      # SURVIVAL: gdn_triton supports_track_state_snapshot (#44195/
+      # entry-185) intact alongside the new verify kwargs
+      # (track_state_dtype 8P/9sub); memory_pool fused-FP8-store
+      # (#31652/entry-186) + prefix-valid FP4/tiled regions intact;
+      # replayssm fold branches precede the lossless else-branch
+      # (exclusive by validation); _NON_TRANSFER_STATE_FIELDS excludes
+      # the ring. Configurator algebra: default scratch formula ==
+      # old stage_per_req*(slots)*D verbatim. 655243c77c binds the new
+      # scratch-accounting helpers into the donated-ratio sizing stub
+      # (parent-exact 15P/12sub). Battery: validation 11P/4sub, gdn
+      # lossless-verify 8S (needs CUDA), spec dir 333P/9S/180sub EXACT.
+      # GPU debt: bit-exact replay-vs-snapshot numerics incl bf16 pool
+      # + PP rows + PTX/portable agreement, freed-GB-to-KV measure.
+      # from apply-l.
+
+        204. be0ef716ff  test maintenance  no-GPU failure classes (3 commits -> also 7b3649ce25, c8792c2aac)
+      # Pre-existing env classes, each A/B-verified byte-identical at
+      # 64f204baea before touching: be0ef716ff gates the two
+      # Wan-Animate-2 CONFIG tests whose parallel-runtime fixture
+      # inits on the local CUDA device (2F->2S); 7b3649ce25 fixes two
+      # managers-sweep finds -- test_hisparse_unit module-level
+      # get_device() crashed collection -> module skip (register_cuda_ci
+      # all-GPU-file convention), test_scheduler_batch_is_full_latch
+      # __new__ Scheduler stub lacked is_hybrid_ssm (entry-198 gate
+      # arm reads it) -> stub False, non-hybrid semantics unchanged;
+      # c8792c2aac closes the remaining 6F class: the wan_animate_2
+      # PARALLELISM file's one fixture-using test (same gate be0ef716ff
+      # missed) + TestFusedRmsNormModulationGuard 5F where the class
+      # gate itself was buggy -- is_cuda() is a platform-BUILD answer
+      # that stays True under CUDA_VISIBLE_DEVICES=9, so setUp's
+      # device='cuda' tensors crashed; gate corrected to
+      # is_cuda() and torch.cuda.is_available() (ROCm still excluded;
+      # CPU-porting rejected: can_use_fused_rmsnorm_modulation
+      # hard-requires x.is_cuda). 6F -> 6S, 24P unchanged in the pair;
+      # ruff repo ruleset + format clean.
+
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
 ==============================================================================
@@ -2163,21 +2324,23 @@ EVALUATED AND DELIBERATELY NOT INCLUDED
       linear-quant scale_fmt path (no ue8m0-format scales in any ckpt
       we run); #41732 satfinite clamps (MLA-only kernels -- we are
       MHA/QSA); #37619 (duplicate of #37943 -- entry-197 carries it);
-      #44115 uniform_q_len autotune kwarg (flashinfer 0.7.0.post1
-      lacks the kwarg -- fail-closed verified at the call site; pure
-      FI#6144-future, revisit on the venv bump); #44196/#42186 kitchen
-      INT8 MoE (we never run those kernels).
-  DEFER / AWAITING USER: #42388 lossless-verify (mutually exclusive
-      with prod --enable-linear-replayssm-spec -- needs its own A/B
-      window); #39716 tokenizer-clone (~650L -- targets the measured
-      ~1.6s/138k-req serialized FIFO preprocess but sits in the
-      frozen-code hot zone); #38650 follow-up faaff89ceb Wan-VAE
-      SP-conv (sha NOT in the local object DB -- pr38650 branch head is
-      0e2a6f4dff; re-fetch + reconcile the decision vs entry-156
-      e7b4901d03's _conv_supports_epilogue gating before porting).
-  DEDICATED-WINDOW: #43527 QSA KV-cache sharding (4385L -- needs its
-      own review+GPU window); the remaining mamba-radix family beyond
-      the applied trio (entries 196-198).
+      #44115 uniform_q_len autotune kwarg -- RE-SKIPPED 10-15 on the
+      0.7.1 venv: BatchPrefillWithPagedKVCacheWrapper.plan STILL has no
+      uniform_q_len param (only the low-level _cached_module.plan
+      positional, which our sync-free path already passes in the
+      verified-identical order); pure FI#6144-future; #44196/#42186
+      kitchen INT8 MoE (we never run those kernels).
+  NOW APPLIED (follow-up wave 10-15, see entries 200-204; the former
+      DEFER/AWAITING-USER + DEDICATED-WINDOW items are resolved):
+      #42388 -> entry 203 (default OFF; the A/B window vs replayssm is
+      still owed, opt-in flag merged); #39716 -> entry 201 (user
+      approved the frozen-zone hot-path port; DEFAULT-ON, monitor at
+      restart); #38650 follow-up faaff89ceb -> entry 202 (re-fetched,
+      reconcile verdict: adopt upstream, drop our entry-156 helper);
+      #43527 -> entry 200 (dedicated apply-j window: ported + full
+      CPU battery; default OFF, the GPU e2e at size 4 is the remaining
+      debt). STILL OPEN: the remaining mamba-radix family beyond the
+      applied trio (entries 196-198).
 
   Diffusion batch 2026-10-08 -- evaluated, NOT included:
   PR #35335 (auto-residency 4/4) -- USER-SKIPPED on request 10-08: its
@@ -2364,11 +2527,14 @@ CAVEATS
     262 collection errors are the known CUDA-at-import env class). Use
     per-file runs as the merge gate. test_mistral_common_xgrammar.py can
     HANG (network fetch at import; killed by timeout in sweep -- env).
-    flashinfer requirement is now 0.7.1 (upstream 130e11d50e) but the
-    prod .venv has 0.7.0.post1: PCIe-IPC vocab gathers (entries 162-164)
-    stay INERT until the venv is bumped (user action; do NOT pip here).
-    Re-confirmed 10-15 on the final tree (entry-199 era) -- nothing in
-    apply-b..i changes this.
+    flashinfer requirement is 0.7.1 (upstream 130e11d50e) -- RESOLVED
+    10-15 follow-up wave: prod .venv bumped 0.7.0.post1 -> 0.7.1 via
+    uv single-package swap (freeze snapshot
+    /tmp/opencode/fi-bump/pipfreeze-before.txt; rollback = reinstall
+    "flashinfer-python[cu13]==0.7.0.post1", needs network -- not in
+    the uv cache). PCIe-IPC vocab gathers (entries 162-164) NOW ACTIVE
+    from the next restart (PcieIpcAllGatherWorkspace verified present
+    in 0.7.1 flashinfer.comm); full FI battery zero regressions.
   * BEHAVIOR WATCH for the NEXT restart (entries 194-199): #37612/
     entry-198 resets batch_is_full EVERY admission round on hybrid-SSM
     trees (prod Qwen3.8-Flash-Next qualifies) -- measure TTFT/
@@ -2386,6 +2552,18 @@ CAVEATS
     but prod's explicit --cuda-graph-max-bs-decode 48 overrides it;
     #44222 (entry-188) is a startup guard, not a knob; #43727 (entry-
     189) gauges are always-on metrics.
+  * BEHAVIOR WATCH for the NEXT restart (entries 200-204 + venv bump):
+    #39716/entry-201 preprocessing offload is DEFAULT-ON -- watch TTFT,
+    preprocess latency and host memory (tokenizer clone per worker);
+    rollback = revert the four picks, no flag exists. flashinfer 0.7.1
+    makes entries 162-164 PCIe-IPC vocab gathers ACTIVE (TP4 same-host
+    vocab gathers switch NCCL->PCIe-IPC at startup -- watch first-step
+    latency + gather correctness). New opt-ins available, both default
+    OFF: --qsa-cache-sharding-size N (entry-200, the TP4 QSA-states
+    capacity lever; SM120 rides the NCCL candidate transport) and
+    --enable-linear-lossless-verify (entry-203; EXCLUSIVE with prod's
+    --enable-linear-replayssm-spec -- the lossless-vs-replayssm A/B is
+    two restarts).
   * 09-28 BUILD BOOTED 2026-09-28 (TP2 next8.sh on GPUs 0-1, and the
     118-125 test servers on GPUs 2-3): no import breaks. Entry 102's A/B vs
     --enable-linear-replayssm-spec off is still owed.
@@ -2454,15 +2632,19 @@ CAVEATS
     /root/sglang/.venv is editable to the OLD checkout /root/sglang/sglang.prev;
     THIS repo was verified via a hardlink clone at .venv2 -- see next caveat.)
 
-  * LIVE VENV (2026-10-09 user rebuild): /root/sglang/.venv (PROD) now runs
-    torch 2.14.1 / triton 3.8.0 / flashinfer 0.7.0.post1 / sglang-kernel
-    0.4.9 wheel -- SUPERSEDES the 09-22 pin note and the 09-17 AOT-0.4.7
-    note below (kept as HISTORY). Consequences: entry 172's triton_3_8_0/
-    config mirrors are what the prod venv now looks up; entries 162-164's
-    PCIe-IPC vocab gathers STAY INERT -- flashinfer.comm 0.7.0.post1
-    verified lacking PcieIpcAllGatherWorkspace (still waits on the #40709
-    class bump). The .venv2 verification venv is UNCHANGED at triton
-    3.7.1/flashinfer 0.6.18 -- CVD=9 batteries run there, not on prod pins.
+  * LIVE VENV (2026-10-15 bump): /root/sglang/.venv (PROD) runs
+    torch 2.14.1 / triton 3.8.0 / flashinfer 0.7.1 / sglang-kernel
+    0.4.9 wheel -- SUPERSEDES the 10-09 rebuild note (0.7.0.post1, kept
+    as HISTORY below) and the 09-22 pin / 09-17 AOT-0.4.7 notes.
+    Consequences: entry 172's triton_3_8_0/ config mirrors are what the
+    prod venv looks up; entries 162-164's PCIe-IPC vocab gathers are
+    UNLOCKED -- flashinfer.comm 0.7.1 HAS PcieIpcAllGatherWorkspace,
+    the NCCL->PCIe switch arms at startup on the next restart. The
+    10-09->10-15 interim: 0.7.0.post1 verified lacking the workspace
+    (INERT then; HISTORY). The .venv2 verification venv is UNCHANGED at
+    triton 3.7.1/flashinfer 0.6.18 -- CVD=9 batteries run there, not on
+    prod pins.
+    HISTORY (2026-10-09 rebuild): flashinfer was 0.7.0.post1.
   * HISTORY (2026-09-22): /root/sglang/.venv is now editable to THIS repo
     (sglang 0.5.21.dev550+gdb9d0720f). Refresh procedure with the server
     stopped: source ~/sglang/.venv/bin/activate; cd /root/sglang/sglang;
