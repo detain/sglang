@@ -51,12 +51,22 @@ from sglang.test.test_utils import CustomTestCase
 register_cuda_ci(est_time=10, stage="base-b", runner_config="1-gpu-small")
 
 
+# These fixtures build real MHATokenToKVPool buffers on device="cuda"; the
+# file is registered for CUDA CI only (register_cuda_ci above), so gating on
+# accelerator visibility loses no CPU-CI coverage.
+_requires_cuda_pool = unittest.skipUnless(
+    torch.cuda.is_available(),
+    "KV pool fixture allocates on device='cuda' (needs a visible GPU)",
+)
+
+
 class TestDecodeRetractionBackup(CustomTestCase):
     pool_size = 32
     num_tokens = 8
     dtype = torch.bfloat16
     device = "cuda"
 
+    @_requires_cuda_pool
     def test_host_receive_dense_subclass_checks_actual_buffer_geometry(self):
         class DensePool(MHATokenToKVPool):
             pass
@@ -246,6 +256,7 @@ class TestDecodeRetractionBackup(CustomTestCase):
         )
         return req, source_indices
 
+    @_requires_cuda_pool
     def test_backup_declined_when_host_pool_too_small(self):
         # A backup-only host pool is deliberately smaller than the device pool,
         # so a large enough request cannot be preserved.
@@ -273,6 +284,7 @@ class TestDecodeRetractionBackup(CustomTestCase):
         env.allocator.free(source_indices)
         env.req_to_token_pool.free(req)
 
+    @_requires_cuda_pool
     def test_restores_target_and_draft_kv(self):
         env = self._build_cache(hicache_ratio=1.0)
         req_to_token_pool = env.req_to_token_pool
@@ -403,6 +415,7 @@ class TestDecodeRetractionBackup(CustomTestCase):
         )
         return queue, queue.kv_manager.kv_args
 
+    @_requires_cuda_pool
     @patch("torch.distributed.get_world_size", return_value=1)
     def test_host_receive_swa_tail_capacity_restore_and_release(self, _world_size):
         env = self._build_cache(
@@ -494,6 +507,7 @@ class TestDecodeRetractionBackup(CustomTestCase):
             (full_host.available_size(), swa_host.available_size()), capacities
         )
 
+    @_requires_cuda_pool
     @patch("torch.distributed.get_world_size", return_value=1)
     def test_host_receive_threshold_controls_device_allocation(self, _world_size):
         """Zero always stages, one disables, and intermediate values gate on usage."""
@@ -544,6 +558,7 @@ class TestDecodeRetractionBackup(CustomTestCase):
                 env.allocator.free(pressure)
                 self.assertEqual(env.allocator.available_size(), self.pool_size)
 
+    @_requires_cuda_pool
     @patch("torch.distributed.get_world_size", return_value=1)
     def test_host_receive_restores_target_and_draft_kv(self, _world_size):
         """Wire-order writes must restore both pools, including packed MHA K/V.
@@ -702,6 +717,7 @@ class TestDecodeRetractionBackup(CustomTestCase):
                 env.req_to_token_pool.free(req)
                 env.allocator.free(pressure)
 
+    @_requires_cuda_pool
     @patch("torch.distributed.get_world_size", return_value=1)
     def test_host_receive_merges_existing_radix_prefix_after_restore(self, _world_size):
         """Receiving a cached prefix must not lock it or leak duplicate KV."""
