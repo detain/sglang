@@ -27,7 +27,7 @@ from sglang.srt.layers.joint_schema_head import (
     parse_decision_layout,
 )
 from sglang.srt.managers.io_struct import EmbeddingReqInput, GenerateReqInput
-from sglang.srt.managers.request_preprocessor import RequestPreprocessor
+from sglang.srt.managers.preprocess_executor import PreprocessExecutor
 from sglang.srt.managers.tokenizer_manager import TokenizerManager
 from sglang.srt.runtime_context import (
     get_context,
@@ -125,7 +125,7 @@ class HeadManager:
         self.request_logger = SimpleNamespace(log_requests=False)
         # serving_base offloads _convert_to_internal_request through the
         # tokenizer manager's preprocessor executor.
-        self.request_preprocessor = RequestPreprocessor()
+        self.preprocess_executor = PreprocessExecutor()
         self.served_model_name = "served-model"
         self.requests = []
 
