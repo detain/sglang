@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for multimodal weight-loading utilities."""
 
+import importlib.util
 import os
 import tempfile
 import unittest
@@ -8,6 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import pytest
 import torch
 from huggingface_hub.errors import LocalEntryNotFoundError
 from safetensors.torch import save_file as safetensors_save_file
@@ -279,6 +281,10 @@ class TestDitParameterCount(CustomTestCase):
                 self.assertEqual(hub_download.called, use_modelscope == "0")
 
 
+@pytest.mark.skipif(
+    importlib.util.find_spec("runai_model_streamer") is None,
+    reason="requires runai_model_streamer (the class under test patches its module)",
+)
 class TestDisableRunaiStreamerRankDiscoveryCollective(unittest.TestCase):
     def test_never_touches_torch_distributed_even_when_initialized(self):
         from runai_model_streamer.distributed_streamer.distributed_streamer import (
