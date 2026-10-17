@@ -373,6 +373,7 @@ class HiCacheController:
         # Set by the scheduler to the forward stream; gates load-back H2D and
         # write D2H behind in-flight forwards (see start_loading, start_writing).
         self.load_fence_stream = None
+        self.write_fence_stream = None
         self.ack_write_queue: List[HiCacheAck] = []
 
         self.l2_transfer_engine = L2TransferEngine(io_backend)
@@ -832,7 +833,7 @@ class HiCacheController:
         self.start_writing()
         return host_indices
 
-    def start_writing(self) -> None:
+    def start_writing(self, *, wait_for_forward: bool = False) -> None:
         if len(self.write_queue) == 0:
             return
 
@@ -843,8 +844,16 @@ class HiCacheController:
         if self.load_fence_stream is not None:
             # Overlap scheduling caches a finished request while the next forward
             # still writes its last token's KV; later forwards still overlap.
+            # Fork: unconditional (stack entry 168), ahead of upstream's opt-in
+            # write fence below; both streams are the same forward stream.
             self.l2_transfer_engine.device_to_host_stream.wait_stream(
                 self.load_fence_stream
+            )
+
+        if wait_for_forward and self.write_fence_stream is not None:
+            # An evicted SWA page can belong to an unfinished checkpoint.
+            self.l2_transfer_engine.device_to_host_stream.wait_stream(
+                self.write_fence_stream
             )
 
         completion = self.l2_transfer_engine.submit_device_to_host(

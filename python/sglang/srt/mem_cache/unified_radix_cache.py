@@ -3499,9 +3499,12 @@ class UnifiedRadixCache(BasePrefixCache):
 
         if write_back:
             # Blocking: submit what is still queued, then wait for every ack.
+            # Fork (entry 199): the batched-backup drain queues its D2H with
+            # flush=False, so the single start_writing below submits both paths
+            # under the same forward fence.
             if self.queued_backups:
                 self._drain_queued_backups()
-            cc.start_writing()
+            cc.start_writing(wait_for_forward=True)
             while self.ongoing_write_through:
                 for ack in cc.ack_write_queue:
                     ack.finish_event.synchronize()
