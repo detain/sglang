@@ -92,6 +92,23 @@ class TestMambaLazyInplaceKL(DefaultServerBase):
         self._generate([44] * 128, 1)
         self._generate([42] * 128, 1)
 
+    def _flush_cache(self):
+        response = requests.post(self.base_url + "/flush_cache", timeout=30)
+        response.raise_for_status()
+
+    def test_lazy_donation_with_four_slots_and_one_request(self):
+        """A prefix-hit request must finish without a fifth Mamba slot under overlap."""
+        self._flush_cache()
+        self._generate([42] * 128, 1)
+
+        # One cached prefix, live state, and keep checkpoint occupy three slots;
+        # the boundary decode takes the fourth before prefill donation runs.
+        result = self._generate([42] * 128 + [43] * 127, 32)
+        self.assertEqual(result["meta_info"]["cached_tokens"], 128)
+        logprobs = result["meta_info"]["output_token_logprobs"]
+        self.assertEqual(len(logprobs), 32)
+        self.assertTrue(np.isfinite([row[0] for row in logprobs]).all())
+
     def _distribution(self, result):
         rows = result["meta_info"]["output_token_ids_logprobs"]
         self.assertEqual(len(rows), 1)
