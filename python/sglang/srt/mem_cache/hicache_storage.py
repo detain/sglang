@@ -673,32 +673,46 @@ class HiCacheFile(HiCacheStorage):
             len(keys),
         )
 
+        # Collect every usable stop point, not just the deepest one: a
+        # TRAILING_PAGES pool leaves holes, so a span that has to stop short of
+        # the deepest hit (partial host allocation) still needs a stop point
+        # whose sidecar is present. Same reasoning as MooncakeStore's
+        # batch_exists_v2 and PoolTransferResult.restorable_prefix_pages.
+        restorable = list(range(1, kv_pages + 1))
+
         hit_count: dict[str, int] = {PoolName.KV: kv_pages} if kv_pages else {}
-        final_pages = kv_pages
 
         for transfer in pool_transfers or []:
-            if final_pages == 0:
+            if not restorable:
                 break
             name = transfer.name
             if transfer.hit_policy == PoolHitPolicy.ALL_PAGES:
                 boundary = next(
                     (i for i in range(kv_pages) if not has_component(i, name)), kv_pages
                 )
+                pool_restorable = list(range(1, boundary + 1))
             else:  # trailing_pages
                 trailing = max(1, len(transfer.keys) if transfer.keys else 1)
                 boundary = 0
+                pool_restorable = []
+                # A stop point works when the window ending there is complete,
+                # so scan every one instead of stopping at the longest.
                 for prefix_len in range(kv_pages, 0, -1):
                     if all(
                         has_component(i, name)
                         for i in range(max(0, prefix_len - trailing), prefix_len)
                     ):
-                        boundary = prefix_len
-                        break
+                        pool_restorable.append(prefix_len)
+                        if boundary == 0:
+                            boundary = prefix_len
             if boundary:
                 hit_count[name] = boundary
-            final_pages = min(final_pages, boundary)
+            pool_restorable_set = set(pool_restorable)
+            restorable = [p for p in restorable if p in pool_restorable_set]
 
-        return PoolTransferResult(final_pages, hit_count)
+        final_pages = restorable[-1] if restorable else 0
+
+        return PoolTransferResult(final_pages, hit_count, restorable)
 
     def _log_key(self, pool_name: str, key: str) -> str:
         return key if pool_name == PoolName.KV else f"{key}.{pool_name}"
