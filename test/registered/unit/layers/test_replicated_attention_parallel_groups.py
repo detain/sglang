@@ -101,6 +101,16 @@ def load_projection(layer):
         return full.chunk(size, dim=1)[rank], None
 
 
+# The parallel-group math itself is device-agnostic (the tests build `cpu`
+# ServerArgs), but constructing a RotEmbedding goes through
+# `rotary_embedding/base.py`, whose kernel choice is made from the *build*
+# platform: with no CUDA device visible it selects the `vllm._custom_ops`
+# fallback and every case dies with ModuleNotFoundError. This file is
+# registered for CUDA CI (`1-gpu-large`), so gate it on a visible device
+# instead of teaching core RoPE about a vllm-less CPU host.
+@unittest.skipUnless(
+    torch.cuda.is_available(), "RoPE init selects a CUDA/HIP kernel; needs a device"
+)
 class TestReplicatedAttentionParallelGroups(CustomTestCase):
     def setUp(self):
         reset_context()
