@@ -1,6 +1,6 @@
 # stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
 #
-# STACK: qwennext-stack-209-2026-10-18
+# STACK: qwennext-stack-211-2026-10-19
 #   main+pr36787+pr37275+pr38144+pr38209+pr36644+pr39862+pr39809+pr39893+local_hicache_qsa_fixes
 #   +pr39614+pr39978+pr40002+pr39065+pr40501+pr40175+pr40362+pr39391+pr37061+pr39333+pr33778
 #   +pr38977+pr39977+pr40480+pr39880+pr40235+pr39807+cpu-triage+boot-fix+plan_updates_perf
@@ -10,7 +10,7 @@
 #   +diffusion-batch-2026-10-08(pr27673+pr28690*+pr32513+pr32550*+pr33036*+pr33588*
 #    +pr36399+pr36767+pr37460*+pr38650+pr39212+pr40493+pr40588+pr40755+pr41340*
 #    +pr41944+pr42249+pr42928*+pr43028*+pr43064*)
-#   (entries 1-209; *=squash/ported, see commit messages. 10-10 added
+#   (entries 1-211; *=squash/ported, see commit messages. 10-10 added
 #   entries 157-161: parser batch A (Qwen3-Coder tool-call fixes + sampling
 #   upper bounds), on top of upstream merge #3 (see synced). 10-10b added
 #   entries 162-166: SM120 batch B (#42863 PCIe-IPC vocab gathers, #42566
@@ -79,6 +79,21 @@
 #   write-refusal/endpoint-miss reporting. Query-only change: the
 #   existing /root/hicache_store contents stay valid (no key or layout
 #   change). Live only after restart.
+#   10-19 added entries 210-211: the next9 prefill-OOM response. 210 =
+#   the QSA dense chunk-prefill KV pack hardened twice over --
+#   95142a935f catches torch.OutOfMemoryError and serves the forward from
+#   the paged kernel with a sticky per-process latch (or logs an
+#   actionable error and re-raises where paged cannot), and 8bc0bfd91c
+#   byte-budgets the pack BEFORE allocating it and routes an over-budget
+#   forward to paged / a pool-dtype gather / attempt-as-before; plus the
+#   c17a10d737 lint follow-up. 211 = 8bcc61f491 device-loads cached
+#   Triton cubins at engine init (enumerate what exists + dummy-launch the
+#   known serving specializations) so a cuModuleLoadData can no longer
+#   land mid-serving on an empty heap. ALL SEVEN NEW ENVS DEFAULT ON.
+#   Behavior change: a big-context mixed-chunk prefill whose pack does not
+#   fit now silently takes the paged path (fork-only, previously dark) --
+#   the paged-vs-packed bit-equality oracle has NEVER run on this box, so
+#   that is the top GPU-window debt. Live only after restart.
 #   10-08 added entries
 #   136-155: 20 diffusion PRs (4 more evaluated-skipped, see NOT INCLUDED).
 #   09-28 added 22 entries: 9 new PR blocks, new head
@@ -86,7 +101,7 @@
 #   make --enable-mixed-chunk safe and fix the QSA verify ring collision.
 #   * = picked with local modifications, see the entries)
 # branch : qwennext-stack
-# tip    : 3fa5197482   (the stack.txt commit sits above it)
+# tip    : 8bcc61f491   (the stack.txt commit sits above it)
 # base   : upstream sgl-project/sglang main @ 7ad55e4386 ([HiCache] TMA-staged
 #          host<->device KV transfer kernel (sm_90+) (#40278), 2026-09-21)
 # synced : upstream main @ f209e67767 (#39643, 2026-09-28) MERGED IN as
@@ -2482,6 +2497,243 @@ STACK, IN BUILD ORDER (bottom first)
       # it would win. GPU debt: TP4 prefetch with a partial host clamp on the
       # live store + test/registered/hicache/* backend runs.
 
+        210. 95142a935f  QSA chunked prefill: serve the paged kernel when the dense KV pack OOMs (+ 8bc0bfd91c pre-allocation byte budget, + c17a10d737 lint follow-up)
+      # prod symptom, next9 2026-10-18 23:26 (26m47s after ready): all four TP
+      # ranks died in one batch -- torch.OutOfMemoryError "Tried to allocate
+      # 2.00 GiB" at qsa/sparse_attn.py:640 (pack_qsa_prefill_kv) via
+      # qwen_sparse_attn_backend.forward_extend:2179 on the NEXTN
+      # _draft_extend_for_prefill (eager; prefill graphs disabled) -- and
+      # run_scheduler_process turned it into a SIGQUIT. Prefill OOM has NO
+      # recovery path in sglang: retraction is decode-only and counts tokens,
+      # never bytes (upstream #26266 closed unmerged, #30505 = this exact crash,
+      # bot-closed unfixed).
+      # Mechanism: the pack is sized by total_k = sum(sequence_lens) -- FULL
+      # contexts (prefix + extend) summed over the batch -- at 1 KV head/rank x
+      # 256 dim x bf16 = 512 B per summed token per tensor (~1 KiB/token for the
+      # K+V pair), allocated FRESH per QSA layer per forward (12 target + 1
+      # draft). No scheduler accounting bounds that sum:
+      # --chunked-prefill-size / --max-prefill-tokens bill the EXTEND rows only,
+      # and --enable-mixed-chunk folds every running decode request's whole
+      # context into it. Shared radix prefixes let it exceed what is resident --
+      # 2.00 GiB => total_k ~= 4.19M summed rows vs ~2.07M tokens in use (usage
+      # 0.33 of the 6,246,400 pool) against 6.60 GiB of dynamic headroom at boot
+      # -- and upstream #41933 (047405f534, via merge #4) DOUBLED this transient:
+      # two fp8 index_select gathers -> one fused bf16 pack, a latency win with
+      # no memory guard. Same call site killed prod 09-04 x2, 09-05, 09-09,
+      # 09-11 (367k ctx); fork 8e831dc8a6 halved the peak (4x -> 2x) by joining
+      # gather INDICES, its comment recording that it does not remove the
+      # densification.
+      # 95142a935f serves the forward instead of dying. The dense block (pack
+      # AND the scaled-FP8 index_select) moved into _forward_chunk_prefill
+      # inside except torch.cuda.OutOfMemoryError, and
+      # _chunk_prefill_oom_fallback runs the paged kernel -- hoisted into
+      # _paged_chunk_prefill_output so the configured paged path and both
+      # fallbacks cannot drift -- with ONE warning per process naming layer,
+      # bytes, total_k, pool layout, free + allocator-cached headroom. The call
+      # is STICKY: _chunk_prefill_kv_forced_paged is consulted FIRST by
+      # _chunk_prefill_kv_path(), since a re-attempt would OOM once per QSA
+      # layer per forward and the paged kernel allocates nothing. When
+      # _paged_kv_source_supported() refuses -- the page-major KV envelope
+      # (--enable-page-major-kv-layout, implied by --enable-unified-memory) or a
+      # quant method serving get_key_buffer as a whole-layer dequantised
+      # temporary (needs_plain_kv_dequant_read(); req_to_token slots do not
+      # address it) -- or when the kill switch is off, it logs an error naming
+      # the levers (--mem-fraction-static, --context-length,
+      # --max-running-requests, --prefill-max-requests, plus KV_SOURCE=paged
+      # only where usable) and RE-RAISES unchanged: no faked recovery. With no
+      # OOM nothing changes, capture included: the only new device reads are
+      # mem_get_info/allocator counters inside the diagnostic, and
+      # _qsa_stream_is_capturing() (get_is_capture_mode() OR
+      # torch.cuda.is_current_stream_capturing()) suppresses mem_get_info
+      # because it synchronizes.
+      # 8bc0bfd91c makes the catch rare -- never attempt a pack that cannot fit.
+      # Sizing lives in ONE place, qsa_pack_prefill_kv_bytes(total_k, heads,
+      # dim, dtype) = total_k*heads*dim*itemsize*2, next to the two torch.empty
+      # calls it prices (the gate and the OOM message both read it, so the
+      # estimate cannot drift from the reservation). _dense_pack_mem_route runs
+      # before the dense materialisation and mirrors the proven #39095 idiom of
+      # layers/attention/mqa_logits_utils.py: budget = min(total_memory *
+      # TOTAL_FRACTION, (1 - mem_fraction_static) * total_memory *
+      # FREE_FRACTION, (driver-free + allocator-cached) * FREE_FRACTION). The
+      # first two terms are configuration only (device properties +
+      # get_schedule().mem_fraction_static), hence capture-safe; the headroom
+      # term is read at most ONCE per forward and cached in the chunk-prefill
+      # hoist (QSA_PACK_HEADROOM_CACHE_KEY); an unknowable budget never refuses.
+      # Below SGLANG_QSA_CHUNK_PREFILL_PACK_BUDGET_MIN_BYTES (512 MiB) the gate
+      # returns before any arithmetic, so ordinary chunks pay no device query
+      # and keep exactly the old fast path (asserted). Over budget, tiered, each
+      # tier warn-once-per-process: (a) the paged kernel when the guard holds;
+      # (b) else, on an FP8 pool, gather in the POOL dtype (half the bytes) and
+      # dequantise inside the attention kernel -- equivalence read from the
+      # kernel, not assumed: sparse_gqa_fwd_interface_triton_ck derives
+      # kv_is_fp8 in _validate_sparse_gqa_dtypes (FP8 K/V against BF16/FP16 q is
+      # accepted), passes _unit_scale(k_scale)/_unit_scale(v_scale), and the
+      # kernel does keys.to(q_values.dtype) before tl.dot then scales by
+      # k_scale/v_scale -- the same plain cast the pack itself performs (hence
+      # use_pack's unit-descale rule) on the call shape the scaled-FP8 branch
+      # always exercised, **scale_kwargs intact; (c) else attempt the pack
+      # anyway and let the OOM fallback catch it -- a refusal with no
+      # alternative is strictly worse than a wrong estimate. Counters:
+      # _qsa_pack_attempts / _qsa_pack_budget_refusals / _qsa_pack_oom_fallbacks
+      # (plain ints, no metrics plumbing).
+      # Prod arithmetic: a 94.97 GiB card at --mem-fraction-static 0.90 gives a
+      # ~1.9 GiB budget, which refuses the ~4 GiB K+V pair that killed next9,
+      # while a 16k-token chunk (~16 MiB) stays far under the floor. The dump
+      # showed 1.86-1.92 GiB driver-free PLUS 0.78-0.83 GiB allocator-cached
+      # when the 2.00 GiB failed, so the (free+cached)*0.2 term (~0.5 GiB there)
+      # is conservative on purpose.
+      # New envs (environ.py QSA section), ALL default ON:
+      # SGLANG_ENABLE_QSA_CHUNK_PREFILL_OOM_FALLBACK=1 (0 = the old
+      # log-and-propagate); SGLANG_ENABLE_QSA_CHUNK_PREFILL_PACK_BUDGET=1
+      # (0 = allocate and hope -- the fallback still catches);
+      # SGLANG_QSA_CHUNK_PREFILL_PACK_BUDGET_MIN_BYTES=536870912 (query floor);
+      # SGLANG_QSA_CHUNK_PREFILL_BUDGET_FREE_FRACTION=0.2 and
+      # SGLANG_QSA_CHUNK_PREFILL_BUDGET_TOTAL_FRACTION=0.3 (tune, not disable).
+      # c17a10d737 rides as the lint follow-up: registering these tests tripped
+      # scripts/lint/check_registered_tests.py, which recognises a registered
+      # file's entry point only as a LITERAL unittest.main()/pytest.main()
+      # inside __main__ -- test_eos_reasoning_guard.py used
+      # "from unittest import main; main()" (runs fine, unrecognised; a
+      # pre-existing red since 1c5995342c). Form switched, no behaviour change.
+      # NOT a run-script fix: the primary prevention stays the operator's knob
+      # -- SGLANG_QSA_CHUNK_PREFILL_KV_SOURCE=paged skips the pack entirely (the
+      # fork-only S21/S22/S23 path, entries 86-88). The two data points: harness
+      # arm 13 at the PROD shape (run 20261001T221030Z, build 853ce95617) = TIE,
+      # d_tput -1.4% inside the tightest bracket of the sweep (0.728% anchor
+      # spread), TTFT p50 -11.6%, p99 +2.9%, best cache-hit of the 24 arms
+      # (0.864), gsm8k 0.987; versus S24
+      # (/root/sglang/scratch_updates/bench/phaseG_result.md) +5.19% latency
+      # FAIL -- a single L16384_C4_warm cell of a 2026-09-22 TP2/EP2 chunk-4096
+      # probe whose packed baseline PREDATES #41933 (which doubled the packed
+      # transient), so both of its arms have moved since; its -97.10
+      # MiB/rank/chunk memory win stands. STATE AS FOUND 10-19: the run script
+      # was edited 02:25 to export paged AND drop --mem-fraction-static 0.90 ->
+      # 0.89 for the NEXT boot (its own TIER-2 QUEUE block still says "NEVER in
+      # this boot" -- stale), while the live pid 3369867 (started 23:43) has
+      # neither, so packed is still what prod runs until the restart.
+      # Tests (CVD=9, per file): NEW
+      # test/registered/unit/layers/attention/test_qsa_chunk_prefill_pack_guard.py
+      # 27P/5sub (register_cpu_ci est_time=4) -- pair bytes == two tensors and
+      # the 2 GiB incident pack, budget math (prod-config refusal, unknown
+      # mem_fraction, unreadable schedule/device properties), every tier incl.
+      # the pool-dtype-fits condition, floor and kill switch, one headroom query
+      # per forward, capture using only the static term, unpricable layouts,
+      # pack OOM -> paged once with one warning, the latch across forwards,
+      # guard refusal -> error + re-raise; test_qsa_chunk_prefill_kv_source.py
+      # 16P/5sub (gains
+      # test_pack_oom_latch_selects_paged_for_every_later_forward);
+      # test_eos_reasoning_guard.py 6P/2sub. Baselines re-verified UNCHANGED on
+      # this tree: test_qsa.py 6F/76P/134S, test_qsa_fused_kv_prepare.py
+      # 146F/12P, spec dir 333P/9S/180sub. Ruff repo-ruleset + format clean;
+      # check_registered_tests.py and check_no_bare_pytest_main.py rc=0.
+      # GPU-WINDOW DEBTS (nothing is LIVE until the user restarts): the top item
+      # is now prod-relevant -- the paged-vs-packed torch.equal oracle
+      # test/registered/kernels/ops/attention/qsa/test_qsa_paged_chunk_prefill.py
+      # (register_cuda_ci) has NEVER run on this box, yet paged can serve output
+      # after a budget refusal or an OOM latch. Then a live TP4/EP4 replay of the
+      # incident batch showing the gate refusing BEFORE the allocator does (and
+      # the fallback firing if it does not), tier-(b) pool-dtype numerics against
+      # the packed oracle, the gate under CUDA graph capture (prod disables
+      # prefill graphs, so only the CPU test covers it), and the two unchanged
+      # device-cuda baselines above.
+
+        211. 8bcc61f491  Triton: device-load cached cubins during engine init (triton_load_watch reports -> prevents) + dummy-launch recipes for the known serving specializations
+      # Why: Triton device-loads each specialization's cubin at its FIRST launch
+      # (CompiledKernel._init_handles -> cuModuleLoadData), OUTSIDE the torch
+      # caching allocator, so on an engine whose pools took all the memory a late
+      # load is a scheduler-fatal OOM. Both next9 logs are evidence: the crashing
+      # run has 46 "expandable_segments: memory mapping failed" lines and 24 late
+      # device-loads (6 names x 4 ranks) at 0.15 GiB free while still serving;
+      # the replacement run logs 92 late loads over 12 distinct names, all at
+      # 0.69-0.73 GiB free, with ZERO slow-compile warnings -- i.e. every one was
+      # a TRITON DISK-CACHE HIT whose CompiledKernel object is constructed by the
+      # serving launch itself. That is the key fact: the enumeration pass (A)
+      # alone would have caught none of them, so the dummy-launch recipes (B) are
+      # the operative fix.
+      # A (utils/triton_load_watch.py): install() now also chains
+      # CompiledKernel.__init__ to record every kernel the process constructs
+      # (weakrefs only -- the recorder never extends a kernel's life; a
+      # pre-existing knobs.compilation.listener is chained, not replaced), and
+      # prewarm_device_loads(worker) -- one delegated call line in
+      # Scheduler.run_event_loop between install() and mark_serving_started(), so
+      # after weights and graph capture and before any request -- calls
+      # _init_handles() on each recorded kernel whose ``module`` is still None,
+      # reusing Triton's own residency probe so kernels graph capture already
+      # loaded are counted, not re-loaded. A second enumeration source is
+      # triton.runtime.jit._triton_jit_function_registry device_caches, walked
+      # through values() (never index a defaultdict key -- that inserts an empty
+      # cache). Every load is individually guarded (a failure is a warning naming
+      # the kernel, capped at 10, never a boot failure), the whole sweep is
+      # guarded, the sweep stops with a warning naming the skipped count once free
+      # memory drops below the floor (and then skips B too; B runs after A so the
+      # dummy launches inherit any cubin A just resident-ed), and it always logs
+      # one summary line: "Triton prewarm: loaded N cubins (M already resident, K
+      # skipped, free device mem X.XX -> Y.YY GiB, Z.ZZ s)". Idempotent;
+      # CUDA-only -- CPU CI, MLX, XPU, ROCm and a process where install() never
+      # ran all no-op.
+      # B (utils/triton_prewarm_ops.py, new): prewarm_known_kernels(device,
+      # worker) dummy-launches the 8 _RECIPES that serving hits late, with the
+      # constexprs read from LIVE geometry (page size, req_to_token width,
+      # replayssm ring length, QSA compress ratio / compressed page / num_groups
+      # / sharding world+rank, vocab size and logits dtype) and the {==1, %16,
+      # other} int classes swept as BS_BUCKETS = (1, 2, 16): alloc_extend_kernel,
+      # assign_req_to_token_pool, _fused_replay_state_indices_kernel,
+      # _advance_gdn_spec_cursors_kernel,
+      # _finish_gdn_replayssm_circular_fold_kernel, launch_graph_metadata (mode 0
+      # decode / 1 target-verify / 2 draft-extend, which covers
+      # _qsa_graph_row_metadata_kernel and _qsa_graph_layout_kernel; x
+      # num_padding {0,1,bs} x seq_offset {0,1}), prepare+launch_draft_graph_-
+      # metadata (_qsa_draft_graph_metadata_kernel -- the step count is baked in
+      # via tl.static_range, so it is read live), and
+      # apply_token_bitmask_inplace_triton (grammar bitmask, width = ceil(V/32)).
+      # Every argument list is copied from a NAMED real call site or registered
+      # test (the QSA recipes are the ones test_qsa.py's
+      # test_qsa_graph_metadata_kernels_match_legacy_host_path and
+      # test_qsa_draft_metadata_multi_step_graph validate): an invented value
+      # warms a cubin serving never uses and wastes the very memory this is
+      # about. Safety: all-zero inputs keep the page loops empty and the stores
+      # masked; recipes allocate their own tiny buffers and never touch request
+      # state or the KV/mamba pools -- the QSA metadata kernels read exactly ONE
+      # int32 from the live req_to_token table (row 0, token 0, the last_loc each
+      # launch loads) and store only here. Each recipe is guarded: a missing
+      # attribute or a changed signature downgrades to a debug log. Coverage
+      # against the observed late loads: 48 of the live run's 92, and 24/24 of
+      # the crashing run's.
+      # Deliberately NOT warmed (reasons in the module docstring, so nobody reads
+      # _RECIPES as exhaustive): _small_copy_kernel (BIT_WIDTHS comes from the
+      # live CudaGraphBufferRegistry slot groups), fused_moe_kernel (one
+      # specialization per tuning bucket -- the Max-Q retune/precompile is a
+      # separate owed lever), _qsa_mqa_prefill_kernel (live indexer head count /
+      # head_dim), _layer_norm_fwd_1pass_kernel and _causal_conv1d_fwd_kernel
+      # (model-forward config space), and the QSA graph-metadata kernels under
+      # --qsa-cache-sharding-size > 1 (the live page table belongs to one shard,
+      # so the recipe declines rather than guess).
+      # Envs (environ.py, Torch Compile block):
+      # SGLANG_ENABLE_TRITON_PREWARM_DEVICE_LOADS = EnvBool(True) -- 0 is the
+      # rollback to lazy device-loads; SGLANG_TRITON_PREWARM_MIN_FREE_GB =
+      # EnvFloat(1.0), deliberately matching the pre-existing
+      # SGLANG_TRITON_LOAD_WARNING_THRESHOLD_GB -- every prod late load happened
+      # below both.
+      # Tests: NEW test/registered/unit/utils/test_triton_load_watch_prewarm.py
+      # (register_cpu_ci est_time=10) 30P under pytest on BOTH triton builds --
+      # .venv2 3.7.1 and the prod .venv 3.8.0: loads unloaded fake kernels,
+      # skips resident ones, survives a raising _init_handles, stops at the floor
+      # and skips the recipes, kill-switch / no-CUDA / ROCm / no-install no-ops,
+      # idempotence, dead weakrefs pruned without the test owning a kernel, the
+      # __init__ wrap chaining the original and not double-wrapping, the JIT scan
+      # inserting no defaultdict keys, the pre-existing late-load warning and
+      # crash mode, install() chaining a pre-existing listener, and the env
+      # defaults. Ruff repo-ruleset + format clean.
+      # GPU-WINDOW DEBTS (LIVE ONLY AFTER THE USER RESTARTS): measure the boot
+      # cost and cubin bytes of the sweep from that one summary line per rank;
+      # confirm "device-loaded after serving started" falls to ~0 for the covered
+      # names (the request-driven warmup runs AFTER mark_serving_started, so its
+      # own first loads still warn legitimately, as do the declined names);
+      # recipe coverage via the debug log. Residual risk, stated on purpose:
+      # recipes warm specialization CLASSES, not values -- a pointer-alignment or
+      # slicing flip at a new call site can still miss, and that load falls back
+      # onto entry 210's headroom handling.
+
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
 ==============================================================================
@@ -2763,6 +3015,34 @@ CAVEATS
     stays at ~0 hits while host_used_tokens pins at capacity, the store's
     sidecar density (~1 in 26 pages) is the limit, not the clamp: measure
     before reaching for P2.
+  * BEHAVIOR WATCH for the NEXT restart (entries 210-211): both are
+    DEFAULT-ON and change which kernel produces prod output. Entry 210: a
+    big-context mixed-chunk prefill whose dense KV pack passes the byte
+    budget (or OOMs) is now served by the PAGED chunk-prefill kernel --
+    fork-only, called "unproven end-to-end" by
+    _resolve_chunk_prefill_kv_source(), and after a real OOM the process
+    LATCHES onto paged for the rest of its life. Numerically equivalent by
+    the fork's oracle intent, but
+    test_qsa_paged_chunk_prefill.py (register_cuda_ci) has never run on this
+    box: run it (or A/B outputs against the packed path) before trusting
+    wrong-output reports. Signals to grep: the boot line "using the paged
+    chunked-prefill KV source", one-line "QSA chunked-prefill pack budget:
+    ..." per tier, and "...automatically falling back to the paged
+    chunked-prefill kernel..." plus the counters
+    _qsa_pack_attempts/_qsa_pack_budget_refusals/_qsa_pack_oom_fallbacks.
+    LIMITATION, on purpose: a prefill OOM stays FATAL where paged cannot
+    serve (page-major KV layout / --enable-unified-memory, or a KV quant
+    method with needs_plain_kv_dequant_read()) -- the code logs the
+    actionable lever list and re-raises; no recovery was invented. Rollback:
+    SGLANG_ENABLE_QSA_CHUNK_PREFILL_PACK_BUDGET=0 and
+    SGLANG_ENABLE_QSA_CHUNK_PREFILL_OOM_FALLBACK=0 restore pre-fix
+    behaviour; the real prevention (paged at boot) is a script decision.
+    Entry 211: boot gains the Triton prewarm sweep -- cost UNMEASURED here,
+    read the single "Triton prewarm: loaded N cubins (... free device mem
+    X -> Y GiB, Z s)" line per rank, and expect the late device-load spam to
+    fall to ~0 except for the post-mark_serving_started warmup and the
+    declined kernels (_small_copy, fused_moe, _qsa_mqa_prefill,
+    _layer_norm_fwd_1pass, _causal_conv1d_fwd).
   * 09-28 BUILD BOOTED 2026-09-28 (TP2 next8.sh on GPUs 0-1, and the
     118-125 test servers on GPUs 2-3): no import breaks. Entry 102's A/B vs
     --enable-linear-replayssm-spec off is still owed.
