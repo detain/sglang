@@ -1,10 +1,11 @@
 """CPU coverage for the QSA chunked-prefill KV source selector and dispatch.
 
 The resolver half lives in ``sparse_attn``; the dispatch half under test here
-is ``QwenSparseAttnBackend._chunk_prefill_kv_path`` (env value + layout guard
-+ one-shot WARNING fallback) and ``_paged_kv_source_supported`` (the guard's
-real predicates).  Neither touches CUDA, so the backend instance is built
-with ``__new__`` and only the attributes the methods read.
+is ``QwenSparseAttnBackend._chunk_prefill_kv_path`` (env value + layout guard +
+one-shot WARNING fallback + the sticky latch the dense-pack out-of-memory
+fallback sets) and ``_paged_kv_source_supported`` (the guard's real
+predicates).  Neither touches CUDA, so the backend instance is built with
+``__new__`` and only the attributes the methods read.
 """
 
 import unittest
@@ -20,7 +21,7 @@ from sglang.srt.layers.attention.qwen_sparse_attn_backend import (
 )
 from sglang.test.ci.ci_register import register_cpu_ci
 
-register_cpu_ci(est_time=2, suite="base-a-test-cpu")
+register_cpu_ci(est_time=3, suite="base-a-test-cpu")
 
 _BACKEND = "sglang.srt.layers.attention.qwen_sparse_attn_backend"
 
@@ -117,6 +118,7 @@ class TestQsaChunkPrefillDispatch(unittest.TestCase):
     def _backend(guard_result=(True, None)):
         backend = QwenSparseAttnBackend.__new__(QwenSparseAttnBackend)
         backend._paged_kv_guard_warned = False
+        backend._chunk_prefill_kv_forced_paged = False
         backend.token_to_kv_pool = None
         backend._paged_kv_source_supported = mock.MagicMock(return_value=guard_result)
         return backend
@@ -127,6 +129,21 @@ class TestQsaChunkPrefillDispatch(unittest.TestCase):
             path = backend._chunk_prefill_kv_path()
         self.assertEqual(path, "paged")
         self.assertEqual(backend._paged_kv_source_supported.call_count, 1)
+
+    def test_pack_oom_latch_selects_paged_for_every_later_forward(self):
+        # The latch is what stops a pack that already failed from OOMing again
+        # once per QSA layer; it wins over the configured value without
+        # re-consulting the guard (which passed when it was set).
+        backend = self._backend((True, None))
+        backend._chunk_prefill_kv_forced_paged = True
+        for configured in ("auto", "packed", "paged"):
+            with self.subTest(configured=configured):
+                _resolve_chunk_prefill_kv_source.cache_clear()
+                with envs.SGLANG_QSA_CHUNK_PREFILL_KV_SOURCE.override(configured):
+                    path = backend._chunk_prefill_kv_path()
+                self.assertEqual(path, "paged")
+            _resolve_chunk_prefill_kv_source.cache_clear()
+        backend._paged_kv_source_supported.assert_not_called()
 
     def test_guard_fail_selects_packed_and_warns_once(self):
         backend = self._backend((False, "page-major KV layout is enabled"))

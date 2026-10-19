@@ -49,6 +49,7 @@ from sglang.srt.layers.attention.qsa.sparse_attn import (
     _resolve_chunk_prefill_kv_source,
     is_fp8_kv_dtype,
     pack_qsa_prefill_kv,
+    qsa_pack_prefill_kv_bytes,
     qsa_sparse_decode_triton,
     qwen_sparse_fa2_cu_seqlens_triton,
     qwen_sparse_kv_extraction_compact_triton,
@@ -71,6 +72,7 @@ from sglang.srt.model_executor.forward_batch_info import ForwardMode
 from sglang.srt.model_executor.runner_backend_utils.breakable_cuda_graph import (
     is_in_breakable_cuda_graph,
 )
+from sglang.srt.model_executor.runner_utils.capture_mode import get_is_capture_mode
 from sglang.srt.runtime_context import get_memory, get_parallel, get_spec
 from sglang.srt.utils import is_hip
 
@@ -175,6 +177,127 @@ def _resolve_flash_attn_varlen_func():
             "QSA decode requires flash_attn (FA2), flash-attn-4 (FA4 cute), "
             "or aiter (ROCm) for its packed varlen fallback."
         ) from exc
+
+
+# ---------------------------------------------------------------------------
+# Dense chunk-prefill pack memory guards.
+#
+# ``pack_qsa_prefill_kv`` materialises ``sum(full contexts) x kv_heads x
+# head_dim`` of the query dtype, twice (K and V), per QSA layer per forward.
+# That sum is bounded by no scheduler accounting: --chunked-prefill-size and
+# --max-prefill-tokens bound the query rows only, and radix prefix sharing lets
+# it exceed the physical pool (2x at the crash below).  A prefill OOM has no
+# recovery path in the scheduler, so one overshoot aborts the process: on
+# 2026-10-18 a 2 GiB pack at total_k ~= 4.19M against a 6.6 GiB dynamic
+# headroom took down all four TP ranks.  The budget gate refuses an impossible
+# pack before allocating it; the OOM catch is the backstop for an estimate that
+# turned out wrong.
+# ---------------------------------------------------------------------------
+
+
+def _qsa_bytes_str(num_bytes: Optional[int]) -> str:
+    """Human-readable byte count for the pack-guard logs."""
+    if num_bytes is None:
+        return "unknown"
+    if num_bytes >= 2**30:
+        return f"{num_bytes / 2**30:.2f} GiB"
+    return f"{num_bytes / 2**20:.2f} MiB"
+
+
+def _qsa_heads_dim_str(k_buffer) -> str:
+    """``<heads> kv-head(s) x <dim> dim`` from a pool buffer's layout."""
+    shape = tuple(getattr(k_buffer, "shape", ()) or ())
+    if len(shape) < 3:
+        return f"unknown layout {shape}"
+    return f"{shape[1]} kv-head(s) x {shape[2]} dim"
+
+
+def _qsa_dense_pack_bytes(
+    k_buffer, *, total_k: int, dtype: torch.dtype
+) -> Optional[int]:
+    """Bytes a dense K/V materialisation costs; None if the layout is unpricable.
+
+    ``pack_qsa_prefill_kv`` reads ``k.shape[1:]`` itself, so anything that is not
+    the token-major ``(slots, heads, dim)`` pool layout has no size this guard
+    can state -- and the guard must not be the thing that raises.
+    """
+    shape = tuple(getattr(k_buffer, "shape", ()) or ())
+    if len(shape) < 3:
+        return None
+    return qsa_pack_prefill_kv_bytes(
+        total_k=total_k, heads=int(shape[1]), dim=int(shape[2]), dtype=dtype
+    )
+
+
+def _qsa_device_index(device) -> Optional[int]:
+    """Integer device index for logs; None when it cannot be established."""
+    index = getattr(device, "index", None)
+    if isinstance(index, int):
+        return index
+    try:
+        return torch.cuda.current_device()
+    except Exception:
+        return None
+
+
+def _qsa_stream_is_capturing() -> bool:
+    """Whether a CUDA graph capture owns this forward.
+
+    ``get_is_capture_mode()`` is the runner's own flag (it already covers the
+    breakable prefill graph); the driver query catches a capture started outside
+    the runners, e.g. by an out-of-tree caller.  Both are host-side bookkeeping:
+    neither may synchronize, unlike the memory query this gates.
+    """
+    if get_is_capture_mode():
+        return True
+    if not torch.cuda.is_available():
+        return False
+    try:
+        return bool(torch.cuda.is_current_stream_capturing())
+    except Exception:
+        return False
+
+
+def _qsa_device_headroom_bytes(device) -> Tuple[Optional[int], Optional[int]]:
+    """(driver-free, allocator-cached) bytes usable for one more allocation.
+
+    The cached part matters: blocks the caching allocator already owns for this
+    process are reusable by the next ``torch.empty``, so free + cached is the
+    number that predicts whether an allocation can be served.  ``mem_get_info``
+    synchronizes the device, so it is skipped while capturing; the allocator
+    counters are host-side bookkeeping and always safe to read.
+    """
+    try:
+        cached = max(
+            int(torch.cuda.memory_reserved(device))
+            - int(torch.cuda.memory_allocated(device)),
+            0,
+        )
+    except Exception:
+        cached = None
+    free = None
+    if not _qsa_stream_is_capturing():
+        try:
+            free = int(torch.cuda.mem_get_info(device)[0])
+        except Exception:
+            free = None
+    return free, cached
+
+
+def _qsa_headroom_str(device) -> str:
+    free, cached = _qsa_device_headroom_bytes(device)
+    if free is None and cached is None:
+        if _qsa_stream_is_capturing():
+            return "no memory headroom reading (CUDA graph capture in progress)"
+        return "no memory headroom reading (device queries unavailable)"
+    if free is None:
+        return f"{_qsa_bytes_str(cached)} allocator-cached"
+    if cached is None:
+        return f"{_qsa_bytes_str(free)} free"
+    return (
+        f"{_qsa_bytes_str(free)} free and {_qsa_bytes_str(cached)} "
+        f"allocator-cached ({_qsa_bytes_str(free + cached)} usable)"
+    )
 
 
 class QwenSparseAttnMetadata(msgspec.Struct, frozen=True):
@@ -333,6 +456,14 @@ class QwenSparseAttnBackend(AttentionBackend):
         # (see ``_chunk_prefill_kv_path``); the guard inputs are static per
         # process, so without the latch the fallback would warn per layer.
         self._paged_kv_guard_warned = False
+        # Plain counter, no metrics plumbing: how many forwards the
+        # out-of-memory fallback served (see ``_chunk_prefill_oom_fallback``).
+        self._qsa_pack_oom_fallbacks = 0
+        # Sticky latch set by the dense-pack out-of-memory fallback: once a pack
+        # has failed, every later forward routes to the paged kernel directly
+        # instead of OOMing again once per QSA layer (see
+        # ``_chunk_prefill_oom_fallback``).
+        self._chunk_prefill_kv_forced_paged = False
         self._cuda_graph_metadata: Dict[
             Tuple[ForwardMode, int], QwenSparseAttnMetadata
         ] = {}
@@ -2129,6 +2260,30 @@ class QwenSparseAttnBackend(AttentionBackend):
         # K/V (the paged one reads these same pool tensors in place); either
         # way the buffers come from the cache, which already holds the
         # current chunk's K/V committed above.
+        return self._forward_chunk_prefill(
+            q, layer, forward_batch, topk_indices, shared, num_output_rows
+        )
+
+    def _forward_chunk_prefill(
+        self,
+        q: torch.Tensor,
+        layer,
+        forward_batch,
+        topk_indices: torch.Tensor,
+        shared: Dict[str, Any],
+        num_output_rows: int,
+    ) -> torch.Tensor:
+        """Serve a chunked prefill with a cached prefix from the KV pool.
+
+        Two KV sources exist: the paged kernel reads the pool in place through
+        ``req_to_token``, the dense path materialises the full contexts of the
+        whole batch for the packed kernel.  The dense path is the one that has
+        historically aborted the process -- ``total_k`` sums FULL contexts
+        (prefix + extend) over the batch, an amount bounded by no scheduler
+        accounting -- so it is wrapped in an OOM catch that reroutes the
+        forward to the paged kernel rather than letting a prefill OOM reach
+        ``run_scheduler_process``.
+        """
         pool = self.token_to_kv_pool
         k_buffer = pool.get_key_buffer(layer.layer_id)
         v_buffer = pool.get_value_buffer(layer.layer_id)
@@ -2142,29 +2297,22 @@ class QwenSparseAttnBackend(AttentionBackend):
             # Read the pool through req_to_token; no full-context gather is
             # materialised.  The per-forward cache still holds every other
             # hoisted tensor, and the pool tensors go to the kernel directly.
-            if "sequence_lens_tensor" not in shared:
-                self._build_chunk_prefill_shared(
-                    shared, forward_batch, q.device, need_gather=False
-                )
-            output = sparse_gqa_fwd_interface_triton_paged(
-                q.contiguous(),
+            output = self._paged_chunk_prefill_output(
+                q,
                 k_buffer,
                 v_buffer,
-                self.req_to_token_pool.req_to_token,
-                forward_batch.req_pool_indices,
+                layer,
+                forward_batch,
                 topk_indices,
-                cu_seqlens_q,
-                shared["cu_seqlens_k"],
-                shared["sequence_lens_tensor"],
-                layer.scaling,
-                **scale_kwargs,
-                max_q=shared["max_q"],
+                shared,
+                scale_kwargs,
             )
             return self._pad_extend_output(output, num_output_rows)
         if "sequence_lens_tensor" not in shared:
             self._build_chunk_prefill_shared(
                 shared, forward_batch, q.device, need_gather=False
             )
+        sequence_lens = shared["sequence_lens"]
         sequence_lens_tensor = shared["sequence_lens_tensor"]
         cu_seqlens_k = shared["cu_seqlens_k"]
         max_q = shared["max_q"]
@@ -2175,32 +2323,54 @@ class QwenSparseAttnBackend(AttentionBackend):
         # writer stores unscaled K/V).  For scaled FP8 pools keep the
         # gather-index path, which descales inside the attention kernel.
         use_pack = not scale_kwargs or (k_scale == 1.0 and v_scale == 1.0)
-        if use_pack:
-            packed_k, packed_v = pack_qsa_prefill_kv(
-                k=k_buffer,
-                v=v_buffer,
-                req_to_token=self.req_to_token_pool.req_to_token,
-                req_indices=forward_batch.req_pool_indices,
-                cu_k=cu_seqlens_k,
-                total_k=sum(sequence_lens),
-                max_k=max(sequence_lens, default=1),
-                output_dtype=q.dtype,
-            )
-            gathered_k, gathered_v = packed_k, packed_v
-        else:
-            if "gather_index" not in shared:
-                self._build_chunk_prefill_shared(
-                    shared, forward_batch, q.device, need_gather=True
+        total_k = sum(sequence_lens)
+        dense_dtype = q.dtype if use_pack else k_buffer.dtype
+        needed_bytes = _qsa_dense_pack_bytes(
+            k_buffer, total_k=total_k, dtype=dense_dtype
+        )
+        try:
+            if use_pack:
+                packed_k, packed_v = pack_qsa_prefill_kv(
+                    k=k_buffer,
+                    v=v_buffer,
+                    req_to_token=self.req_to_token_pool.req_to_token,
+                    req_indices=forward_batch.req_pool_indices,
+                    cu_k=cu_seqlens_k,
+                    total_k=total_k,
+                    max_k=max(sequence_lens, default=1),
+                    output_dtype=q.dtype,
                 )
-            gather_index = shared["gather_index"]
-            gathered_k = k_buffer.index_select(0, gather_index)
-            gathered_v = v_buffer.index_select(0, gather_index)
+                gathered_k, gathered_v = packed_k, packed_v
+            else:
+                if "gather_index" not in shared:
+                    self._build_chunk_prefill_shared(
+                        shared, forward_batch, q.device, need_gather=True
+                    )
+                gather_index = shared["gather_index"]
+                gathered_k = k_buffer.index_select(0, gather_index)
+                gathered_v = v_buffer.index_select(0, gather_index)
+        except torch.cuda.OutOfMemoryError as exc:
+            output = self._chunk_prefill_oom_fallback(
+                exc,
+                q=q,
+                k_buffer=k_buffer,
+                v_buffer=v_buffer,
+                layer=layer,
+                forward_batch=forward_batch,
+                topk_indices=topk_indices,
+                shared=shared,
+                scale_kwargs=scale_kwargs,
+                total_k=total_k,
+                needed_bytes=needed_bytes,
+                dense_dtype=dense_dtype,
+            )
+            return self._pad_extend_output(output, num_output_rows)
         output = sparse_gqa_fwd_interface_triton_ck(
             q.contiguous(),
             gathered_k,
             gathered_v,
             topk_indices,
-            cu_seqlens_q,
+            shared["cu_seqlens_q"],
             cu_seqlens_k,
             sequence_lens_tensor,
             layer.scaling,
@@ -2208,6 +2378,126 @@ class QwenSparseAttnBackend(AttentionBackend):
             max_q=max_q,
         )
         return self._pad_extend_output(output, num_output_rows)
+
+    def _paged_chunk_prefill_output(
+        self,
+        q: torch.Tensor,
+        k_buffer: torch.Tensor,
+        v_buffer: torch.Tensor,
+        layer,
+        forward_batch,
+        topk_indices: torch.Tensor,
+        shared: Dict[str, Any],
+        scale_kwargs: Dict[str, float],
+    ) -> torch.Tensor:
+        """Run the paged chunk-prefill kernel on the per-forward hoisted state.
+
+        Shared by the configured paged path and by both dense-pack fallbacks so
+        the three can never drift apart in arguments or in the
+        ``need_gather=False`` hoist they depend on.
+        """
+        if "sequence_lens_tensor" not in shared:
+            self._build_chunk_prefill_shared(
+                shared, forward_batch, q.device, need_gather=False
+            )
+        return sparse_gqa_fwd_interface_triton_paged(
+            q.contiguous(),
+            k_buffer,
+            v_buffer,
+            self.req_to_token_pool.req_to_token,
+            forward_batch.req_pool_indices,
+            topk_indices,
+            shared["cu_seqlens_q"],
+            shared["cu_seqlens_k"],
+            shared["sequence_lens_tensor"],
+            layer.scaling,
+            **scale_kwargs,
+            max_q=shared["max_q"],
+        )
+
+    def _chunk_prefill_oom_fallback(
+        self,
+        exc: torch.cuda.OutOfMemoryError,
+        *,
+        q: torch.Tensor,
+        k_buffer: torch.Tensor,
+        v_buffer: torch.Tensor,
+        layer,
+        forward_batch,
+        topk_indices: torch.Tensor,
+        shared: Dict[str, Any],
+        scale_kwargs: Dict[str, float],
+        total_k: int,
+        needed_bytes: Optional[int],
+        dense_dtype: torch.dtype,
+    ) -> torch.Tensor:
+        """Serve the forward after the dense pack failed, or re-raise.
+
+        The dense scratch is sized by summed FULL contexts, so one admitted
+        batch can demand more than the whole dynamic headroom; a prefill OOM
+        has no recovery path and takes the scheduler process (and with it all
+        four ranks) down.  The paged kernel reads the same pool through
+        ``req_to_token`` and allocates nothing, so it can serve the forward.
+        The decision is sticky: re-attempting a pack that just failed would
+        repeat the OOM once per QSA layer per forward.
+        """
+        supported, reason = self._paged_kv_source_supported()
+        diagnosis = (
+            "QSA chunked-prefill dense K/V pack out of memory: layer "
+            f"{getattr(layer, 'layer_id', '?')} asked for "
+            f"{_qsa_bytes_str(needed_bytes)} for {total_k} summed context "
+            f"tokens x {_qsa_heads_dim_str(k_buffer)} of {dense_dtype}; device "
+            f"{_qsa_device_index(q.device)} reports {_qsa_headroom_str(q.device)}"
+        )
+        cli_levers = (
+            "lower --mem-fraction-static, --context-length, "
+            "--max-running-requests or --prefill-max-requests"
+        )
+        if not envs.SGLANG_ENABLE_QSA_CHUNK_PREFILL_OOM_FALLBACK.get():
+            logger.error(
+                diagnosis
+                + "; SGLANG_ENABLE_QSA_CHUNK_PREFILL_OOM_FALLBACK is off, so the "
+                "OOM propagates and this scheduler process will exit. Set it back "
+                "to 1"
+                + (
+                    " and select SGLANG_QSA_CHUNK_PREFILL_KV_SOURCE=paged"
+                    if supported
+                    else ""
+                )
+                + f", or {cli_levers}."
+            )
+            raise exc
+        if not supported:
+            logger.error(
+                diagnosis
+                + "; the paged chunk-prefill kernel cannot serve as the fallback "
+                f"here ({reason}), so the OOM propagates and this scheduler "
+                f"process will exit. {cli_levers[0].upper() + cli_levers[1:]}."
+            )
+            raise exc
+        self._qsa_pack_oom_fallbacks += 1
+        if not self._chunk_prefill_kv_forced_paged:
+            self._chunk_prefill_kv_forced_paged = True
+            logger.warning(
+                diagnosis + "; automatically falling back to the paged chunk-prefill "
+                "kernel, which reads the pool through req_to_token and allocates "
+                "nothing. Later forwards in this process skip the dense pack "
+                "entirely; select SGLANG_QSA_CHUNK_PREFILL_KV_SOURCE=paged to "
+                "make that the boot-time choice, and lower "
+                "--mem-fraction-static, --context-length, "
+                "--max-running-requests or --prefill-max-requests to restore "
+                "headroom."
+            )
+        return self._paged_chunk_prefill_output(
+            q,
+            k_buffer,
+            v_buffer,
+            layer,
+            forward_batch,
+            topk_indices,
+            shared,
+            scale_kwargs,
+        )
 
     def _paged_kv_source_supported(self) -> Tuple[bool, Optional[str]]:
         """Whether the paged chunk-prefill kernel's addressing assumptions hold.
@@ -2262,7 +2552,14 @@ class QwenSparseAttnBackend(AttentionBackend):
         if it fails, warn once (the guard inputs are static per process) and
         fall back to packed -- raising here would turn a mere configuration
         combination into a crash.
+
+        A dense pack that already ran out of memory latches the process onto
+        the paged kernel: the guard passed once for it to have been attempted,
+        and re-attempting the allocation would OOM once per QSA layer per
+        forward on the way to killing the scheduler process.
         """
+        if self._chunk_prefill_kv_forced_paged:
+            return "paged"
         if _resolve_chunk_prefill_kv_source() != "paged":
             return "packed"
         supported, reason = self._paged_kv_source_supported()

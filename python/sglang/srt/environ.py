@@ -327,6 +327,13 @@ class Envs:
     # Select the QSA chunked-prefill KV source. Auto keeps the packed gather
     # path; paged reads the KV pool through req_to_token without densifying.
     SGLANG_QSA_CHUNK_PREFILL_KV_SOURCE = EnvStr("auto")
+    # The dense packed KV scratch is sized by sum(full contexts) across the
+    # batch, which no scheduler accounting bounds, and a prefill OOM there
+    # kills the scheduler process (there is no prefill recovery). When it does
+    # happen, serve the forward from the paged kernel instead and latch the
+    # instance onto paged for the rest of the process. Set False to keep the
+    # old behaviour: log the actionable error and let the OOM propagate.
+    SGLANG_ENABLE_QSA_CHUNK_PREFILL_OOM_FALLBACK = EnvBool(True)
     SGLANG_PREFETCH_BLOCK_SIZE_MB = EnvInt(16)
     SGLANG_GEMMA_OUT_OF_PLACE_POSITION_MUTATION = EnvBool(False)
     SGLANG_ENABLE_WEIGHT_LOADER_V2 = EnvBool(False)

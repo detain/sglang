@@ -630,6 +630,18 @@ def _pack_qsa_prefill_kv(
     tl.store(packed_v + dst, values, valid)
 
 
+def qsa_pack_prefill_kv_bytes(
+    *, total_k: int, heads: int, dim: int, dtype: torch.dtype
+) -> int:
+    """Bytes ``pack_qsa_prefill_kv`` materialises for one call.
+
+    Kept next to the allocation so the memory gate that precedes it and the OOM
+    message that follows it cannot drift from what is actually reserved: two
+    ``(total_k, heads, dim)`` tensors in ``dtype`` (K and V).
+    """
+    return int(total_k) * int(heads) * int(dim) * dtype.itemsize * 2
+
+
 def pack_qsa_prefill_kv(
     *, k, v, req_to_token, req_indices, cu_k, total_k, max_k, output_dtype=None
 ):
