@@ -2002,6 +2002,7 @@ class TestUnifiedRadixCacheBatchedWriteThrough(CustomTestCase):
         )
         self._assert_all_backed_up(cache, [parent, child])
 
+    @unittest.skipUnless(torch.cuda.is_available(), "cache fixtures need CUDA")
     def test_queued_full_backed_parent_owns_its_ack_ahead_of_a_queued_child(self):
         # The parent's Full is backed but its SWA is device-only, and its own
         # incremental backup queues behind the child. Backing the child up first
