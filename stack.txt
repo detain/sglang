@@ -1,6 +1,6 @@
 # stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
 #
-# STACK: qwennext-stack-208-2026-10-15
+# STACK: qwennext-stack-209-2026-10-18
 #   main+pr36787+pr37275+pr38144+pr38209+pr36644+pr39862+pr39809+pr39893+local_hicache_qsa_fixes
 #   +pr39614+pr39978+pr40002+pr39065+pr40501+pr40175+pr40362+pr39391+pr37061+pr39333+pr33778
 #   +pr38977+pr39977+pr40480+pr39880+pr40235+pr39807+cpu-triage+boot-fix+plan_updates_perf
@@ -10,7 +10,7 @@
 #   +diffusion-batch-2026-10-08(pr27673+pr28690*+pr32513+pr32550*+pr33036*+pr33588*
 #    +pr36399+pr36767+pr37460*+pr38650+pr39212+pr40493+pr40588+pr40755+pr41340*
 #    +pr41944+pr42249+pr42928*+pr43028*+pr43064*)
-#   (entries 1-208; *=squash/ported, see commit messages. 10-10 added
+#   (entries 1-209; *=squash/ported, see commit messages. 10-10 added
 #   entries 157-161: parser batch A (Qwen3-Coder tool-call fixes + sampling
 #   upper bounds), on top of upstream merge #3 (see synced). 10-10b added
 #   entries 162-166: SM120 batch B (#42863 PCIe-IPC vocab gathers, #42566
@@ -69,6 +69,16 @@
 #   consumers stop re-applying k/v_scale_float; correctness for
 #   --kv-cache-dtype=nvfp4, inert on fp8_e4m3 KV). Plus the entry-206
 #   dispatcher device-test gate as a standalone commit (99694ade95).
+#   10-18 added entry 209: hybrid L3 prefetch trailing-sidecar endpoint
+#   fix (8aab510bdc + 3fa5197482) -- the host-capacity clamp moved a
+#   prefetch span onto an unverified interior page, so every mamba
+#   sidecar read missed ("Failed to fetch <hash>.mamba") and a fully
+#   transferred 222,720-token KV prefix was discarded; the span now ends
+#   on the deepest rank-agreed verified endpoint (or the prefetch is
+#   declined with host_capacity and retried), plus throttled sidecar
+#   write-refusal/endpoint-miss reporting. Query-only change: the
+#   existing /root/hicache_store contents stay valid (no key or layout
+#   change). Live only after restart.
 #   10-08 added entries
 #   136-155: 20 diffusion PRs (4 more evaluated-skipped, see NOT INCLUDED).
 #   09-28 added 22 entries: 9 new PR blocks, new head
@@ -76,7 +86,7 @@
 #   make --enable-mixed-chunk safe and fix the QSA verify ring collision.
 #   * = picked with local modifications, see the entries)
 # branch : qwennext-stack
-# tip    : bebd2f95e3   (the stack.txt commit sits above it)
+# tip    : 3fa5197482   (the stack.txt commit sits above it)
 # base   : upstream sgl-project/sglang main @ 7ad55e4386 ([HiCache] TMA-staged
 #          host<->device KV transfer kernel (sm_90+) (#40278), 2026-09-21)
 # synced : upstream main @ f209e67767 (#39643, 2026-09-28) MERGED IN as
@@ -2425,6 +2435,52 @@ STACK, IN BUILD ORDER (bottom first)
       # flashinfer_backend import smoke ok. GPU debt: nvfp4-KV prefill
       # scale correctness e2e when the trial actually runs
       # --kv-cache-dtype=nvfp4 (inert on prod fp8_e4m3 KV).
+        209. 8aab510bdc  hybrid L3 prefetch: end a capacity-shortened span on a VERIFIED trailing sidecar endpoint (+ 3fa5197482 sidecar reporting)
+      # prod symptom, 59 events x 4 TP ranks: "Failed to fetch <64hex>.mamba
+      # from HiCacheFile storage." + "HiCache hybrid prefetch discarded
+      # req=... completed=2944 requested=2944 kv_beliefs_kept_pages=46
+      # aux_pool_hit_pages={'mamba': 0}" -- 60 discards = 222,720 tokens read
+      # from L3 and thrown away (unfulfilled{storage_transfer}), host pools
+      # pinned at 3,082,496/3,082,560 tokens and 316/316 mamba states.
+      # Root cause: batch_exists_v2 verifies the sidecar at TRAILING page B,
+      # but the host-capacity clamp in allocate_storage_hit shortens the span
+      # to an interior page (unified_radix_cache.py:3112 truncates
+      # operation.hash_value to alloc_len) and _sync_trailing_keys then reads
+      # <interior>.mamba -- sidecars cover only ~1 in 26 stored pages, so the
+      # read always missed and _check_hybrid_prefetch_result's all-or-nothing
+      # rule discarded the whole (fully transferred) KV prefix. Fix:
+      # HiCacheFile.batch_exists_v2 reports the trailing pools' SHARED stop
+      # points as restorable_prefix_pages (the Mooncake/linker contract this
+      # backend was missing -- final_pages is now that shared point), the
+      # agreed set rides the ONE existing MIN collective of
+      # _sync_prefetch_hit_query as a 0/1 mask of length
+      # len(token_ids)//page_size + 1 (rank-invariant shape even when a rank
+      # skips or fails its query; MIN == AND, so every rank clamps to the same
+      # endpoint), and allocate_storage_hit ends a shortened span on the
+      # deepest agreed endpoint or declines it (host_capacity revoke -- queued
+      # for retry, no doomed IO, no misleading discard log). Query-only: no
+      # storage key or layout change, so the 285k pages + 14.9MB states
+      # already in /root/hicache_store stay valid; a full-length span behaves
+      # exactly as before, and buffer_only mode keeps its pinned endpoint
+      # (sidecar_hash_values) and its allow_partial=False path untouched. New
+      # CPU test test_hicache_trailing_endpoint.py (17 tests, 2 of them
+      # 2-rank gloo): RED at base = 13 failures incl. the 24-token doomed
+      # launch and a "no shared stop point" mask; stale expectation corrected
+      # in test_hicache_fast_file_unit.py (two sidecars at pages 0/1, no
+      # shared endpoint -> kv_hit_pages 2 -> 0, per-pool verdicts kept).
+      # 3fa5197482 makes the silent paths talk: HiCacheFile.get names the pool
+      # and the endpoint semantics on a miss, set() counts the LRU /
+      # SGLANG_HICACHE_FILE_BACKEND_MIN_FREE_SPACE refusals per pool (mamba
+      # write-amp was invisible: 22.4M tokens backed up vs 447k prefetched),
+      # and the controller counts endpoint declines, verified trailing reads
+      # and sidecar backup shortfalls -- 8 warnings each then quiet, counters
+      # are class attributes for a later /metrics hook. P2 (clamp the usable
+      # prefix at ack time instead of forfeiting the read) NOT shipped: needs
+      # the endpoint published through PrefetchAck and the mamba seqlen stamp
+      # re-derived at the clipped length, or a wrong-output risk (#39209
+      # alignment) replaces a clean miss; the new decline counters size what
+      # it would win. GPU debt: TP4 prefetch with a partial host clamp on the
+      # live store + test/registered/hicache/* backend runs.
 
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
@@ -2695,6 +2751,18 @@ CAVEATS
     --enable-linear-lossless-verify (entry-203; EXCLUSIVE with prod's
     --enable-linear-replayssm-spec -- the lossless-vs-replayssm A/B is
     two restarts).
+  * BEHAVIOR WATCH for the NEXT restart (entry 209): the hybrid L3
+    prefetch clamp. Expect the "Failed to fetch <hash>.mamba" +
+    "HiCache hybrid prefetch discarded ... completed==requested" pairs to
+    STOP; the same host pressure now shows up as hicache prefetch
+    deferrals (deferred{host_capacity}) plus the new throttled
+    "no restorable trailing sidecar endpoint ... (declined, N total)" and
+    "HiCacheFile write refused by the LRU/cap for pool=mamba" lines, and
+    the controller counters sidecar_endpoint_clamps /
+    sidecar_endpoint_misses / sidecar_write_shortfalls. If L3 prefetch
+    stays at ~0 hits while host_used_tokens pins at capacity, the store's
+    sidecar density (~1 in 26 pages) is the limit, not the clamp: measure
+    before reaching for P2.
   * 09-28 BUILD BOOTED 2026-09-28 (TP2 next8.sh on GPUs 0-1, and the
     118-125 test servers on GPUs 2-3): no import breaks. Entry 102's A/B vs
     --enable-linear-replayssm-spec off is still owed.
