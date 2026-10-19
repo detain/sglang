@@ -420,6 +420,7 @@ def test_cached_merge_restores_untouched_base_view():
     torch.testing.assert_close(base.weight, original, rtol=0, atol=0)
 
 
+@_REQUIRES_VISIBLE_CUDA
 def test_switching_adapters_unmerges_layers_the_new_adapter_skips():
     layer_x, layer_y = _make_layer(), _make_layer()
     base_x = layer_x.base_layer.weight.detach().clone()
@@ -447,6 +448,7 @@ def test_switching_adapters_unmerges_layers_the_new_adapter_skips():
     torch.testing.assert_close(layer_x(x), x @ base_x.T)
 
 
+@_REQUIRES_VISIBLE_CUDA
 def test_unmerge_restores_base_even_when_lora_disabled():
     layer = _make_layer()
     base = layer.base_layer.weight.detach().clone()
