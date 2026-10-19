@@ -253,6 +253,8 @@ class HybridCacheController(BaseHiCacheController):
     # ever incremented through an instance, which shadows them) so harnesses
     # that build a controller with ``__new__`` can still hit the report paths.
     sidecar_endpoint_clamps = 0
+    sidecar_endpoint_misses = 0
+    sidecar_write_shortfalls = 0
     _sidecar_reports = 0
 
     def __init__(
@@ -1681,6 +1683,13 @@ class HybridCacheController(BaseHiCacheController):
                         )
                     )
                 pool_hits = count_pool_hits(results)
+                self._report_sidecar_endpoint_misses(
+                    operation,
+                    transfers_nonkv,
+                    sidecar_hashes,
+                    sidecar_hit_pages,
+                    pool_hits,
+                )
             except Exception:
                 # The backend raised instead of reporting per-page misses.
                 # Degrade to zero sidecar hits -- _clamp_prefetch_result then
@@ -1704,6 +1713,49 @@ class HybridCacheController(BaseHiCacheController):
             )
         )
         return
+
+    def _report_sidecar_endpoint_misses(
+        self,
+        operation: PrefetchOperation,
+        transfers: list[PoolTransfer],
+        sidecar_hashes: list[str],
+        span_pages: int,
+        pool_hits: dict,
+    ) -> None:
+        """Name the pool and the endpoint page of a sidecar read that came up
+        short.
+
+        The backend's per-key report cannot tell a sidecar endpoint miss from a
+        KV page miss, and an endpoint miss is the expensive one: the KV prefix
+        already transferred in full and is discarded because of it, which is what
+        made prod's sparse ``.mamba`` coverage look like an IO failure.
+        """
+        for transfer in transfers:
+            if transfer.hit_policy != PoolHitPolicy.TRAILING_PAGES:
+                continue
+            window_pages = len(transfer.keys or ()) or 1
+            restored = pool_hits.get(transfer.name, 0)
+            if restored >= window_pages:
+                continue
+            self.sidecar_endpoint_misses += 1
+            endpoint = span_pages - window_pages
+            endpoint_hash = (
+                sidecar_hashes[endpoint] if 0 <= endpoint < len(sidecar_hashes) else "?"
+            )
+            self._report_sidecar(
+                "HiCache sidecar endpoint miss req=%s pool=%s kv_pages=%d "
+                "endpoint_page=%d endpoint_hash=%s window_pages=%d restored=%d: "
+                "the KV prefix read for this span cannot be spliced at that "
+                "endpoint (%d endpoint misses so far)",
+                operation.request_id,
+                transfer.name,
+                span_pages,
+                endpoint,
+                endpoint_hash,
+                window_pages,
+                restored,
+                self.sidecar_endpoint_misses,
+            )
 
     def trim_prefetch_full_head(self, operation, trim_tokens: int) -> None:
         """Drop a device-resident FULL head after the availability query;
@@ -1747,6 +1799,7 @@ class HybridCacheController(BaseHiCacheController):
                 )
             pool_hits = count_pool_hits(results)
             operation.pool_storage_result.update_extra_pool_hit_pages(pool_hits)
+            self._report_sidecar_write_shortfalls(backup_transfers, pool_hits)
 
         if not self.backup_skip:
             super()._page_backup(operation)
@@ -1769,6 +1822,39 @@ class HybridCacheController(BaseHiCacheController):
                         break
             operation.completed_tokens = (
                 len(operation.hash_value) * self.page_size if sidecar_ok else 0
+            )
+
+    def _report_sidecar_write_shortfalls(
+        self, backup_transfers: list[PoolTransfer], pool_hits: dict
+    ) -> None:
+        """Report sidecar pages the backend refused to write.
+
+        ``HiCacheFile.set`` answers False when the LRU cap or the free-space
+        watermark rejects a page, and only the ``backup_skip`` path ever looked
+        at those per-page results -- so with the normal write-through policy a
+        pool that stops landing (and can therefore never be prefetched back) was
+        completely silent, which is how a 1-in-26 ``.mamba`` coverage ratio
+        survived a whole serve unnoticed.
+        """
+        for transfer in backup_transfers:
+            if transfer.indices_from_pool is not None:
+                continue
+            expected = len(transfer.keys or ())
+            if expected == 0:
+                continue
+            stored = pool_hits.get(transfer.name, 0)
+            if stored >= expected:
+                continue
+            self.sidecar_write_shortfalls += 1
+            self._report_sidecar(
+                "HiCache sidecar backup incomplete pool=%s pages=%d stored=%d "
+                "(%d shortfalls so far): later prefetches cannot restore this "
+                "prefix from L3, and the write path is generating load that "
+                "never pays off",
+                transfer.name,
+                expected,
+                stored,
+                self.sidecar_write_shortfalls,
             )
 
     def should_backup(self, transfer: PoolTransfer) -> bool:

@@ -94,6 +94,13 @@ class PoolName(str, Enum):
         return self.value
 
 
+# Sidecar keys are ``<page hash>.<pool>``, so these are the markers
+# ``HiCacheFile._component_of`` can read back out of a key. KV has no marker.
+_POOL_COMPONENT_MARKERS = frozenset(
+    pool.value for pool in PoolName if pool is not PoolName.KV
+)
+
+
 class PoolHitPolicy(str, Enum):
     """Hit policy for batch_exists_v2 per-pool prefix matching.
 
@@ -472,6 +479,36 @@ class HiCacheFile(HiCacheStorage):
 
         # Rate limit for unreadable-page warnings; see _BAD_PAGE_WARN_BUDGET.
         self._bad_page_warnings = 0
+        # Same rate limit for the two fetch/write-miss reports below, plus a
+        # per-pool tally: a refused sidecar write is otherwise invisible to the
+        # operator (the backup path does not check sidecar results unless the
+        # backend dedupes writes), and the fetch-miss warning used to be
+        # indistinguishable from a KV page miss.
+        self._miss_report_warnings = 0
+        self.fetch_miss_counts: dict[str, int] = {}
+        self.write_refusal_counts: dict[str, int] = {}
+
+    @staticmethod
+    def _component_of(storage_key: str) -> str:
+        """Pool an (unsuffixed) storage key belongs to.
+
+        KV pages carry no marker; sidecar keys are ``<page hash>.<pool>``, and a
+        page hash is hex, so the marker is the trailing dotted token.
+        """
+        _, _, marker = storage_key.rpartition(".")
+        if marker and marker != storage_key and marker in _POOL_COMPONENT_MARKERS:
+            return marker
+        return str(PoolName.KV)
+
+    def _report_miss(self, message: str) -> None:
+        # Rate-limited like _report_bad_page: a storage dir written by another
+        # build (or a per-rank shard that never held these sidecars) can miss
+        # thousands of keys, and one warning per key buries the signal.
+        if self._miss_report_warnings < _BAD_PAGE_WARN_BUDGET:
+            self._miss_report_warnings += 1
+            logger.warning(message)
+        else:
+            logger.debug(message)
 
     def _get_suffixed_key(self, key: str) -> str:
         return key + self.config_suffix
@@ -528,7 +565,19 @@ class HiCacheFile(HiCacheStorage):
         except FileNotFoundError:
             if self.metadata_cache is not None:
                 self.metadata_cache.remove(suffixed)
-            logger.warning(f"Failed to fetch {key} from HiCacheFile storage.")
+            pool = self._component_of(key)
+            self.fetch_miss_counts[pool] = self.fetch_miss_counts.get(pool, 0) + 1
+            self._report_miss(
+                f"Failed to fetch {key} from HiCacheFile storage: no such "
+                f"{pool} page ({self.fetch_miss_counts[pool]} {pool} misses so far)."
+                + (
+                    ""
+                    if pool == str(PoolName.KV)
+                    else " A sidecar miss is an endpoint miss: the trailing "
+                    "window of the prefetched span is not restorable there, so "
+                    "the KV prefix read for it is forfeited too."
+                )
+            )
             return None
         except OSError:
             # Short read (IOError) or other read failures on a corrupt /
@@ -574,6 +623,20 @@ class HiCacheFile(HiCacheStorage):
             value_bytes = value.numel() * value.element_size()
             # Ask the evictor to admit + reserve disk space (evicting if needed).
             if not self._evictor.reserve(suffixed, value_bytes, key=key):
+                # The evictor says why (cap / watermark / ownership) once per
+                # refused key; keep a per-pool tally so a sidecar pool that is
+                # systematically refused -- e.g. ``.mamba`` files losing the
+                # free-space watermark while KV keeps landing -- is measurable
+                # instead of only inferable from later prefetch misses.
+                pool = self._component_of(key)
+                self.write_refusal_counts[pool] = (
+                    self.write_refusal_counts.get(pool, 0) + 1
+                )
+                self._report_miss(
+                    f"HiCacheFile refused to write {key} (pool={pool}, "
+                    f"{self.write_refusal_counts[pool]} {pool} refusals so far); "
+                    "later prefetches cannot restore this page."
+                )
                 return False
             reserved = True
 

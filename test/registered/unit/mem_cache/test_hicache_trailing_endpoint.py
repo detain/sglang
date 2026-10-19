@@ -350,5 +350,86 @@ class TestRankAgreedEndpoints(CustomTestCase):
         )
 
 
+class TestSidecarReporting(CustomTestCase):
+    """Refused sidecar writes and endpoint misses must be visible, not spammy."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="hicache_endpoint_report_")
+        self.backend = _make_backend(self.dir)
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_fetch_miss_names_the_pool(self):
+        with self.assertLogs("sglang.srt.mem_cache.hicache_storage", "WARNING") as log:
+            self.assertIsNone(self.backend.get(f"{_HASHES[0]}.mamba", _t(8)))
+        self.assertEqual(self.backend.fetch_miss_counts["mamba"], 1)
+        self.assertIn("mamba", log.output[0])
+        with self.assertLogs("sglang.srt.mem_cache.hicache_storage", "WARNING") as log:
+            self.assertIsNone(self.backend.get("absent_kv_key", _t(8)))
+        self.assertEqual(self.backend.fetch_miss_counts["kv"], 1)
+        self.assertIn("kv", log.output[0])
+        self.assertNotIn("mamba page", log.output[0])
+
+    def test_write_refusal_is_counted_and_bounded(self):
+        with mock.patch.object(self.backend._evictor, "reserve", return_value=False):
+            for pages in range(1, 40):
+                # Keys that are not already stored, so set() reaches the evictor.
+                self.assertFalse(self.backend.set(f"absent{pages}.mamba", _t(8)))
+        self.assertEqual(self.backend.write_refusal_counts["mamba"], 39)
+
+    def test_endpoint_miss_report_carries_the_span(self):
+        cc = HybridCacheController.__new__(HybridCacheController)
+        cc._sidecar_reports = 0
+        operation = _make_operation([_mamba_transfer()], list(_SIDECAR_PAGES))
+        span = operation.hash_value
+        cc._sync_trailing_keys(operation.pool_transfers, span, len(span))
+        with self.assertLogs("sglang.srt.mem_cache.hybrid_cache", "WARNING") as log:
+            cc._report_sidecar_endpoint_misses(
+                operation,
+                operation.pool_transfers,
+                span,
+                len(span),
+                {PoolName.MAMBA: 0},
+            )
+        message = log.output[0]
+        self.assertIn("pool=mamba", message)
+        self.assertIn(f"endpoint_page={len(span) - 1}", message)
+        self.assertIn(f"endpoint_hash={_HASHES[len(span) - 1]}", message)
+        self.assertEqual(cc.sidecar_endpoint_misses, 1)
+
+    def test_write_shortfall_is_reported(self):
+        cc = HybridCacheController.__new__(HybridCacheController)
+        cc._sidecar_reports = 0
+        transfer = PoolTransfer(name=PoolName.MAMBA, keys=[_HASHES[7]])
+        with self.assertLogs("sglang.srt.mem_cache.hybrid_cache", "WARNING") as log:
+            cc._report_sidecar_write_shortfalls([transfer], {PoolName.MAMBA: 0})
+        self.assertIn("pool=mamba pages=1 stored=0", log.output[0])
+        self.assertEqual(cc.sidecar_write_shortfalls, 1)
+        # A pool that lands everything stays quiet.
+        with self.assertNoLogs("sglang.srt.mem_cache.hybrid_cache", "WARNING"):
+            cc._report_sidecar_write_shortfalls([transfer], {PoolName.MAMBA: 1})
+        self.assertEqual(cc.sidecar_write_shortfalls, 1)
+
+    def test_reports_fall_back_to_debug_past_the_budget(self):
+        cc = HybridCacheController.__new__(HybridCacheController)
+        cc._sidecar_reports = hcc._SIDECAR_REPORT_WARN_BUDGET
+        transfer = PoolTransfer(name=PoolName.MAMBA, keys=[_HASHES[7]])
+        with self.assertLogs("sglang.srt.mem_cache.hybrid_cache", "DEBUG") as log:
+            cc._report_sidecar_write_shortfalls([transfer], {PoolName.MAMBA: 0})
+        self.assertTrue(
+            all(record.startswith("DEBUG") for record in log.output), log.output
+        )
+
+    def test_deferred_span_is_reported(self):
+        cc = HybridCacheController.__new__(HybridCacheController)
+        cc._sidecar_reports = 0
+        operation = _make_operation([_mamba_transfer()], [8])
+        with self.assertLogs("sglang.srt.mem_cache.hybrid_cache", "WARNING") as log:
+            cc._report_no_restorable_endpoint(operation, 24, _PAGE)
+        self.assertIn("reason=no_restorable_endpoint", log.output[0])
+        self.assertEqual(cc.sidecar_endpoint_clamps, 1)
+
+
 if __name__ == "__main__":
     unittest.main()
