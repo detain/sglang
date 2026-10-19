@@ -1897,6 +1897,7 @@ class Scheduler(
         # Engine init (graph capture, warmups) is done; from here on any
         # Triton kernel device-load is a lazy first-use at serving time.
         triton_load_watch.install()
+        triton_load_watch.prewarm_device_loads(self.model_worker)
         triton_load_watch.mark_serving_started()
 
         if use_mlx():

@@ -1217,6 +1217,19 @@ class Envs:
     SGLANG_CRASH_ON_TRITON_LOAD_AFTER_READY = EnvBool(False)
     SGLANG_TRITON_SLOW_COMPILE_THRESHOLD_SECS = EnvFloat(1.0)
     SGLANG_TRITON_LOAD_WARNING_THRESHOLD_GB = EnvFloat(1.0)
+    # Device-load Triton cubins during engine init instead of at first serving
+    # use (triton_load_watch.prewarm_device_loads). A cuModuleLoadData that
+    # lands mid-serving, when the pools have taken all the device memory, is a
+    # hard OOM for the scheduler process. On by default; set 0 to restore the
+    # old lazy-load behaviour.
+    SGLANG_ENABLE_TRITON_PREWARM_DEVICE_LOADS = EnvBool(True)
+    # Abort the prewarm sweep once free device memory drops below this. Cubins
+    # are tens of KB, so a sweep that would cross this floor means the pools
+    # already ate the startup headroom and the remaining kernels can wait for
+    # the (logged) lazy path rather than crowd out the allocator. Matches the
+    # warning threshold above: every kernel that loaded late in prod did so at
+    # 0.15-0.73 GiB free, i.e. below both floors.
+    SGLANG_TRITON_PREWARM_MIN_FREE_GB = EnvFloat(1.0)
     # gfx950 MLA decode stage-1: pick the launch geometry and split count per batch.
     # Reorders the fp32 accumulation, so off by default.
     SGLANG_MLA_DECODE_TUNE = EnvBool(False)
