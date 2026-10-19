@@ -2608,9 +2608,18 @@ STACK, IN BUILD ORDER (bottom first)
       # transient), so both of its arms have moved since; its -97.10
       # MiB/rank/chunk memory win stands. STATE AS FOUND 10-19: the run script
       # was edited 02:25 to export paged AND drop --mem-fraction-static 0.90 ->
-      # 0.89 for the NEXT boot (its own TIER-2 QUEUE block still says "NEVER in
+      # 0.89 for the NEXT boot (its own TIER-2 QUEUE block still said "NEVER in
       # this boot" -- stale), while the live pid 3369867 (started 23:43) has
-      # neither, so packed is still what prod runs until the restart.
+      # neither, so packed is still what prod runs until the restart. COMMENTS
+      # NOW SYNCED (same day, comment-only): new changes 12 (paged moved OUT of
+      # the TIER-2 queue into the live env block, the parked entry kept with its
+      # stale S24 contradiction note for provenance) and 13 (0.90 -> 0.89, with the
+      # 6.60 GiB / peak-0.37-of-6,246,400 arithmetic), and POST-BOOT CHECKLIST
+      # (h) the paged-source needle, (i) the Triton-prewarm needles, (j) the
+      # 210/211 oracle-and-kill-switch gate. Backup
+      # /tmp/opencode/run_sglang_qwenflashnext9.sh.bak-20261019; bash -n rc=0 and
+      # the non-comment line stream is byte-identical to it -- no flag and no env
+      # value was touched.
       # Tests (CVD=9, per file): NEW
       # test/registered/unit/layers/attention/test_qsa_chunk_prefill_pack_guard.py
       # 27P/5sub (register_cpu_ci est_time=4) -- pair bytes == two tensors and
@@ -2636,6 +2645,41 @@ STACK, IN BUILD ORDER (bottom first)
       # the packed oracle, the gate under CUDA graph capture (prod disables
       # prefill graphs, so only the CPU test covers it), and the two unchanged
       # device-cuda baselines above.
+      # INDEPENDENT INTEGRATION BATTERY over the whole 08e03fdea0..8bcc61f491
+      # range (4 commits, 10 changed files, attribution exact -- the 5th commit up
+      # to the stack.txt docs tip is 51258be6cd). Per-file CVD=9 baselines ALL
+      # reproduced EXACTLY: NEW test_qsa_chunk_prefill_pack_guard.py 27P/5sub,
+      # test_qsa_chunk_prefill_kv_source.py 16P/5sub, NEW
+      # test_triton_load_watch_prewarm.py 30P on BOTH triton 3.7.1 (.venv2) and
+      # 3.8.0 (prod .venv); spec dir 333P/9S/180sub (the _draft_extend_for_prefill
+      # path), test_qsa.py 6F/76P/134S and test_qsa_fused_kv_prepare.py 146F/12P
+      # (documented device-cuda debts, UNCHANGED), kernels_namespace 76P,
+      # qsa_kv_pool 8P, qsa_cp_unit 31P, fp8_store_kv 7P, test_qsa_fp8_kv 6P/1S,
+      # test_qsa_paged_chunk_prefill 11S, compressed_pack 2P/15S,
+      # retraction_cpu_copy 3P, test_qsa_rocm 3P/1S, sparse_decode_triton 2P/19S,
+      # profile_field_refs 2P, eos_guard 6P/2sub, exportable_env_vars 4P,
+      # scheduler_components dp_attn 17P/2sub + invariant_checker 13P/8sub +
+      # output_sender 2P, utils/test_common 10P/2S/4sub. Collection: unit/layers
+      # 1160 -> 1188 with the SAME single pre-existing error
+      # (test_auxiliary_loader_layouts.py, ModuleNotFoundError: No module named
+      # 'vllm'); unit/managers 982 = 982 and unit/spec 342 = 342, zero new errors.
+      # Ruff repo-ruleset + format clean on the 10 files, and
+      # check_registered_tests.py / check_no_bare_pytest_main.py /
+      # check_no_registered_tests_in_package.py / check_rust_ext_cache_prefix.py /
+      # check_workflow_job_names.py all rc=0 (c17a10d737's red -> green was proven
+      # in a temp worktree at 08e03fdea0).
+      # TWO RESIDUAL RISKS, on record (risks, not defects):
+      # (R1) PER-RANK LATCH DIVERGENCE -- _chunk_prefill_kv_forced_paged is
+      # per-process instance state, so after one rank OOMs it can serve paged while
+      # its peers serve packed. Shapes and collectives are identical, so nothing
+      # hangs, and the two paths are meant to be bit-equal -- but that equality has
+      # NEVER been executed on this box, which makes R1 the same item as the oracle
+      # debt above (top of the GPU list).
+      # (R2) ONE torch.cuda.mem_get_info PER FORWARD once a pack is over the 512 MiB
+      # floor -- deliberate: hoisted out of the per-layer loop. At prod bf16
+      # geometry that floor is ~524k SUMMED context tokens, so large shared-prefix
+      # mixed-chunk batches will pay it. Measure prefill t/s at the next restart;
+      # lever SGLANG_QSA_CHUNK_PREFILL_PACK_BUDGET_MIN_BYTES.
 
         211. 8bcc61f491  Triton: device-load cached cubins during engine init (triton_load_watch reports -> prevents) + dummy-launch recipes for the known serving specializations
       # Why: Triton device-loads each specialization's cubin at its FIRST launch
