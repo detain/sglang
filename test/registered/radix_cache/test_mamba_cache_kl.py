@@ -8,6 +8,7 @@ import unittest
 
 import numpy as np
 import requests
+import torch
 from transformers import AutoConfig
 
 from sglang.test.ci.ci_register import register_cuda_ci
@@ -16,6 +17,10 @@ from sglang.test.server_fixtures.default_fixture import DefaultServerBase
 register_cuda_ci(est_time=120, stage="extra-a", runner_config="1-gpu-large")
 
 
+@unittest.skipUnless(
+    torch.cuda.is_available(),
+    "Starts a real server with a device Mamba pool and decode CUDA graphs; needs a GPU",
+)
 class TestMambaLazyInplaceKL(DefaultServerBase):
     """Guard lazy Mamba checkpoint reuse when the optional track slot is exhausted.
 
