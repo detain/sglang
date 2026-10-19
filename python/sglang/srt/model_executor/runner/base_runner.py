@@ -57,6 +57,7 @@ from sglang.srt.runtime_context import (
     get_disagg,
     get_exec,
     get_flags,
+    get_model,
     get_parallel,
 )
 from sglang.srt.speculative.spec_info import (
@@ -258,6 +259,12 @@ class BaseRunner(ABC):
         self.attn_tp_size = get_parallel().attn_tp_size
         self.tbo_plugin = TboCudaGraphRunnerPlugin()
 
+    def model_context(self):
+        """Select the layout owned by this runner's current model."""
+        return get_model().override(
+            shared_experts=self.model_runner.model.shared_experts_config
+        )
+
     def validate_model_support(self) -> None:
         """Run model-specific checks after buffer setup and before warmup or capture."""
         validate = getattr(self.model_runner.model, "validate_runner_support", None)
@@ -265,6 +272,10 @@ class BaseRunner(ABC):
             validate(self)
 
     def warmup(self) -> None:
+        with self.model_context():
+            self._warmup()
+
+    def _warmup(self) -> None:
         """Run kernel warmup + autotune once, gated by mr._kernel_warmed_up."""
         mr = self.model_runner
         if getattr(mr, "_kernel_warmed_up", False):
