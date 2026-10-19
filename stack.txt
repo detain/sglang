@@ -1,6 +1,6 @@
 # stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
 #
-# STACK: qwennext-stack-211-2026-10-19
+# STACK: qwennext-stack-214-2026-10-19
 #   main+pr36787+pr37275+pr38144+pr38209+pr36644+pr39862+pr39809+pr39893+local_hicache_qsa_fixes
 #   +pr39614+pr39978+pr40002+pr39065+pr40501+pr40175+pr40362+pr39391+pr37061+pr39333+pr33778
 #   +pr38977+pr39977+pr40480+pr39880+pr40235+pr39807+cpu-triage+boot-fix+plan_updates_perf
@@ -10,7 +10,7 @@
 #   +diffusion-batch-2026-10-08(pr27673+pr28690*+pr32513+pr32550*+pr33036*+pr33588*
 #    +pr36399+pr36767+pr37460*+pr38650+pr39212+pr40493+pr40588+pr40755+pr41340*
 #    +pr41944+pr42249+pr42928*+pr43028*+pr43064*)
-#   (entries 1-211; *=squash/ported, see commit messages. 10-10 added
+#   (entries 1-214; *=squash/ported, see commit messages. 10-10 added
 #   entries 157-161: parser batch A (Qwen3-Coder tool-call fixes + sampling
 #   upper bounds), on top of upstream merge #3 (see synced). 10-10b added
 #   entries 162-166: SM120 batch B (#42863 PCIe-IPC vocab gathers, #42566
@@ -94,6 +94,17 @@
 #   fit now silently takes the paged path (fork-only, previously dark) --
 #   the paged-vs-packed bit-equality oracle has NEVER run on this box, so
 #   that is the top GPU-window debt. Live only after restart.
+#   10-19b added entries 212-214: the next9 03:35 crash response. The
+#   paged chunk-prefill launch had carried two stray LSE positionals since
+#   entry 200 (#43527 port), so EVERY paged launch raised TypeError -- the
+#   boot that first exported KV_SOURCE=paged died 2 s after ready, and
+#   entry 210's OOM fallback / budget tier (a) were dead on arrival. 212 =
+#   ab1595c4d0 fixes that launch and the owner-LSE launch (same port, same
+#   class of break); 213 = 116bf415da makes owner sparse attention attend
+#   pool slots >= topk (inert at the default --qsa-cache-sharding-size 1);
+#   214 = d7d4063904 repairs two stale sparse-decode tests. The
+#   paged-vs-packed torch.equal oracle has NOW RUN on this box: 11P.
+#   Live only after restart.
 #   10-08 added entries
 #   136-155: 20 diffusion PRs (4 more evaluated-skipped, see NOT INCLUDED).
 #   09-28 added 22 entries: 9 new PR blocks, new head
@@ -101,7 +112,7 @@
 #   make --enable-mixed-chunk safe and fix the QSA verify ring collision.
 #   * = picked with local modifications, see the entries)
 # branch : qwennext-stack
-# tip    : 8bcc61f491   (the stack.txt commit sits above it)
+# tip    : d7d4063904   (the stack.txt commit sits above it)
 # base   : upstream sgl-project/sglang main @ 7ad55e4386 ([HiCache] TMA-staged
 #          host<->device KV transfer kernel (sm_90+) (#40278), 2026-09-21)
 # synced : upstream main @ f209e67767 (#39643, 2026-09-28) MERGED IN as
@@ -2778,6 +2789,68 @@ STACK, IN BUILD ORDER (bottom first)
       # slicing flip at a new call site can still miss, and that load falls back
       # onto entry 210's headroom handling.
 
+        212. ab1595c4d0  QSA: drop the mis-ported LSE args from the paged chunk-prefill launch (+ owner-LSE launch gains the K/V descale slots and KV_IS_FP8)
+      # prod symptom, sglang_next9.log 2026-10-19: ready 03:35:54, first real
+      # prefill (HiCache prefetch loaded=5632) at 03:35:56, all four TP ranks
+      # "TypeError: dynamic_func() got multiple values for argument
+      # 'NUM_KV_HEADS'" at qsa/sparse_attn.py:1032
+      # (sparse_gqa_fwd_interface_triton_paged) via
+      # _paged_chunk_prefill_output:2597 <- _forward_chunk_prefill:2358, then
+      # SIGQUIT. That boot was the first to export
+      # SGLANG_QSA_CHUNK_PREFILL_KV_SOURCE=paged (run-script change 12, entry
+      # 210 notes).
+      # Cause: entry 200 (58b60614bc, #43527 port) added the PR's lse/sl_m/sl_h/
+      # RETURN_LSE to _sparse_gqa_chunk_prefill and applied the matching call-
+      # site hunk to THREE launches -- including the fork-only paged one
+      # (68369797ef), whose kernel has no LSE output. Its two extra 0, 0
+      # positionals shifted the tail onto NUM_KV_HEADS, so the paged kernel has
+      # been unlaunchable since 10-15. Consequence for entry 210: its OOM
+      # fallback and budget tier (a) both route through
+      # _paged_chunk_prefill_output, so either would have raised this TypeError
+      # instead of serving. The oracle that would have caught it was 11S in the
+      # 210 battery (no GPU visible under CVD=9).
+      # Same port, second launch: sparse_gqa_packed_decode_with_lse_triton came
+      # from upstream, whose kernel predates our K/V descale slots and
+      # KV_IS_FP8 (merge-4 d6b9eb1c73) -- 28 positionals for 30 slots, a
+      # TypeError on the first owner decode under --qsa-cache-sharding-size > 1.
+      # Now passes _unit_scale(None) x2 and KV_IS_FP8=is_fp8_kv_dtype(k.dtype),
+      # mirroring sparse_gqa_packed_decode_triton.
+      # Tests (GPU 0, sm120): test_qsa_paged_chunk_prefill.py 11P -- paged ==
+      # packed under torch.equal for bf16 AND fp8 (k/v_scale 0.25/0.5) across
+      # single/ragged/zero_prefix/page64/page128 and the >2**31-element large
+      # pool; test_qsa_chunk_prefill_pack_guard.py 27P/5sub.
+
+        213. 116bf415da  QSA: bound owner sparse attention by the pool size, not topk
+      # sparse_gqa_packed_decode_with_lse_triton set kv_lens = topk (upstream
+      # #43527), and our f9ddea14c0 kernel bound masks token >= kv_len -- but
+      # owner indices are POOL slots, so every slot >= topk was dropped and
+      # the output attended an arbitrary subset. Measured vs a dense torch
+      # reference (topk 64, slots up to 300): max|dO| 1.95, max|dLSE| 2.45;
+      # after: 2.9e-3 / 1.1e-3, bf16 and fp8 alike. kv_lens is now
+      # max(pool_size, topk): owner_sparse_attention_partial already asserts
+      # slots in [0, pool) (torch._assert_async), and the max() keeps the
+      # kernel's causal clamp row_topk = min(topk, kv_len) from truncating
+      # index columns when the pool is smaller than topk. Inert at the
+      # default --qsa-cache-sharding-size 1.
+      # Test: test_owner_sparse_attention_partial_reads_every_valid_slot in
+      # test_qsa_sparse_decode_triton.py, 4 cases. pool_gt_topk fails on the
+      # pre-fix code; pool_lt_topk fails if kv_lens were the pool size alone
+      # -- each verified red on its bug, green on the fix.
+
+        214. d7d4063904  test maintenance  two stale sparse-decode tests (decode file 19P/2F -> 24P/1S on GPU)
+      # test_qsa_explicit_triton_bypasses_available_trtllm builds its backend
+      # via object.__new__: stubs owner_sparse_attn_group/_runtime (entry 200)
+      # and qsa_profile (block-index switch) to None, as test_qsa.py and
+      # test_qsa_fp8_kv.py already do. test_qsa_sparse_decode_triton_matches_
+      # flash_attn now SKIPS on SM12x: the installed flash-attn-4 4.0.0b19
+      # (CuTe, cutlass-dsl 4.8.0) fails to compile ANY call on sm120 -- varlen
+      # MLIRError for every head_dim/KV-head/causal combination probed, dense
+      # AttributeError '_trait' -- and SM12x never decodes through that
+      # fallback (_qsa_decode_backend: SM120 -> triton; SM121 -> its own
+      # varlen). The torch-oracle test keeps covering Triton there; Hopper
+      # still runs the FA cross-check. Both failures pre-dated 212/213
+      # (verified at e0d6885642).
+
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
 ==============================================================================
@@ -3087,6 +3160,15 @@ CAVEATS
     fall to ~0 except for the post-mark_serving_started warmup and the
     declined kernels (_small_copy, fused_moe, _qsa_mqa_prefill,
     _layer_norm_fwd_1pass, _causal_conv1d_fwd).
+  * BEHAVIOR WATCH for the NEXT restart (entries 212-214): supersedes the
+    "oracle has never run" debt above -- test_qsa_paged_chunk_prefill.py
+    ran 11P (bit-exact) on GPU 0 on 10-19. Before 212 EVERY paged launch
+    raised, so the restart after this tip is the first boot where
+    KV_SOURCE=paged (and entry 210's fallback) can serve at all; nothing
+    paged has produced prod output yet. Owed at that boot: the
+    "using the paged chunked-prefill KV source" needle, then an sgl-eval
+    accuracy run against the packed baseline before trusting it. Still
+    owed from 210: the live replay of the incident batch.
   * 09-28 BUILD BOOTED 2026-09-28 (TP2 next8.sh on GPUs 0-1, and the
     118-125 test servers on GPUs 2-3): no import breaks. Entry 102's A/B vs
     --enable-linear-replayssm-spec off is still owed.
