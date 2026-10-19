@@ -1,6 +1,6 @@
 # stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
 #
-# STACK: qwennext-stack-214-2026-10-19
+# STACK: qwennext-stack-227-2026-10-19
 #   main+pr36787+pr37275+pr38144+pr38209+pr36644+pr39862+pr39809+pr39893+local_hicache_qsa_fixes
 #   +pr39614+pr39978+pr40002+pr39065+pr40501+pr40175+pr40362+pr39391+pr37061+pr39333+pr33778
 #   +pr38977+pr39977+pr40480+pr39880+pr40235+pr39807+cpu-triage+boot-fix+plan_updates_perf
@@ -10,7 +10,7 @@
 #   +diffusion-batch-2026-10-08(pr27673+pr28690*+pr32513+pr32550*+pr33036*+pr33588*
 #    +pr36399+pr36767+pr37460*+pr38650+pr39212+pr40493+pr40588+pr40755+pr41340*
 #    +pr41944+pr42249+pr42928*+pr43028*+pr43064*)
-#   (entries 1-214; *=squash/ported, see commit messages. 10-10 added
+#   (entries 1-227; *=squash/ported, see commit messages. 10-10 added
 #   entries 157-161: parser batch A (Qwen3-Coder tool-call fixes + sampling
 #   upper bounds), on top of upstream merge #3 (see synced). 10-10b added
 #   entries 162-166: SM120 batch B (#42863 PCIe-IPC vocab gathers, #42566
@@ -105,6 +105,27 @@
 #   214 = d7d4063904 repairs two stale sparse-decode tests. The
 #   paged-vs-packed torch.equal oracle has NOW RUN on this box: 11P.
 #   Live only after restart.
+#   10-19c added entries 215-227: the week's upstream SYNC-BY-PORT -- 33
+#   commits onto 73a335bfd3 while origin/main moved 12dc623102..
+#   417606527d (319 commits); NO fifth merge was taken (it stays owed).
+#   215 admission-loop trio (+ #45041), 216 #43559 lazy prefix-lock
+#   release before a donation retry, 217 the hybrid-L3 rank-belief pair
+#   (#43108 + #44614 prefetch-deadline anchor -- highest value, prod
+#   runs the timeout policy), 218 #44800 write-back ordering
+#   (port-SMALL; our entry-168 fence kept) + the #40363 ancestor-backup
+#   delta (default still OFF), 219 #44968 + #42443
+#   --hicache-mamba-size-gb (the host KV<->mamba tilt entry 209 called
+#   untunable) with per-pool HiCache host metrics REPLACING entry 189's
+#   gauges, 220 #39765 Mamba prefill publish (wrong-output family),
+#   221 #44158 custom-op eager-direct path (DEFAULT-ON, NO switch,
+#   prod prefill is eager), 222 test maintenance (the 208F
+#   replicated-attention debt CLOSED + three gates), 223 diffusion
+#   CPU-side perf + one int64 VAE-rmsnorm correctness fix, 224
+#   diffusion LoRA merge/unmerge correctness, 225 NVFP4-EP sentinel +
+#   deferred scales + opt-in b12x, 226 test infra, 227 the sweep review
+#   record (nothing else applied). All 33 landed CLEAN with ZERO
+#   conflicts; CPU baselines MOVED -- refresh in CAVEATS.
+#   Live only after restart.
 #   10-08 added entries
 #   136-155: 20 diffusion PRs (4 more evaluated-skipped, see NOT INCLUDED).
 #   09-28 added 22 entries: 9 new PR blocks, new head
@@ -112,7 +133,7 @@
 #   make --enable-mixed-chunk safe and fix the QSA verify ring collision.
 #   * = picked with local modifications, see the entries)
 # branch : qwennext-stack
-# tip    : d7d4063904   (the stack.txt commit sits above it)
+# tip    : 380b87b054   (the stack.txt commit sits above it)
 # base   : upstream sgl-project/sglang main @ 7ad55e4386 ([HiCache] TMA-staged
 #          host<->device KV transfer kernel (sm_90+) (#40278), 2026-09-21)
 # synced : upstream main @ f209e67767 (#39643, 2026-09-28) MERGED IN as
@@ -151,6 +172,36 @@
 #          batch branched off the then-tip; g->h->i auto-merged the
 #          rust-side overlap). range-diff: patch-identical to source
 #          branches. cargo sglang-radix-tree 932P/0F on the union.
+#          FIFTH MERGE NOT TAKEN (2026-10-19): origin/main has moved to
+#          417606527d -- +319 commits since the 12dc623102 of merge #4 --
+#          and this week was synced PER-PR instead (33 picks/ports,
+#          entries 215-227), which keeps the stack reviewable one commit
+#          at a time and cost ZERO conflicts. MERGE #5 REMAINS OWED (its
+#          conflict surface is 4-5x a per-PR batch); what the sweep
+#          looked at and did NOT pick is the review record in entry 227.
+# updated: 2026-10-19 (entries 215-227): week's upstream sync-by-port --
+#          29 merged-upstream cherry-picks from origin/main
+#          12dc623102..417606527d (319 commits) + 4 open-PR ports
+#          (#42443, #39765, #42452, #38170) = 33 commits; NO fifth
+#          merge was taken. HEADLINE for the owed restart: 221 #44158
+#          changes the eager call path of EVERY @register_custom_op op
+#          with NO runtime switch (prod prefill is eager -- measure
+#          prefill t/s at first boot, revert d7454001d2 alone if
+#          anything smells); 215's admission trio SUPERSEDES our local
+#          early-revision of #40940 (entry 107 -- has_chunked deleted,
+#          num_held_rows now); 217 #44614 changes prefetch-deadline
+#          semantics under prod's `timeout` policy; 219 RENAMES
+#          dashboard-visible metrics and adds the --hicache-mamba-size-gb
+#          lever; 218/220/224 are correctness (write-back ordering,
+#          Mamba prefill publish, diffusion LoRA unmerge). ALL 33 landed
+#          CLEAN, ZERO conflicts (the disjoint apply-p/apply-q file sets
+#          never touched the same path; range-diff patch-identical to
+#          both source branches). BASELINES THAT MOVED (full table in
+#          CAVEATS): rust_tree integration 464P -> 456P/1S and the
+#          registered 17-file group 716P -> 708P/28S/156sub (BOTH =
+#          #44800 deleting 3 write-back tests and renaming 2), urc
+#          unittest 1584S -> 1585S, and the 208F replicated-attention
+#          env debt CLOSED as 2S. NOT pushed; LIVE ONLY AFTER RESTART.
 # updated: 2026-10-15 FOLLOW-UP WAVE (entries 200-204 documented this
 #          commit: apply-j #43527 + apply-k #39716/#38650 + apply-l
 #          #42388 cherry-picked onto main -- all CLEAN zero conflicts
@@ -175,7 +226,9 @@
 #          42S outside the documented cutedsl import-time crash (SM100
 #          file, pre-existing); qsa device-cuda debt class 6F+146F
 #          unchanged; the two diffusion no-GPU classes 6F -> 6S. NOT
-#          pushed; LIVE ONLY AFTER RESTART.)
+#          pushed; LIVE ONLY AFTER RESTART. 10-19 REFRESH: the donated
+#          file is 16P/14sub from entry 216 -- see the CAVEATS baseline
+#          table for every number this block quotes.)
 # updated: 2026-10-15 (entries 179-199 documented this commit: merge #4
 #          as an entry + apply-b..apply-i. HEADLINE for the owed restart:
 #          entry 184 QSA cross-prefix ring READ-BEFORE-STORE and entry
@@ -189,7 +242,10 @@
 #          registered group 716P/28S/156sub, mm group 279P/85S/6sub,
 #          kernels namespace 76P, rust_tree integration 464P/1S; qsa
 #          device-cuda debt class 6F+146F unchanged). NOT pushed;
-#          LIVE ONLY AFTER RESTART.)
+#          LIVE ONLY AFTER RESTART. 10-19 SUPERSEDES three numbers here
+#          -- rust_tree 456P/1S, registered 708P/28S/156sub, mm
+#          279P/87S/6sub (entries 218/223/224); see the CAVEATS
+#          baseline table.)
 # updated: 2026-10-14 (merge #4 -- see synced/FOURTH merge above; header
 #          bumped to 178-2026-10-14; no new entries in this batch).
 #          Battery: import smoke srt+multimodal_gen+speculative 100%
@@ -2851,9 +2907,528 @@ STACK, IN BUILD ORDER (bottom first)
       # still runs the FA cross-check. Both failures pre-dated 212/213
       # (verified at e0d6885642).
 
+        215. e4fae4e234  PR #44351/#44401/#44420 + #45041  the admission loop, three upstream commits deep (also d4153456ef, d9eb529993, dd3fab12e9)
+      # #44351: running_batch.filter_batch() now runs before EVERY
+      # admission (scheduler.py:3888), not only after a merge -- overlap
+      # merges a prefill's requests in before its result finishes them,
+      # and update_running_batch may never run, so finished requests
+      # inflated running_bs and the adder UNDER-admitted. filter_batch
+      # early-returns when nothing drops, and when the size does drop
+      # batch_is_full is reset -- the reset rides in the same statement
+      # block as our entry-198 per-round hybrid-SSM reset (verified
+      # coexisting).
+      # #44401: a held req_to_token row is now counted once, as
+      # num_held_rows = sum(r.kv.holds_kv for r in adder.can_run_list)
+      # (:4163 -> get_num_allocatable_reqs(running_bs, num_held_rows=...)).
+      # THIS SUPERSEDES OUR LOCAL EARLY-REVISION OF #40940 (entry 107,
+      # 28012a808b): the scheduler-local has_chunked 0/1 and our extra
+      # pp_budget - has_chunked threading into get_num_allocatable_reqs
+      # are DELETED (upstream's form is the same arithmetic expressed on
+      # the kv hold flag), pre_can_run_list_len is gone, and the dllm
+      # call site (dllm/mixin/scheduler.py:379) took the same shape for
+      # compile parity -- inert here (no dllm). The pick conflicted
+      # exactly at the gate line; theirs won.
+      # #44420: `if adder.budget_state() == AddReqResult.OTHER: break`
+      # is now the FIRST statement of the waiting-queue loop (:4145) --
+      # kills the deep-queue iteration cost (a full budget used to re-
+      # test every waiting req); the PD gate it drops is inert here
+      # (disaggregation_mode null).
+      # #45041 (dd3fab12e9): prepare_for_decode clears
+      # replace_embeds/replace_positions after the prefill embedding
+      # override is consumed -- 3 lines, the stale-tensor-leak class.
+      # Fork survival verified line by line: entry-198 batch_is_full
+      # reset + should_delay, entry-177 prefill_chunk_alignment,
+      # chunked_req_limit, alloc_group_begin, buffer_pipeline and the
+      # pooling guard all intact on the final tree.
+      # Tests: NEW test_scheduler_running_batch_finished.py 1P, NEW
+      # test_scheduler_held_row_admission.py 1P/2sub (needed fork
+      # stubs -- s.is_hybrid_ssm=False and a SimpleNamespace allocator,
+      # because the PR's bare stub NPEs on our entry-177 kwarg).
+      # Managers trio 66P/62sub EXACT; spec dir 333P/9S/180sub EXACT. from apply-p.
+
+        216. 3758c62fdc  PR #43559 (upstream ba3fc9441d)  release a consumed lazy Mamba prefix lock before the donation retry
+      # Complements entries 196/197/198. On extra_buffer_lazy (OUR prod
+      # strategy) the Mamba component of a CONSUMED req.lock is released
+      # -- dec_lock_ref(node, replace(receipt,
+      # skipped_lock_components=<every component but mamba>)) -- BEFORE
+      # evict_for_alloc, so the donation alloc can succeed instead of
+      # skipping the checkpoint (components/mamba.py:534-558).
+      # HAND-PORTED: our tree folds the PR's three donation sites into
+      # the single needs_new_slot branch entry 197 introduced, and its
+      # incoming test was RETARGETED onto our _try_alloc_mamba_slot name
+      # per the entry-197 rule -- a rename-only port silently dead-
+      # gates the guard (lazy prealloc nulls mamba_last_track_seqlen and
+      # returns before any alloc). Also repaired entry-197's own test
+      # (lock=None + get_context().override_server_args install; it had
+      # been raising "config namespace 'exec' not published" since the
+      # merge, invisible because the alloc path short-circuited).
+      # test_mamba_donated_alloc_ratio 16P/14sub (was 15P/12sub: +1 new
+      # test, +1 subtest). GPU debt: the real pool-exhaustion
+      # lazy-release path -- CPU tests stub the allocator, so the
+      # eviction win is unproven here. from apply-p.
+
+        217. faf53739e9 35b39aa72a  PRs #43108 + #44614  hybrid L3 rank beliefs and the prefetch-deadline anchor
+      # #44614 is the HIGHEST-VALUE item of this batch: prod runs
+      # --hicache-storage-prefetch-policy timeout. The timeout budget now
+      # anchors on the FIRST BLOCKED ADMISSION POLL via the new
+      # srt/utils/poll_timer.py PollTimer (PrefetchMetadata.timer)
+      # instead of restarting from operation.start_time -- that start is
+      # older than the wait and the hit chain has shrunk by then, so a
+      # request could sit forever while the host tiers were pinned.
+      # Three consequences fixed: a deadline cut used to be reported as
+      # reason=storage_transfer, WHICH HEALED storage-existence beliefs
+      # for pages the store still holds (poisoned positives -> later
+      # prefetches skipped); and a rank that had not reached its poll
+      # could re-issue a prefetch its peers had dropped. Now
+      # operation.deadline_expired -> _finish_storage_prefetch(...,
+      # reason="deadline") (unified_radix_cache.py:2447) and the
+      # PrefillAdder closes admission on the retraction (:2489).
+      # #43108: existence-belief invalidation moved OUT of
+      # revoke_pending_prefetch into the rank-synchronized drain, and
+      # SKIPPED when the reduced result carries no KV verdict at all
+      # (`if PoolName.KV not in verdicts: return`) -- -1 means a peer
+      # skipped its query, 0 means a peer missed; the same MIN==AND
+      # reasoning as entry 209, applied one layer up.
+      # THIS CORRECTS the entry-209 note "NOT fixed upstream": upstream
+      # now attacks the BELIEF half; our trailing-ENDPOINT fix is still
+      # the only repair for the capacity-clamped hybrid span (P2 stays
+      # open).
+      # Verified against our extended collective payload (1 + len(pools)
+      # + restorable_mask): buffer_mode_sidecar 6P/6sub (+1 -- the PR's
+      # duck-typed test passed UNMODIFIED against a SimpleNamespace
+      # controller), storage_prefetch_lifecycle 15P/24sub (was
+      # 10P/10sub), trailing_endpoint 17P, fast_file 54P/13sub, the
+      # rest of the hicache set 0F. GPU debts: live TP4 partial-clamp
+      # prefetch with deadline accounting, and the absence of belief
+      # poisoning under it. from apply-p.
+
+        218. a7d333d771 457d1b9e31  PR #44800 (port-SMALL by design) + the #40363 delta 7e9dda17a1
+      # #44800 fixes write-BACK host copies racing the forward that
+      # produced the KV, in TWO required halves:
+      # UnifiedTreeCore._should_backup_after_insert returns False when
+      # is_write_back (unified_tree_core.py:1412 AND the rust
+      # should_backup_after_insert_, unified_tree_core.rs:2091 -- taking
+      # one alone kills write-back backups), plus a new
+      # start_writing(wait_for_forward=...) kwarg and write_fence_stream
+      # alias plumbing (cache_controller.py:836).
+      # Fork decision: our entry-168 UNCONDITIONAL load_fence_stream
+      # fence is KEPT FIRST, commented "Fork: unconditional (stack entry
+      # 168), ahead of upstream's opt-in write fence" -- ours is strictly
+      # stronger for write-through, so upstream's fence is dormant under
+      # prod's write_through_selective, but the API now matches upstream
+      # for future picks. Took upstream's DELETION of 3 write-back tests
+      # (8 nodes) and its 2 renames in
+      # test_rust_tree_core_integration.py -- that is the whole
+      # 464P/1S -> 456P/1S baseline move (the registered group's 716P ->
+      # 708P is the same -8, not a regression). The PR's new fixture
+      # test is CUDA-gated (075b0936c7, rides in entry 222) -> urc
+      # unittest 1300F/44P/1585S.
+      # writing_check collision, documented in the file: our
+      # `if self.queued_backups: self._drain_queued_backups()` guard
+      # (entry 199) is KEPT and the drain submits flush=False, so the
+      # single cc.start_writing(wait_for_forward=True) covers both paths
+      # under ONE fence.
+      # #40363 delta only: _ancestors_first now walks while
+      # `parent in queued or self._is_unbacked_node(parent)` with a
+      # `walked` set (unified_radix_cache.py:3796-3811) so a queued-but-
+      # already-Full-backed ancestor is backed BEFORE its descendants --
+      # otherwise a descendant's spec marks the ancestor pending under
+      # the descendant's ack. NOT taken: upstream's 0ab86549d0 default-
+      # ON batching (SGLANG_ENABLE_HICACHE_BATCHED_BACKUP stays
+      # EnvBool(False), see CAVEATS) and the merge commit.
+      # GPU debt: write-back ordering is only observable under
+      # write_through/write_back policy. from apply-p.
+
+        219. 09ffbfafac 34de205458  PRs #44968 + #42443 (open, head e7671a2607)  host Mamba sizing is configurable at last
+      # #44968 is the prerequisite refactor: mamba_layer_mapping derives
+      # from mamba_info.layer_ids - start_layer and
+      # target_device_layer_num = len(layer_ids) instead of
+      # req_to_token_pool.mamba_map / num_mamba_layers -- behavior-
+      # identical at PP=1, and it takes the pool out of the host-
+      # transfer route.
+      # #42443 then adds --hicache-mamba-size-gb <GB|auto> on top of
+      # _split_hicache_size, with the torch-free math in
+      # mem_cache/hybrid_cache/hicache_mamba_sizing.py and a boot line
+      # reporting mamba coverage %. DEFAULT None = byte-identical to
+      # today's byte-proportional split.
+      # THIS REMOVES THE DOCUMENTED DEAD END in the entry-209 notes
+      # ("no way to tilt the HOST KV<->mamba split"): prod showed mamba
+      # host 361/361 AND KV host 99.9% FULL at the same moment while
+      # device mamba sat at 9/480. The PR's own repro is the same
+      # hardware class -- GLM-5.3-Flash TP4 on 4x RTX PRO 6000: 565 host
+      # mamba slots -> 0/8 host hits -> 14GB to mamba -> 8/8 hits,
+      # replay 0.82s -> 0.15s.
+      # METRICS RECONCILE (DASHBOARD-VISIBLE): took the PR's per-pool
+      # set -- sglang:hicache_host_pool_{used,total}_tokens{pool} plus
+      # ..._evicted_tokens_total{pool} via observability/
+      # hicache_pool_stats.py -- and REMOVED our entry-189
+      # hicache_host_mamba_{used,total}_states gauges (strict superset,
+      # same quantity; no duplicate registration survives).
+      # metrics_reporter.py/metrics_collector.py went theirs-won,
+      # dropping the now-unused PoolName/UnifiedRadixCache imports and
+      # the _hicache_host_mamba_pool helper; test_stat_loggers_di.py's
+      # guard class was rewritten onto the new pool-stats shape (same
+      # 128/138 numbers) -> 19P.
+      # FORK CODE FIX on top of the PR: its _log_mamba_host_coverage
+      # re-read chunked_prefill_size and req_to_token_pool.size AFTER its
+      # own guard, which NPE'd 10 stub-based tests; now read through
+      # getattr(..., None) into locals (hybrid_pool_assembler.py:279).
+      # Battery: hybrid_pool_assembler 52P/31sub (was 45P/23sub),
+      # hicache_mamba_sizing 30P/17sub, hicache_pool_stats 13P,
+      # stat_loggers_di 19P, server_args+docs 307P/128sub (the +3 tests
+      # are test_server_args.py +28L; docs add 6 rows to
+      # server_arguments.mdx). GPU debt: the real boot sizing/
+      # coverage line on the 32GB/rank split, and choosing a value --
+      # start with `auto`. from apply-p.
+
+        220. 64a78149ed  PR #39765 (open, head 0b8607ec03)  publish Mamba prefill cache updates before preparing the next batch
+      # WRONG-OUTPUT class, same family as entry 196 (#39209): with
+      # extra_buffer(+lazy) and overlap scheduling, event_loop_overlap
+      # can call get_next_batch_to_run() -- which CAPTURES req_to_token
+      # for the next batch -- BEFORE the previous prefill's radix
+      # insertion (still sitting in result_queue) replaces the freshly
+      # computed private KV slots with canonical tree slots and frees the
+      # duplicates. The first dependent decode/verify step then reads a
+      # prefix mapping that no longer exists, and later steps read the
+      # right one. Our mix (extra_buffer_lazy + --enable-mixed-chunk +
+      # NEXTN verify) is precisely the trigger.
+      # Mechanism: _has_pending_mamba_cache_update() (:2066) peeks the
+      # head of result_queue for an extend batch carrying a tracked,
+      # unfinished, non-retracted, non-skip-insert request; when set,
+      # pop_and_process() runs BEFORE get_next_batch_to_run() and the
+      # disable-overlap branch is short-circuited (the queue is already
+      # drained, so the "process the last batch" path skips too).
+      # CORRECTION to the batch brief: the hunks land in
+      # Scheduler.event_loop_overlap (scheduler.py:2001-2090), NOT in
+      # run_event_loop -- that is the outer entry point that carries our
+      # entry-211 prewarm line (:1903) and dispatches INTO this loop,
+      # ~100 lines above. Relationship is line-shift only; the
+      # prewarm/engine-init lines are untouched.
+      # Gate deliberately conservative: returns False -- behaviour
+      # byte-identical to today -- for require_mlp_sync ranks (the PR
+      # makes no rank-agreement decision there), for tree_cache.disable,
+      # and for caches without enable_mamba_extra_buffer.
+      # CPU test test_mamba_prefill_cache_boundary.py 5P/12sub (drives
+      # the unbound Scheduler.event_loop_overlap). GPU A/B OWED: this
+      # adds a synchronisation point (an early pop_and_process) to the
+      # overlap hot path for hybrid extra_buffer prefills -- measure
+      # TTFT/throughput; rollback = revert this commit alone. from apply-p.
+
+        221. d7454001d2  PR #44158  call register_custom_op ops directly in plain eager execution
+      # python/sglang/srt/utils/custom_op.py had ZERO fork drift ->
+      # clean pick, kept as an ISOLATED commit so the revert is one
+      # commit (there is NO runtime switch).
+      # _call_directly_in_eager wraps each registration: when compiling/
+      # dispatch-modes/function-modes/profiler/grad are all clear and
+      # every tensor argument is a plain CUDA Tensor or Parameter, the
+      # function is called directly instead of the ATen op -- for an op
+      # registered for one device key with no autograd formula the
+      # dispatcher only re-enters the same Python, at several
+      # microseconds a call. Everything else keeps the dispatcher:
+      # foreign registrations, tensor subclasses, other devices,
+      # tracing, and the _KERNEL_API_LOG_LEVEL path (our
+      # debug-cuda-crash tooling still records every op).
+      # All three private torch probes (torch._C.
+      # _len_torch_dispatch_stack, torch._C._is_torch_function_mode_-
+      # enabled, torch._C._autograd._profiler_enabled) verified present
+      # in torch 2.14.1.
+      # WHY IT MATTERS HERE: prod runs prefill EAGER (prefill graphs
+      # disabled) and 103 files carry @register_custom_op, so this is on
+      # the hot path -- a few microseconds per op across thousands of
+      # calls per step.
+      # Its 9 tests are CUDA-gated here (test_custom_op_eager_direct.py
+      # 9S under CVD=9). The PR's test_deepseek_dual_stream_outputs.py
+      # was a modify/delete against our tree (that file does not exist
+      # here -- it arrives with the unported #43607), so it was NOT
+      # imported. GPU debt: prefill t/s A/B at the first boot plus a
+      # correctness spot check; revert d7454001d2 alone if anything
+      # smells. from apply-p.
+
+        222. f3b65322a3 2831cc0c93 075b0936c7 d39cc32ae6  test maintenance (the 208F debt closed + three gates)
+      # #39526's rewritten 7-case _Lifecycle mixed-chunk Mamba-track
+      # test adopted from head f090fc137a (upstream b5aace79e4) as
+      # TEST-ONLY: the production half was already ours and semantically
+      # identical (_mamba_track_for_mixed matches, including the CPU-list
+      # construction), and cherry-picking the PR was DECLINED -- its head
+      # is a main-merge that would drag 319 commits and overwrite our
+      # hardening. 4 -> 7 cases incl.
+      # test_lazy_strategy_mixes_with_a_preallocated_boundary_slot,
+      # which covers OUR prod strategy -> 7P. The PR's
+      # test/manual/mixed_chunk_mamba/ (9 GPU-harness files) NOT
+      # adopted.
+      # 2831cc0c93 closes a DOCUMENTED DEBT:
+      # test_replicated_attention_parallel_groups.py 208F -> 2S. Root
+      # cause recorded at last: layers/rotary_embedding/base.py:135
+      # falls through to `from vllm._custom_ops import
+      # rotary_embedding` when _is_cuda is False (CVD=9), i.e. a plain
+      # missing-dependency import error in a file that is
+      # register_cuda_ci anyway -> gated on torch.cuda.is_available().
+      # 075b0936c7: #40363's new batched-backup fixture test gated on a
+      # visible device (urc unittest 1300F/44P/1585S, FAILED list
+      # otherwise identical).
+      # d39cc32ae6: the server-based TestMambaLazyInplaceKL class in
+      # test/registered/radix_cache/test_mamba_cache_kl.py gated 2F ->
+      # 2S; A/B at base showed 1F pre-existing and 2F after #43559, so
+      # the gate is on the class, not the file. from apply-p.
+
+        223. 98fb9ea758 e8f5f38ac1 8a81d67112 0b4e8bcf7f 36a8b13c1b 1e0df3e5f6  diffusion CPU-side perf + one int64 correctness
+      # Six zero-drift files -- no hand merges needed.
+      # #44471 fast_launch (kernels/ops/diffusion/common/
+      # fast_launch.py): replay compiled.run / compiled.function /
+      # compiled.packed_metadata DIRECTLY instead of through
+      # compiled[grid], which rebuilds launch_metadata on EVERY launch,
+      # for every replay_launches kernel -- silu_mul,
+      # native_bf16_rmsnorm, flux2_qknorm_rope, rope_rotate_half,
+      # zimage_qk_rmsnorm, the kda layernorm_modulate -- i.e. per-step
+      # Python cost on FLUX.2-dev/FLUX.1/Qwen-Image/SD3.5/LTX/Wan. It
+      # sits on the merge-#4-adopted DEFAULT-ON
+      # SGLANG_DIFFUSION_TRITON_FAST_LAUNCH=1 path and adds no new
+      # switch; the triton-internal call shape was verified IDENTICAL on
+      # 3.7.1 (.venv2) AND 3.8.0 (prod venv), so no version gate is
+      # needed; _launch_hooked() keeps proton/profile runs on the
+      # runner.
+      # #44478 hoists residual_gate_add's operand classification into
+      # _route()/_launch(); public API unchanged, no call-site edits.
+      # #44643 weakref-caches the fused linear-GELU verdict per linear
+      # (cleared on mount/unmount). NOTE: on SM120 the cublasLt epilogue
+      # is deliberately OFF (arch >= 120 -> False), so ONLY the
+      # verdict-caching win applies here -- stated in the commit body.
+      # #44606 defers full GC during imports (NEW
+      # multimodal_gen/runtime/utils/process.py
+      # defer_full_gc_for_imports) around registry config discovery +
+      # worker bootstrap -- boot-time GC; our flux3-image deletion drift
+      # in registry.py survived.
+      # #44644 kernels/jit device_guard() is entered only when the
+      # device differs (exported from jit.utils; 2 qknorm_complex_rope
+      # call sites).
+      # #45118 tl.program_id(0).to(tl.int64) * BLOCK in
+      # channel_rmsnorm_preserve_reduction (:23) -- silent-wrong-output
+      # int32 overflow class; live caller is
+      # models/vaes/autoencoder_kl_qwenimage21.py:104
+      # (Qwen-Image-2.1-Turbo VAE).
+      # Battery: mm 7-file group 279P/87S/6sub (was 279P/85S -- the +2
+      # are entry 224's CUDA gates); diffusion import walk 237 modules
+      # with a failure list BYTE-identical to base; fast_launch 33S,
+      # test_modulate 1038S, sites 12P/13S, norm 254S, device_guard 2S,
+      # mm test_process 8P/2sub. GPU debt: the PIXEL-DIFF A/B of
+      # SGLANG_DIFFUSION_TRITON_FAST_LAUNCH=0 vs 1 (FLUX.2 +
+      # Qwen-Image) and the int64 rmsnorm numerics. from apply-q.
+
+        224. 9191a42263 962a1372f6 fd777e0088  PRs #44770 + #44204  diffusion LoRA correctness (merged adapters)
+      # #44770: a layer whose LoRA was MERGED kept its base-weight
+      # deltas when the NEXT request's adapter did not cover that layer
+      # -> wrong output for exactly those layers. Fix factors
+      # clear_lora_weights() out of remove_lora_weights
+      # (runtime/layers/lora/linear.py:404, used at :374 under
+      # `if clear_existing:`) and calls layer.unmerge_lora_weights()
+      # when layer.merged from pipelines_core/lora/pipeline.py:857 (the
+      # clear_existing kwarg already existed at our :763); the early
+      # `if self.disable_lora: return` is gone from
+      # unmerge_lora_weights (:728) and every other unmerge site is
+      # already layer.merged-guarded.
+      # HAND-MERGED into OUR #37460-reworked runtime/layers/lora/
+      # linear.py (+218L of fork drift) and verified by eye at the
+      # landing sites; entry-183's lora_initialized revalidate (6 sites)
+      # and entry-187's restored RowParallelLinearWithLoRA.forward
+      # bias_in_gemm (:888) are intact.
+      # Its 2 new tests got CUDA gates in a separate commit
+      # (962a1372f6) -> test_lora_pipeline 11P/9S (was 11P/7S), with the
+      # pre-existing 18-node outcome list BYTE-identical and both new
+      # tests proven red at base off-CUDA.
+      # #44204: the merged-LoRA cache key gains st_size|st_mtime_ns so
+      # an IN-PLACE adapter rewrite invalidates -- complements entry 183
+      # which revalidates the FAST PATH. Zero drift; new CPU test 2P.
+      # GPU debt: a FLUX.2 A->B adapter-switch request where B does not
+      # cover a layer A merged. from apply-q.
+
+        225. 9939376863 1dc10da30a c6b0deef04 5ae3c4549d  NVFP4-trial + MoE-EP correctness (4 commits)
+      # #40498: StandardDispatcher indexed the local expert mapping WITH
+      # the -1 DROP SENTINEL -- local_expert_mapping[topk_ids] aliases
+      # the table's LAST expert, so dropped tokens were routed to a real
+      # expert. New _map_topk_ids_to_local_experts (:113) =
+      # torch.where(topk_ids < 0, -1, table[topk_ids.clamp_min(0)])
+      # landed as the UNION at the exact line entry 206 (#44480) changed
+      # -- entry-206's gates untouched (_keeps_global_expert_ids :95,
+      # skip_local_expert_mapping :141, build :228, dispatch :256, call
+      # site :268) and our _MASK_DP_PAD_MOE block kept AFTER the
+      # translation (the PR's shorter comment replaced by our in-tree
+      # rationale). Its CPU test was PROVEN RED at 73a335bfd3 and is
+      # GREEN here (test_standard_dispatcher 1P). mem_pool_ep 49P/4sub,
+      # moe placement+extensions 13P, dispatcher_backend 6P/1S exact.
+      # #42452 (OPEN, head e9863483f0): the serialized CUTLASS NVFP4
+      # path swizzled UNINITIALIZED expert scales at construction and
+      # rebuilt them post-load -- duplicate buffers, the 8.8 GiB/rank
+      # load-peak class on RTX PRO 6000 (same family as entries 190/205/
+      # 207). Now deferred and aliased (defer_blockscale_swizzle,
+      # modelopt_quant.py:2593); the online path is untouched; git apply
+      # -3 clean onto a file with +2.8k lines of fork drift. The PR
+      # test's bare torch.nn.Module() stub lacked
+      # num_fused_shared_experts / num_global_routed_experts, which OUR
+      # SM120 small-M workspace gate reads in
+      # process_weights_after_loading -> stub fixed (0/2), 5P/4sub.
+      # Interaction with entry 190 (Marlin in-place repack) and entry
+      # 205 (EP-sliced input scales) verified STATICALLY ONLY.
+      # c6b0deef04 PRE-EXISTING test fix: test_nvfp4_smallm_dispatch
+      # 2F/19P -> 21P/51sub -- stale stub, upstream 10edb05e72 (#42348)
+      # moved the placement reads onto runner_config and made
+      # _cutlass_moe_tune_max_num_tokens call get_disagg(); A/B
+      # node-lists at base confirmed both failures pre-dated the batch.
+      # #38170 (OPEN, head 6935a37b5a) OPT-IN SUBSET ONLY:
+      # Fp4GemmRunnerBackend.FLASHINFER_B12X + is_flashinfer_b12x()
+      # (fp4_utils.py:101/119) + the config mapping + arg_groups/
+      # choices.py + help text + the flashinfer_autotune gate line that
+      # adds b12x to the tunable set (consistent with entry 191) --
+      # WITHOUT upstream's auto -> b12x flip on cc-major 12. `auto`
+      # stays flashinfer_cutlass, with a NOTE(fork) at fp4_utils.py:165
+      # and the PR's auto cases re-pinned (12P). b12x is reachable only
+      # via --fp4-gemm-backend=flashinfer_b12x. The venv HAS
+      # Sm120B12xBlockScaledDenseGemmKernel and accepts
+      # mm_fp4(..., backend="b12x") in the Literal + auto-preference
+      # list, but RUNTIME dispatch on flashinfer 0.7.1 is UNPROVEN (the
+      # help text asks for CUDA 13) -> GPU debt. from apply-q.
+
+        226. 4ddd4976b2 380b87b054 165fc99f20  test infra (3 commits)
+      # #45053: CustomTestCase._callTestMethod (test_utils.py:2419) wraps
+      # retry() with the EXISTING start_subprocess_fail_fast_watcher
+      # (:364), so a dead server aborts the run instead of burning the
+      # retry budget on timeouts. The isinstance(process,
+      # subprocess.Popen) guard keeps mock-built cases unaffected -- that
+      # is why our __new__-built scheduler/manager tests still pass.
+      # #44729: test/registered/hicache/test_hicache_storage.py sizes its
+      # host cache to the runner (4 lines) -- cuts host-OOM risk for a
+      # GPU-window suite we intend to run on this 251GiB box.
+      # #44595: test_nvfp4_scaled_mm.py now loads block scales through
+      # the REAL weight loader (an in-place .data move keeps the layout
+      # tag) -- still 13S without CUDA, correct when the window runs it.
+      # from apply-q.
+
+        227. (no code)  REVIEW RECORD  2026-10-19 sweep -- evaluated and NOT included
+      # Scan: origin/main 12dc623102..417606527d (319 commits) + all 338
+      # PRs this stack carries re-checked for head movement + targeted
+      # GitHub searches (RTX PRO 6000 / SM120 / Qwen3.8-Flash / NVFP4 /
+      # QSA / HiCache, window 10-12..10-19), in four parallel triage
+      # passes. What came out of it is entries 215-226; the remainder,
+      # with the evidence:
+      # HEADS THAT MOVED BUT OWED NOTHING: #42803 (only main-merges; 0
+      #     missing added lines across its 9 files); #42736 (3 cosmetic
+      #     misses -- multi-line cp_extend imports + one reworded
+      #     comment); #42701 (its net diff REVERSE-APPLIES CLEAN; still
+      #     OPEN and now CONFLICTING upstream); #43390 (kernel.py and
+      #     plan.py BYTE-IDENTICAL to the merged final 10ec53ac2f -- only
+      #     our own entry-181 tests differ); #43464/#44480/#39575/
+      #     #42087/#44317/#44222/#44195 (merge-rebase, AMD-gating or
+      #     test-entrypoint changes only); #42654 (trtllm_routed still
+      #     unreachable on SM120); #31503 CLOSED 10-17 UNMERGED -- our
+      #     entry-205 port stands; #37943/#39209/#43527/#43032 unchanged
+      #     since our ports.
+      # INERT BY GATE, gate named: #44114 QSA FP8 scratch --
+      #     is_sm100_supported() is False on SM120 so it keeps BF16
+      #     exactly as ours does; FLAGGED as an upstream-vs-fork
+      #     divergence to re-verify if it ever lands. #43171 GDN
+      #     FlashInfer prefill (prod pins --linear-attn-prefill-backend
+      #     triton, gate is sm_major in (9,10), needs enable_unified_-
+      #     memory); #34535 (dp_size=1 identity + logical_forward_mode);
+      #     #44971/#44972 (unified-pool strided dst / dspark-only
+      #     caller); #43333 (enable_unified_memory=False, and our layout
+      #     is page_first, not page_first_direct); #44097/#39294 (the
+      #     unified_memory pool/allocator we never build); #43168/
+      #     #44173/#43932 (Qwen3.8-Flash-Next has NO SWA layers --
+      #     confirmed from the HF config: layer_types is
+      #     linear_attention|full_attention only, the mtp layer
+      #     full_attention -- plus their buffer_only gates); #41907
+      #     (MLA-only, and our on-disk keys ALREADY carry
+      #     _tp_rank_tp_size -- ..._FP8_0_4.bin -- so for pp1/cp1 the
+      #     new suffix is byte-identical => ZERO re-purge of
+      #     /root/hicache_store); #37952 (FA4 path not taken -- NEXTN
+      #     verify is FlashInfer + FP8 KV); #42445 (dsv4/MLA
+      #     _sparse_mla_sm120); #44760 (edits DeepseekModelNextN, our
+      #     draft is qwen4_exp_mtp -> qwen3_5_mtp _mtp_quant_config --
+      #     FLAG: that function also returns None for a SERIALIZED nvfp4
+      #     draft, revisit only if the nvidia ckpt ships one); #44858
+      #     (trtllm [up,gate] order); #44861 (deterministic-mode only);
+      #     #44213 (compressed-tensors W4A4 != our modelopt ckpt, and
+      #     prod passes --fp4-gemm-backend marlin explicitly); #44036/
+      #     #39210 (MegaMoE runner); #41745/#44500 (online-NVFP4 and
+      #     RunAI-streamer load paths we do not use); #44591 (see
+      #     CAVEATS -- the FI 0.7.2 pin plus the engine.py assert would
+      #     break boot on our 0.7.1 venv); #44430 (FlashInfer IS
+      #     installed here; our import debt was the device-query class
+      #     entry 187 fixed); #44113 (subclass hooks only); #40941/
+      #     #44112/#44537/#43520/#44288/#44785/#45095/#40066/#44220/
+      #     #42930/#44443/#44906 (dllm / mm-off / custom-logit-off /
+      #     single-tokenizer / gc_threshold=None / prefill graphs
+      #     disabled / unified-memory / AMD / deepseek-only mHC --
+      #     qwen4_exp uses srt/layers/hyperconnection.py + kernels/ops/
+      #     gemm/hc_mix.py, NOT mhc_post, and our HC fused path is
+      #     major==10-gated).
+      # DEFERRED, with the condition that re-arms it: #44690 (the
+      #     test-prune series DELETES test_replayssm_ring_fold.py, which
+      #     guards our entry-168/replayssm work, and rewrites the 76P
+      #     test_kernels_namespace inventory, while NOT fixing the
+      #     cutedsl_gdn_mtp_ring import-time get_device_properties crash
+      #     -- deferred to merge #5); #45109 (NGram corpus -- prod is
+      #     NEXTN, and our PLE packed ngram has no trie); #45142
+      #     (DFlash-only gated dflash_layer_ids, and it changes the
+      #     idle-return arity); #43792 (CP -- and both host-length
+      #     pieces we would want are already ours in better shape:
+      #     max_q= in sparse_attn.py:701 and
+      #     _prefill_host_sequence_lengths); #44447 (a COMPETING
+      #     4/4-of-an-unmerged-stack KV-sharding design by another
+      #     author, CP/MLA-rank + PD-bootstrap based; ours is entry 200,
+      #     --qsa-cache-sharding-size with tp_rank%size placement);
+      #     #44345 (unified-memory integration -- duplicates entry 177's
+      #     chunk alignment and DISABLES the fused KV attention path we
+      #     rely on); #44116 (fires only under
+      #     --speculative-use-rejection-sampling, which sweep 2
+      #     rejected); #41365 INT8 L2 host pool (FIVE independent
+      #     startup rejects: device dtype must be BF16/FP16 vs our
+      #     fp8_e4m3, page_size==1 vs 64, io_backend kernel vs direct,
+      #     layout layer_first vs page_first, head_num*head_dim==1024
+      #     vs TP4 -- plus the author's own accuracy measurement was
+      #     never made, plus it is the ONLY item here that would need a
+      #     store purge); #39845 commit 1 (raises unless the PYTHON tree
+      #     core runs, and we run rust sglang-radix-tree) with commit 2
+      #     kept as the L3 write-amp lever to revisit now that #43108 is
+      #     in (entry 217) -- it removes the buffer_only early-return;
+      #     #44462 (indexer-pool bytes feed only hicache_auto_size,
+      #     which our explicit --hicache-size 32 bypasses -- RE-ARMED
+      #     the moment we use ratio/auto sizing, which entry 219 now
+      #     enables => NEXT); #44448 VMM graph inputs in custom-AR v1
+      #     (DEFER: it supersedes the fork-local a89d298bac blunt
+      #     disable, and prod TP4 logs show BOTH custom all-reduces
+      #     DISABLED on PCIe-only >2 GPUs, so the whole #44642/#44251/
+      #     #42811/#44387 family optimises code that never executes
+      #     here -- re-evaluate if we ever run TP2 with
+      #     expandable_segments); #44373/#44382 toktier (a competing
+      #     edit site with entry 201 -- measure entry 201 first);
+      #     #36357 (the GDN FI prefill default flip -- inert for us
+      #     anyway since chunk 16384 exceeds its 8192 bucket max; kept
+      #     as an A/B lever); #43471 native NVFP4 prefill via
+      #     kv_cache_sf (5.3k lines, unreviewed, and it would RETIRE
+      #     entries 178/192/208 -- dedicated window after review; it
+      #     does fix the O(n^2) read and the OOM it names, and the 0.7.1
+      #     venv does expose kv_cache_sf); #45158 (metric-only consumer
+      #     today); #44602 (does NOT fix our 208F -- see entry 222);
+      #     #43732 (diffusion disagg orchestrator only, +941/-25 of fork
+      #     drift in that file); #44090/#44275/#43768/#44634/#44662/
+      #     #44493/#44418/#39475/#44325/#34385/#44196/#42186 (models and
+      #     paths we do not serve); #40917 (BREAKING ctor contract
+      #     change, cls(buffer_info, ...) on memory_pool.py, where our
+      #     FP4 prefix-valid / tiled-FP8 / store_cache_fp8 regions live;
+      #     35 files for zero user-visible benefit today -- the sequence
+      #     is #44968 -> #40917 -> dependents if it is ever needed).
+      # AND FOR THE RECORD: no fifth upstream merge was taken this
+      #     session. 319 commits is a 4-5x conflict surface against this
+      #     stack; per-PR picks cost zero conflicts and keep every change
+      #     reviewable one commit at a time. MERGE #5 REMAINS OWED.
+
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
 ==============================================================================
+  # 2026-10-19: the sweep review record for entries 215-227 lives IN
+  # ENTRY 227 above (heads that moved but owed nothing, inert-by-gate,
+  # deferred-with-condition). The blocks below are the older rounds.
+
 
   Merge #4 + apply-b..apply-i evaluation (2026-10-14/15) -- verdicts,
   nothing applied beyond the numbered entries:
@@ -3077,6 +3652,91 @@ WATCH LIST (re-evaluate before next sync)
 CAVEATS
 ==============================================================================
 
+  * CPU-BATTERY BASELINES REFRESHED 2026-10-19 on 380b87b054 (entries
+    215-227). Method unchanged: PER-FILE runs, CUDA_VISIBLE_DEVICES=9,
+    PYTHONPATH set for worktrees; mega-runs contaminate (see next
+    bullet). Every number below was re-measured on the final tree; the
+    OLD value is kept so a stale log can be recognised.
+      test_rust_tree_core_integration.py  464P/1S -> 456P/1S  (the -8 =
+        #44800's DELIBERATE deletion of 3 write-back tests, plus 2 of
+        its renames -- entry 218; not a regression)
+      registered 17-file group  716P/28S/156sub -> 708P/28S/156sub
+        (the same -8; node lists identical otherwise)
+      test_unified_radix_cache_unittest.py  1300F/44P/1584S ->
+        1300F/44P/1585S (entry 222 gates #40363's fixture test; FAILED
+        node list otherwise == base except the 2 #44800 renames)
+      test_storage_prefetch_lifecycle.py  10P/10sub -> 15P/24sub (#44614)
+      test_buffer_mode_sidecar.py  5P/4sub -> 6P/6sub (#43108's test,
+        adopted UNMODIFIED)
+      test_mamba_donated_alloc_ratio.py  15P/12sub -> 16P/14sub (#43559)
+      hybrid_pool_assembler  45P/23sub -> 52P/31sub (#42443)
+      test_stat_loggers_di.py  17P -> 19P (guard class rewritten onto
+        the new pool-stats shape)
+      test_lora_pipeline.py  11P/7S -> 11P/9S (entry 224's 2 new tests,
+        CUDA-gated; the pre-existing 18-node list byte-identical)
+      mm 7-file group  279P/85S/6sub -> 279P/87S/6sub (same +2 gates)
+      test_server_args.py + docs_coverage  -> 307P/128sub (3 new
+        --hicache-mamba-size-gb tests ride on the 304 base)
+      test_replicated_attention_parallel_groups.py  208F -> 2S  DEBT
+        CLOSED; root cause recorded: ModuleNotFoundError: vllm from
+        layers/rotary_embedding/base.py:135 under CVD=9 (_is_cuda False
+        -> the vllm fallback import), and the file is register_cuda_ci
+        anyway -- gated on torch.cuda.is_available() (entry 222).
+    NEW pinned baselines this batch: test_nvfp4_smallm_dispatch
+      21P/51sub (was 2F/19P -- stale stub vs upstream #42348, fixed in
+      c6b0deef04), test_nvfp4_deferred_scales 5P/4sub,
+      test_fp4_gemm_backend_sm120 12P, test_standard_dispatcher 1P,
+      test_schedule_batch_mixed_mamba_track 7P (was 4 cases),
+      test_hicache_mamba_sizing 30P/17sub, test_hicache_pool_stats 13P,
+      test_mamba_prefill_cache_boundary 5P/12sub,
+      test_scheduler_held_row_admission 1P/2sub,
+      test_scheduler_running_batch_finished 1P.
+    UNCHANGED and still the reference set: test_qsa.py 6F/76P/134S,
+      test_qsa_fused_kv_prepare.py 146F/12P (both device-cuda debt
+      classes), kernels_namespace 76P, spec dir 333P/9S/180sub,
+      constrained 142P/1S/69sub, function_call 644P/1838sub, managers
+      trio 66P/62sub, pool_configurator 59P/4S/23sub, qsa_cp 31P,
+      disagg 79P/70sub, radix_cache_unit 44P/1S/55sub, hicache
+      trailing_endpoint 17P, fast_file 54P/13sub, cargo
+      sglang-radix-tree 932P/0F.
+  * NOT TAKEN FROM UPSTREAM 2026-10-19 (deliberate, both are boots-
+    breakers or prod flips): (a) FLASHINFER IS NOT BUMPED -- upstream
+    44be30d216/#44591 moves 0.7.1 -> 0.7.2 (4 pin strings AND an
+    assert_pkg_version("0.7.2") in srt/entrypoints/engine.py); taking
+    that code while the prod venv stays on 0.7.1 HARD-FAILS boot, and
+    the venv bump is the operator's call, so our pin + engine assert
+    stay at 0.7.1 (requirements/pyproject + engine.py:1925 verified).
+    (b) 0ab86549d0, upstream's "batch HiCache write-through backups BY
+    DEFAULT", was NOT taken -- our SGLANG_ENABLE_HICACHE_BATCHED_BACKUP
+    stays EnvBool(False) (entry 199's opt-in A/B lever for the 2400:1
+    L3 write-amp; still not measured on prod).
+  * BEHAVIOR WATCH for the NEXT restart (entries 215-227):
+    (1) #44158/entry-221 changes the EFFECTIVE CALL PATH of every
+    @register_custom_op op under plain eager with NO runtime switch --
+    prod prefill is eager (prefill graphs disabled) and 103 files
+    register ops, so measure prefill t/s at first boot and revert
+    d7454001d2 ALONE if anything smells. (2) #39765/entry-220 can add a
+    sync point (an early pop_and_process) to the overlap path for hybrid
+    extra_buffer prefills -- A/B TTFT/throughput owed, revert
+    64a78149ed alone. (3) THE ADMISSION TRIO (entry 215) REPLACES our
+    local early-revision of #40940 (has_chunked deleted, num_held_rows =
+    sum(r.kv.holds_kv for r in adder.can_run_list) now): watch for
+    UNDER-admission (queue growth at max_running_requests=96) or
+    OVER-admission (req_to_token exhaustion -> retractions). (4) #44614
+    /entry-217 changes prefetch deadline semantics -- expect
+    deferred{deadline} where we used to see storage_transfer, and read
+    the counters before blaming L3. (5) #42443/entry-219 RENAMES
+    DASHBOARD-VISIBLE METRICS: our entry-189 hicache_host_mamba_{used,
+    total}_states gauges are REPLACED by per-pool
+    sglang:hicache_host_pool_{used,total}_tokens{pool} +
+    ..._evicted_tokens_total{pool} -- fix the dashboards. (6) NEW
+    OPERATOR LEVER: --hicache-mamba-size-gb <GB|auto> (default None =
+    today's byte-proportional split) finally tilts the HOST KV<->mamba
+    split entry 209 documented as untunable; try `auto` first and read
+    the new boot mamba-coverage-% line. (7) Diffusion fast_launch replay
+    (#44471/entry-223) is now on the ALREADY-default-ON
+    SGLANG_DIFFUSION_TRITON_FAST_LAUNCH=1 path with no new switch --
+    FLUX.2/Qwen-Image pixel diff owed.
   * MERGE #4 CPU-BATTERY METHOD 2026-10-14: a single-process
     `pytest test/registered/unit` mega-run reports ~2500 FAILS that all
     PASS in per-file isolation (import-order/state contamination; the
