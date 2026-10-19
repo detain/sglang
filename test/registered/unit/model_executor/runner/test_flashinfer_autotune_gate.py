@@ -67,10 +67,19 @@ class TestCompressedTensorsNvfp4Detection(CustomTestCase):
 
 
 class TestFp4GemmAutotuneGate(CustomTestCase):
-    def _should_run(self, quantization: str, model, *, cutlass: bool = True) -> bool:
+    def _should_run(
+        self,
+        quantization: str,
+        model,
+        *,
+        cutlass: bool = True,
+        cutedsl: bool = False,
+        per_tensor_fp8: bool = False,
+    ) -> bool:
         fp4_backend = Mock()
         fp4_backend.is_flashinfer_cutlass.return_value = cutlass
-        fp4_backend.is_flashinfer_cutedsl.return_value = False
+        fp4_backend.is_flashinfer_cutedsl.return_value = cutedsl
+        fp4_backend.is_flashinfer_b12x.return_value = False
         with (
             patch.object(autotune, "get_exec", return_value=_exec_config()),
             patch(
@@ -78,6 +87,17 @@ class TestFp4GemmAutotuneGate(CustomTestCase):
                 return_value=fp4_backend,
             ),
             patch("torch.cuda.get_device_capability", return_value=(12, 1)),
+            # The gate grew a modelopt per-tensor-FP8 arm after this suite was
+            # written: it resolves flashinfer_per_tensor_fp8_supported through
+            # fp8_utils at call time. That is False on a CPU runner (no GPU)
+            # and would turn every modelopt-family "skip autotune" expectation
+            # upside down for reasons unrelated to the fp4 gate under test.
+            # Pin the arm explicitly; test_modelopt_fp8_per_tensor_gating
+            # exercises both sides of it.
+            patch(
+                "sglang.srt.layers.quantization.fp8_utils.flashinfer_per_tensor_fp8_supported",
+                return_value=per_tensor_fp8,
+            ),
         ):
             return autotune.should_run_flashinfer_autotune(
                 _model_runner(quantization, model)
@@ -97,6 +117,13 @@ class TestFp4GemmAutotuneGate(CustomTestCase):
 
     def test_modelopt_fp4_still_runs_autotune(self):
         self.assertTrue(self._should_run("modelopt_fp4", None))
+
+    def test_modelopt_fp8_per_tensor_gating(self):
+        # The per-tensor-FP8 arm: modelopt quantizations run autotune exactly
+        # when flashinfer per-tensor FP8 is supported (True on SM90/SM100/
+        # SM120 CUDA boxes with flashinfer installed).
+        self.assertTrue(self._should_run("modelopt", None, per_tensor_fp8=True))
+        self.assertFalse(self._should_run("modelopt", None, per_tensor_fp8=False))
 
 
 if __name__ == "__main__":
