@@ -16,8 +16,7 @@ from sglang.srt.environ import envs
 from sglang.srt.eplb.expert_distribution import EPLB_BALANCEDNESS_WINDOW_SIZES
 from sglang.srt.managers.schedule_batch import ScheduleBatch
 from sglang.srt.managers.utils import GenerationBatchResult
-from sglang.srt.mem_cache.hicache_storage import PoolName
-from sglang.srt.mem_cache.unified_radix_cache import UnifiedRadixCache
+from sglang.srt.observability.hicache_pool_stats import collect_host_pool_stats
 from sglang.srt.observability.metrics_collector import (
     DPCooperationInfo,
     QueueCount,
@@ -1220,6 +1219,21 @@ class SchedulerMetricsReporter:
         if not self.scheduler.enable_hierarchical_cache:
             return
 
+        # Per-pool occupancy of a hybrid model's host tier (UnifiedRadixCache
+        # sets host_pool_group; other caches leave the dicts empty).
+        tree_cache = self.scheduler.tree_cache
+        host_pool_group = getattr(tree_cache, "host_pool_group", None)
+        if host_pool_group is not None:
+            # Sidecar pools reuse another pool's host indices; no series.
+            used, total = collect_host_pool_stats(
+                host_pool_group,
+                derived_pools=[
+                    spec.pool_name for spec in tree_cache.sidecar_pool_specs
+                ],
+            )
+            self.stats.hicache_host_pool_used_tokens = used
+            self.stats.hicache_host_pool_total_tokens = total
+
         host_pool = getattr(
             self.scheduler.tree_cache, "token_to_kv_pool_host", None
         ) or getattr(self.scheduler.tree_cache, "full_kv_pool_host", None)
@@ -1227,24 +1241,10 @@ class SchedulerMetricsReporter:
         host_total = host_pool.logical_size
         self.stats.hicache_host_used_tokens = host_total - host_pool.available_size()
         self.stats.hicache_host_total_tokens = host_total
-
-        mamba_host_pool = self._hicache_host_mamba_pool()
-        if mamba_host_pool is not None:
-            mamba_total = mamba_host_pool.logical_size
-            self.stats.hicache_host_mamba_used_states = (
-                mamba_total - mamba_host_pool.available_size()
-            )
-            self.stats.hicache_host_mamba_total_states = mamba_total
-
-    def _hicache_host_mamba_pool(self):
-        tree_cache = self.scheduler.tree_cache
-        if (
-            not isinstance(tree_cache, UnifiedRadixCache)
-            or tree_cache.host_pool_group is None
-        ):
-            return None
-        entry = tree_cache.host_pool_group.entry_map.get(PoolName.MAMBA)
-        return None if entry is None else entry.host_pool
+        # Fork: the host-Mamba occupancy series is the {pool="mamba"} entry of
+        # hicache_host_pool_{used,total}_tokens above (one checkpoint slot per
+        # token), so the earlier dedicated hicache_host_mamba_*_states gauges are
+        # not re-added on top of the per-pool set.
 
     def _update_lora_metrics(self):
         """Update LoRA pool metrics for monitoring and autoscaling."""

@@ -487,23 +487,34 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class TestHiCacheHostMambaStats(CustomTestCase):
+class TestHiCacheHostPoolStats(CustomTestCase):
     """Regression for sgl-project/sglang#33713: on hybrid-SSM models the host
     Mamba pool fills long before host KV and its LRU drops the states that make
     the host KV matchable, but only the KV pool was exported, so the resulting
     misses looked like a radix-tree bug. The host Mamba pool must be reported
-    next to host KV, and only for models that have one."""
+    next to host KV — as the {pool="mamba"} series of the per-pool host gauges
+    (PR #42443 shape; one token is one checkpoint slot) — and a pool that
+    borrows another pool's host indices must not publish a placeholder 0."""
 
     def setUp(self):
         self.labels = {"model_name": "test"}
 
-    def _reporter(self, entry_map):
+    def _pool(self, size, available):
+        return SimpleNamespace(
+            logical_size=size,
+            available_size=lambda: available,
+        )
+
+    def _reporter(self, entries, sidecar_pool_names=()):
         reporter = SchedulerMetricsReporter.__new__(SchedulerMetricsReporter)
         tree_cache = MagicMock(spec=UnifiedRadixCache)
         tree_cache.token_to_kv_pool_host = SimpleNamespace(
             logical_size=1000, available_size=lambda: 400
         )
-        tree_cache.host_pool_group = SimpleNamespace(entry_map=entry_map)
+        tree_cache.host_pool_group = SimpleNamespace(entries=entries)
+        tree_cache.sidecar_pool_specs = [
+            SimpleNamespace(pool_name=name) for name in sidecar_pool_names
+        ]
         reporter.scheduler = SimpleNamespace(
             enable_hierarchical_cache=True, tree_cache=tree_cache
         )
@@ -511,16 +522,17 @@ class TestHiCacheHostMambaStats(CustomTestCase):
         return reporter
 
     def _collector(self):
+        labelnames = [*self.labels.keys(), "pool"]
         collector = MagicMock()
         collector.labels = self.labels
         collector.enable_hierarchical_cache = True
-        collector.hicache_host_mamba_used_states = _RecordingMetric(
-            name="sglang:hicache_host_mamba_used_states",
-            labelnames=self.labels.keys(),
+        collector.hicache_host_pool_used_tokens = _RecordingMetric(
+            name="sglang:hicache_host_pool_used_tokens",
+            labelnames=labelnames,
         )
-        collector.hicache_host_mamba_total_states = _RecordingMetric(
-            name="sglang:hicache_host_mamba_total_states",
-            labelnames=self.labels.keys(),
+        collector.hicache_host_pool_total_tokens = _RecordingMetric(
+            name="sglang:hicache_host_pool_total_tokens",
+            labelnames=labelnames,
         )
         collector._log_gauge.side_effect = lambda gauge, data: (
             SchedulerMetricsCollector._log_gauge(collector, gauge, data)
@@ -528,37 +540,89 @@ class TestHiCacheHostMambaStats(CustomTestCase):
         return collector
 
     def test_reports_host_mamba_pool_next_to_host_kv(self):
-        mamba_pool = SimpleNamespace(logical_size=138, available_size=lambda: 10)
         reporter = self._reporter(
-            {PoolName.MAMBA: SimpleNamespace(host_pool=mamba_pool)}
+            [
+                SimpleNamespace(name=PoolName.KV, host_pool=self._pool(900, 300)),
+                SimpleNamespace(name=PoolName.MAMBA, host_pool=self._pool(138, 10)),
+            ]
         )
 
         reporter._log_hicache_stats()
 
         self.assertEqual(reporter.stats.hicache_host_used_tokens, 600)
         self.assertEqual(reporter.stats.hicache_host_total_tokens, 1000)
-        self.assertEqual(reporter.stats.hicache_host_mamba_used_states, 128)
-        self.assertEqual(reporter.stats.hicache_host_mamba_total_states, 138)
+        self.assertEqual(
+            reporter.stats.hicache_host_pool_used_tokens, {"kv": 600, "mamba": 128}
+        )
+        self.assertEqual(
+            reporter.stats.hicache_host_pool_total_tokens, {"kv": 900, "mamba": 138}
+        )
 
         collector = self._collector()
         SchedulerMetricsCollector.log_stats(collector, reporter.stats)
         self.assertEqual(
-            collector.hicache_host_mamba_used_states.sets, [(self.labels, 128)]
+            collector.hicache_host_pool_used_tokens.sets,
+            [
+                ({**self.labels, "pool": "kv"}, 600),
+                ({**self.labels, "pool": "mamba"}, 128),
+            ],
         )
         self.assertEqual(
-            collector.hicache_host_mamba_total_states.sets, [(self.labels, 138)]
+            collector.hicache_host_pool_total_tokens.sets,
+            [
+                ({**self.labels, "pool": "kv"}, 900),
+                ({**self.labels, "pool": "mamba"}, 138),
+            ],
         )
 
-    def test_models_without_a_host_mamba_pool_export_no_series(self):
-        reporter = self._reporter({PoolName.KV: SimpleNamespace(host_pool=None)})
+    def test_model_without_a_host_mamba_pool_exports_no_mamba_series(self):
+        reporter = self._reporter(
+            [SimpleNamespace(name=PoolName.KV, host_pool=self._pool(900, 300))]
+        )
 
         reporter._log_hicache_stats()
 
         self.assertEqual(reporter.stats.hicache_host_used_tokens, 600)
-        self.assertEqual(reporter.stats.hicache_host_mamba_used_states, 0)
-        self.assertEqual(reporter.stats.hicache_host_mamba_total_states, 0)
+        self.assertNotIn("mamba", reporter.stats.hicache_host_pool_used_tokens)
+        self.assertNotIn("mamba", reporter.stats.hicache_host_pool_total_tokens)
 
         collector = self._collector()
         SchedulerMetricsCollector.log_stats(collector, reporter.stats)
-        self.assertEqual(collector.hicache_host_mamba_used_states.sets, [])
-        self.assertEqual(collector.hicache_host_mamba_total_states.sets, [])
+        self.assertEqual(
+            [
+                labels["pool"]
+                for labels, _ in collector.hicache_host_pool_used_tokens.sets
+            ],
+            ["kv"],
+        )
+
+    def test_sidecar_pool_publishes_no_placeholder_series(self):
+        # A borrowed-host-index pool reads 0 used forever; it must stay out.
+        reporter = self._reporter(
+            [
+                SimpleNamespace(name=PoolName.KV, host_pool=self._pool(900, 300)),
+                SimpleNamespace(name=PoolName.MAMBA, host_pool=self._pool(138, 10)),
+            ],
+            sidecar_pool_names=[PoolName.MAMBA],
+        )
+
+        reporter._log_hicache_stats()
+
+        self.assertEqual(reporter.stats.hicache_host_pool_used_tokens, {"kv": 600})
+        self.assertEqual(reporter.stats.hicache_host_pool_total_tokens, {"kv": 900})
+
+    def test_pool_without_an_allocator_publishes_no_series(self):
+        class _NoAllocator:
+            logical_size = 64
+
+            def available_size(self):
+                raise NotImplementedError
+
+        reporter = self._reporter(
+            [SimpleNamespace(name=PoolName.MAMBA, host_pool=_NoAllocator())]
+        )
+
+        reporter._log_hicache_stats()
+
+        self.assertEqual(reporter.stats.hicache_host_pool_used_tokens, {})
+        self.assertEqual(reporter.stats.hicache_host_pool_total_tokens, {})

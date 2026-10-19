@@ -163,9 +163,13 @@ class SchedulerStats:
     # HiCache metrics
     hicache_host_used_tokens: int = 0
     hicache_host_total_tokens: int = 0
-    # Host Mamba state pool of hybrid-SSM models; stays 0/0 when there is none.
-    hicache_host_mamba_used_states: int = 0
-    hicache_host_mamba_total_states: int = 0
+    # Per host pool of a hybrid model's HostPoolGroup (kv, mamba, swa, ...):
+    # {pool label: tokens}; for the mamba pool a token is a checkpoint slot.
+    # Empty when the tree cache has no host pool group. Sidecar pools that
+    # borrow another pool's host indices (DeepSeek V4 C4 / indexer / state,
+    # DSA indexer) have no occupancy of their own and are not listed.
+    hicache_host_pool_used_tokens: Dict[str, int] = field(default_factory=dict)
+    hicache_host_pool_total_tokens: Dict[str, int] = field(default_factory=dict)
 
     # Streaming session metrics
     num_streaming_sessions: int = 0
@@ -762,16 +766,26 @@ class SchedulerMetricsCollector(_StatLoggerDIMixin):
                 labelnames=labels.keys(),
                 multiprocess_mode="mostrecent",
             )
-            self.hicache_host_mamba_used_states = Gauge(
-                name="sglang:hicache_host_mamba_used_states",
-                documentation="Number of state slots currently used in the host Mamba cache (hybrid-SSM models only).",
-                labelnames=labels.keys(),
+            # Per-pool view of a hybrid model's host tier (HostPoolGroup):
+            # the anchor gauges above cover the KV pool only, while the
+            # mamba/swa host pools have their own capacity and eviction
+            # pressure. Sidecar pools reuse another pool's indices; no series.
+            self.hicache_host_pool_used_tokens = Gauge(
+                name="sglang:hicache_host_pool_used_tokens",
+                documentation="Tokens currently used in each host cache pool "
+                "that allocates its own slots (kv, mamba, swa, ...); one "
+                "mamba token is one state checkpoint slot. Sidecar pools "
+                "that reuse another pool's indices are not reported.",
+                labelnames=list(labels.keys()) + ["pool"],
                 multiprocess_mode="mostrecent",
             )
-            self.hicache_host_mamba_total_states = Gauge(
-                name="sglang:hicache_host_mamba_total_states",
-                documentation="Total capacity of the host Mamba cache in state slots (hybrid-SSM models only).",
-                labelnames=labels.keys(),
+            self.hicache_host_pool_total_tokens = Gauge(
+                name="sglang:hicache_host_pool_total_tokens",
+                documentation="Total capacity in tokens of each host cache "
+                "pool that allocates its own slots (kv, mamba, swa, ...). "
+                "Sidecar pools that reuse another pool's indices are not "
+                "reported.",
+                labelnames=list(labels.keys()) + ["pool"],
                 multiprocess_mode="mostrecent",
             )
 
@@ -1713,17 +1727,14 @@ class SchedulerMetricsCollector(_StatLoggerDIMixin):
             self._log_gauge(
                 self.hicache_host_total_tokens, stats.hicache_host_total_tokens
             )
-            # Non-hybrid models have no host Mamba pool; skip the series rather
-            # than exporting a permanent 0/0.
-            if stats.hicache_host_mamba_total_states > 0:
-                self._log_gauge(
-                    self.hicache_host_mamba_used_states,
-                    stats.hicache_host_mamba_used_states,
+            for pool, used in stats.hicache_host_pool_used_tokens.items():
+                self.hicache_host_pool_used_tokens.labels(**self.labels, pool=pool).set(
+                    used
                 )
-                self._log_gauge(
-                    self.hicache_host_mamba_total_states,
-                    stats.hicache_host_mamba_total_states,
-                )
+            for pool, total in stats.hicache_host_pool_total_tokens.items():
+                self.hicache_host_pool_total_tokens.labels(
+                    **self.labels, pool=pool
+                ).set(total)
 
         # Streaming session metrics
         if self.enable_streaming_session:
@@ -2519,6 +2530,19 @@ class RadixCacheMetricsCollector(_StatLoggerDIMixin):
             labelnames=list(labels.keys()) + ["pool"],
         )
 
+        # Per-pool host (L2) eviction. Restores per pool are already
+        # sglang:load_back_tokens_total{pool}; this is the other side.
+        self.host_pool_evicted_num_tokens = Counter(
+            name="sglang:hicache_host_pool_evicted_tokens_total",
+            documentation="Host (L2) slots freed by host-tier eviction, by "
+            "host pool (kv, swa, mamba, deepseek_v4_c128); the pool label "
+            "matches sglang:hicache_host_pool_*_tokens. One mamba slot is "
+            "one state checkpoint. KV counted here under mamba pressure is "
+            "a prefix that lost its host copy because its checkpoints were "
+            "evicted.",
+            labelnames=list(labels.keys()) + ["pool"],
+        )
+
         self.backup_duration_seconds = Histogram(
             name="sglang:hicache_backup_duration_seconds",
             documentation="Time taken to back up KV cache from GPU to local "
@@ -2579,6 +2603,11 @@ class RadixCacheMetricsCollector(_StatLoggerDIMixin):
 
     def increment_load_back_num_tokens(self, num_tokens: int, pool: str) -> None:
         self.load_back_num_tokens.labels(**self.labels, pool=pool).inc(num_tokens)
+
+    def increment_host_pool_evicted_tokens(self, num_tokens: int, pool: str) -> None:
+        self.host_pool_evicted_num_tokens.labels(**self.labels, pool=pool).inc(
+            num_tokens
+        )
 
     def observe_eviction_duration(self, duration_seconds: float) -> None:
         self.eviction_duration_seconds.labels(**self.labels).observe(duration_seconds)
