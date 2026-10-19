@@ -334,6 +334,21 @@ class Envs:
     # instance onto paged for the rest of the process. Set False to keep the
     # old behaviour: log the actionable error and let the OOM propagate.
     SGLANG_ENABLE_QSA_CHUNK_PREFILL_OOM_FALLBACK = EnvBool(True)
+    # Byte-budget that dense pack BEFORE allocating it (same reason as above):
+    # a pack larger than the budget is routed to the paged kernel, or gathered
+    # in pool dtype when the pool is FP8. Set False to skip the gate and always
+    # attempt the pack (the OOM fallback above still catches the failure).
+    SGLANG_ENABLE_QSA_CHUNK_PREFILL_PACK_BUDGET = EnvBool(True)
+    # Packs smaller than this never consult the budget, so ordinary chunks do
+    # not pay a free-memory query for a scratch that trivially fits.
+    SGLANG_QSA_CHUNK_PREFILL_PACK_BUDGET_MIN_BYTES = EnvInt(512 * 2**20)
+    # Budget = min(total_memory * TOTAL_FRACTION,
+    #              (1 - mem_fraction_static) * total_memory * FREE_FRACTION,
+    #              (driver-free + allocator-cached) * FREE_FRACTION).
+    # The first two terms are configuration only and capture-safe; the
+    # free-memory term is skipped during CUDA graph capture (it syncs).
+    SGLANG_QSA_CHUNK_PREFILL_BUDGET_FREE_FRACTION = EnvFloat(0.2)
+    SGLANG_QSA_CHUNK_PREFILL_BUDGET_TOTAL_FRACTION = EnvFloat(0.3)
     SGLANG_PREFETCH_BLOCK_SIZE_MB = EnvInt(16)
     SGLANG_GEMMA_OUT_OF_PLACE_POSITION_MUTATION = EnvBool(False)
     SGLANG_ENABLE_WEIGHT_LOADER_V2 = EnvBool(False)

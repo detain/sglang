@@ -73,8 +73,8 @@ from sglang.srt.model_executor.runner_backend_utils.breakable_cuda_graph import 
     is_in_breakable_cuda_graph,
 )
 from sglang.srt.model_executor.runner_utils.capture_mode import get_is_capture_mode
-from sglang.srt.runtime_context import get_memory, get_parallel, get_spec
-from sglang.srt.utils import is_hip
+from sglang.srt.runtime_context import get_memory, get_parallel, get_schedule, get_spec
+from sglang.srt.utils import get_device_module, is_hip
 
 logger = logging.getLogger(__name__)
 
@@ -300,6 +300,59 @@ def _qsa_headroom_str(device) -> str:
     )
 
 
+# Key of the per-forward headroom reading inside the ``_chunk_prefill_shared``
+# hoist, so the 12 QSA layers of one forward pay at most one ``mem_get_info``.
+QSA_PACK_HEADROOM_CACHE_KEY = "qsa_dense_pack_headroom_bytes"
+
+
+def _qsa_dense_pack_headroom_bytes(device) -> Optional[int]:
+    """Bytes the caching allocator could serve right now; None if unknowable.
+
+    Dynamic half of the dense-pack budget.  None during CUDA graph capture --
+    ``mem_get_info`` synchronizes the device there -- which leaves the caller
+    with the configuration-only budget.
+    """
+    free, cached = _qsa_device_headroom_bytes(device)
+    if free is None or cached is None:
+        # Capture in progress (no driver reading) or a driver that will not
+        # answer: the dynamic term is unknown, so it must not cap the budget.
+        return None
+    return int(free) + int(cached)
+
+
+def _qsa_pack_static_budget_bytes(*, device_index: Optional[int]) -> Optional[int]:
+    """Dense-pack budget from configuration alone; no memory query, capture-safe.
+
+    Mirrors ``mqa_logits_utils.mqa_logits_static_budget_bytes``: the pack lives
+    in whatever the static pools leave behind, so the bound is the
+    ``(1 - mem_fraction_static)`` slice of device memory scaled by the free
+    fraction, capped by a share of total memory.  Returns None when the device
+    properties cannot be read (CPU-only tests, unsupported platforms) -- an
+    unknown budget must never refuse the pack.
+    """
+    try:
+        total_mem = int(
+            get_device_module().get_device_properties(device_index).total_memory
+        )
+    except Exception:
+        return None
+    budget = int(total_mem * envs.SGLANG_QSA_CHUNK_PREFILL_BUDGET_TOTAL_FRACTION.get())
+    try:
+        mem_fraction_static = get_schedule().mem_fraction_static
+    except Exception:
+        mem_fraction_static = None
+    if mem_fraction_static is not None:
+        static_headroom = int(total_mem * max(0.0, 1.0 - float(mem_fraction_static)))
+        budget = min(
+            int(
+                static_headroom
+                * envs.SGLANG_QSA_CHUNK_PREFILL_BUDGET_FREE_FRACTION.get()
+            ),
+            budget,
+        )
+    return max(1, budget)
+
+
 class QwenSparseAttnMetadata(msgspec.Struct, frozen=True):
     """Per-forward metadata consumed by core sparse attention."""
 
@@ -456,14 +509,19 @@ class QwenSparseAttnBackend(AttentionBackend):
         # (see ``_chunk_prefill_kv_path``); the guard inputs are static per
         # process, so without the latch the fallback would warn per layer.
         self._paged_kv_guard_warned = False
-        # Plain counter, no metrics plumbing: how many forwards the
-        # out-of-memory fallback served (see ``_chunk_prefill_oom_fallback``).
-        self._qsa_pack_oom_fallbacks = 0
         # Sticky latch set by the dense-pack out-of-memory fallback: once a pack
         # has failed, every later forward routes to the paged kernel directly
         # instead of OOMing again once per QSA layer (see
         # ``_chunk_prefill_oom_fallback``).
         self._chunk_prefill_kv_forced_paged = False
+        # Plain counters for the two dense-pack memory guards, no metrics
+        # plumbing: attempts to materialise dense K/V, times the byte budget
+        # routed one away, times an out-of-memory fallback served the forward.
+        self._qsa_pack_attempts = 0
+        self._qsa_pack_budget_refusals = 0
+        self._qsa_pack_oom_fallbacks = 0
+        # Warn-once-per-tier latches for the budget gate (``_dense_pack_mem_route``).
+        self._qsa_pack_budget_warned: Dict[str, bool] = {}
         self._cuda_graph_metadata: Dict[
             Tuple[ForwardMode, int], QwenSparseAttnMetadata
         ] = {}
@@ -2324,10 +2382,28 @@ class QwenSparseAttnBackend(AttentionBackend):
         # gather-index path, which descales inside the attention kernel.
         use_pack = not scale_kwargs or (k_scale == 1.0 and v_scale == 1.0)
         total_k = sum(sequence_lens)
+        route = self._dense_pack_mem_route(
+            q=q, k_buffer=k_buffer, total_k=total_k, use_pack=use_pack, shared=shared
+        )
+        if route == "paged":
+            output = self._paged_chunk_prefill_output(
+                q,
+                k_buffer,
+                v_buffer,
+                layer,
+                forward_batch,
+                topk_indices,
+                shared,
+                scale_kwargs,
+            )
+            return self._pad_extend_output(output, num_output_rows)
+        if route == "pool_dtype":
+            use_pack = False
         dense_dtype = q.dtype if use_pack else k_buffer.dtype
         needed_bytes = _qsa_dense_pack_bytes(
             k_buffer, total_k=total_k, dtype=dense_dtype
         )
+        self._qsa_pack_attempts += 1
         try:
             if use_pack:
                 packed_k, packed_v = pack_qsa_prefill_kv(
@@ -2378,6 +2454,124 @@ class QwenSparseAttnBackend(AttentionBackend):
             max_q=max_q,
         )
         return self._pad_extend_output(output, num_output_rows)
+
+    def _qsa_pack_budget_bytes(
+        self, *, device: torch.device, shared: Dict[str, Any]
+    ) -> Optional[int]:
+        """Bytes the dense pack may claim this forward; None when unknown.
+
+        The static (configuration-only) term is capture-safe.  The headroom term
+        needs a device query, so it is read at most once per forward and cached
+        in the per-forward hoist alongside the other hoisted values; a cache
+        miss during capture stores None and every later layer of that forward
+        reuses the missing reading instead of querying.
+        """
+        budget = _qsa_pack_static_budget_bytes(device_index=_qsa_device_index(device))
+        if QSA_PACK_HEADROOM_CACHE_KEY in shared:
+            headroom = shared[QSA_PACK_HEADROOM_CACHE_KEY]
+        else:
+            headroom = _qsa_dense_pack_headroom_bytes(device)
+            shared[QSA_PACK_HEADROOM_CACHE_KEY] = headroom
+        candidates = [budget] if budget is not None else []
+        if headroom is not None:
+            candidates.append(
+                int(headroom * envs.SGLANG_QSA_CHUNK_PREFILL_BUDGET_FREE_FRACTION.get())
+            )
+        if not candidates:
+            return None
+        return max(1, min(candidates))
+
+    def _warn_qsa_pack_budget(self, tier: str, message: str) -> None:
+        """Warn once per process per fallback tier, with the numbers.
+
+        The budget inputs (batch shape, pool layout, configuration) change slowly
+        within a run, so a per-layer warning would be a 12x-per-forward storm.
+        """
+        if self._qsa_pack_budget_warned.get(tier):
+            return
+        self._qsa_pack_budget_warned[tier] = True
+        logger.warning("QSA chunked-prefill pack budget: %s", message)
+
+    def _dense_pack_mem_route(
+        self,
+        *,
+        q: torch.Tensor,
+        k_buffer: torch.Tensor,
+        total_k: int,
+        use_pack: bool,
+        shared: Dict[str, Any],
+    ) -> str:
+        """Decide the dense chunk-prefill K/V source before allocating it.
+
+        One of ``pack`` (the fused pack in the query dtype, as today), ``paged``
+        (the paged kernel reads the pool through ``req_to_token`` and allocates
+        nothing), or ``pool_dtype`` (gather the pool's own dtype -- half the
+        bytes for an FP8 pool -- and dequantise inside the attention kernel, the
+        same call shape the scaled-FP8 path has always used).
+
+        Tiers are tried in that order; when none applies the pack is still
+        attempted, because a wrong guess about the headroom is recoverable via
+        the out-of-memory fallback while a guaranteed wrong-path refusal is not.
+        Anything below the byte floor skips the gate entirely, so ordinary
+        chunks neither query the device nor gain a branch.
+        """
+        default = "pack" if use_pack else "pool_dtype"
+        if not envs.SGLANG_ENABLE_QSA_CHUNK_PREFILL_PACK_BUDGET.get():
+            return default
+        pack_dtype = q.dtype if use_pack else k_buffer.dtype
+        needed_bytes = _qsa_dense_pack_bytes(
+            k_buffer, total_k=total_k, dtype=pack_dtype
+        )
+        if needed_bytes is None:
+            return default
+        if needed_bytes <= envs.SGLANG_QSA_CHUNK_PREFILL_PACK_BUDGET_MIN_BYTES.get():
+            return default
+        budget_bytes = self._qsa_pack_budget_bytes(device=q.device, shared=shared)
+        if budget_bytes is None or needed_bytes <= budget_bytes:
+            return default
+        description = (
+            f"{_qsa_bytes_str(needed_bytes)} of dense K/V for {total_k} summed "
+            f"context tokens ({_qsa_heads_dim_str(k_buffer)} of {pack_dtype}) "
+            f"exceeds the {_qsa_bytes_str(budget_bytes)} budget"
+        )
+        supported, reason = self._paged_kv_source_supported()
+        if supported:
+            self._qsa_pack_budget_refusals += 1
+            self._warn_qsa_pack_budget(
+                "paged",
+                description
+                + "; serving this forward from the paged chunk-prefill kernel, "
+                "which reads the pool through req_to_token and allocates nothing. "
+                "Set SGLANG_QSA_CHUNK_PREFILL_KV_SOURCE=paged to make that the "
+                "boot-time choice, or SGLANG_ENABLE_QSA_CHUNK_PREFILL_PACK_BUDGET=0 "
+                "to drop the budget",
+            )
+            return "paged"
+        pool_bytes = _qsa_dense_pack_bytes(
+            k_buffer, total_k=total_k, dtype=k_buffer.dtype
+        )
+        if (
+            use_pack
+            and is_fp8_kv_dtype(k_buffer.dtype)
+            and pool_bytes is not None
+            and pool_bytes <= budget_bytes
+        ):
+            self._qsa_pack_budget_refusals += 1
+            self._warn_qsa_pack_budget(
+                "pool_dtype",
+                description
+                + f" and the paged kernel is unavailable ({reason}); gathering the "
+                f"{_qsa_bytes_str(pool_bytes)} of pool-dtype rows instead and "
+                "dequantising inside the attention kernel",
+            )
+            return "pool_dtype"
+        self._warn_qsa_pack_budget(
+            "attempt",
+            description
+            + f" and neither fallback applies (paged: {reason}); attempting the "
+            "pack and relying on the out-of-memory fallback",
+        )
+        return default
 
     def _paged_chunk_prefill_output(
         self,
