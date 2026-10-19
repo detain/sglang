@@ -7,6 +7,7 @@ from unittest import mock
 
 import torch
 
+from sglang.srt.layers.moe.moe_runner import flashinfer_cutlass
 from sglang.srt.layers.moe.moe_runner.flashinfer_cutlass import (
     _run_flashinfer_cutlass,
     _smallm_ineligibility_reason,
@@ -356,6 +357,15 @@ class TestSmallmRuntimeFallback(unittest.TestCase):
             swiglu_limit=None,
             routed_scaling_factor=None,
             apply_router_weight_on_input=False,
+            # Upstream #42348 (10edb05e72) moved the CUTLASS launch's
+            # placement reads from quant_info onto MoeRunnerConfig, whose
+            # moe_{tp,ep}_{size,rank} are properties over the layer
+            # placement.  The small-M gate still validates the copies on
+            # quant_info, so both carry the same topology.
+            moe_tp_size=1,
+            moe_tp_rank=0,
+            moe_ep_size=2,
+            moe_ep_rank=0,
         )
         dispatch = SimpleNamespace(
             hidden_states=x,
@@ -401,6 +411,16 @@ class TestSmallmRuntimeFallback(unittest.TestCase):
                 "sglang.srt.layers.moe.moe_runner.flashinfer_cutlass."
                 "_is_stream_capturing",
                 return_value=capturing,
+            ),
+            # Upstream #42348 (10edb05e72) routed the CUTLASS tune-size
+            # helper through the config bags.  This fallback test is about
+            # the small-M launch decision, so pretend to be a PD decode
+            # server: that branch of the real helper needs no published
+            # runtime context.
+            mock.patch.object(
+                flashinfer_cutlass,
+                "get_disagg",
+                return_value=SimpleNamespace(disaggregation_mode="decode"),
             ),
             mock.patch(
                 "torch.cuda.is_current_stream_capturing",
