@@ -168,6 +168,10 @@ from sglang.srt.managers.multi_tokenizer_mixin import (
 )
 from sglang.srt.managers.tokenizer_manager import ServerStatus, TokenizerManager
 from sglang.srt.observability.func_timer import enable_func_timer
+from sglang.srt.observability.http_request_metrics import (
+    add_http_request_metrics_middleware,
+    init_http_request_metrics,
+)
 from sglang.srt.observability.trace import (
     fastapi_telemetry_disabled_kwargs,
     process_tracing_init,
@@ -180,7 +184,6 @@ from sglang.srt.sampling.watermarking.core import redact_watermark_secrets
 from sglang.srt.server_args import PortArgs, ServerArgs
 from sglang.srt.utils import (
     add_prometheus_middleware,
-    add_prometheus_track_response_middleware,
     build_server_info,
     delete_directory,
     get_bool_env_var,
@@ -302,6 +305,7 @@ async def lifespan(fast_api_app: FastAPI):
     if get_observability().enable_metrics:
         add_prometheus_middleware(app)
         enable_func_timer()
+        init_http_request_metrics()
 
     # Init tracing
     if get_observability().enable_trace:
@@ -498,6 +502,9 @@ if envs.SGLANG_ENABLE_REQUEST_DECOMPRESSION.get():
     )
 
     app.add_middleware(RequestDecompressionMiddleware)
+
+# Registered at import so that tokenizer workers, which re-import this module, get it too.
+add_http_request_metrics_middleware(app)
 
 # Include routers
 from sglang.srt.entrypoints.v1_loads import router as v1_loads_router
@@ -2647,9 +2654,6 @@ def _setup_and_run_http_server(
     # Store watchdog on tokenizer_manager (single source of truth for SIGQUIT handler)
     if tokenizer_manager is not None:
         tokenizer_manager._subprocess_watchdog = subprocess_watchdog
-
-    if get_observability().enable_metrics:
-        add_prometheus_track_response_middleware(app)
 
     # Pass additional arguments to the lifespan function.
     # They will be used for additional initialization setups.
