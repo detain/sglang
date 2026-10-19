@@ -509,6 +509,49 @@ def test_qsa_explicit_triton_bypasses_available_trtllm(monkeypatch):
         backend_module._qsa_decode_backend.cache_clear()
 
 
+@pytest.mark.parametrize("kv_dtype", [torch.bfloat16, torch.float8_e4m3fn])
+@pytest.mark.parametrize("num_slots", [4096, 32], ids=["pool_gt_topk", "pool_lt_topk"])
+def test_owner_sparse_attention_partial_reads_every_valid_slot(kv_dtype, num_slots):
+    """Owner attention must attend every valid pool slot, at any slot index.
+
+    Slots at or past ``topk`` were once masked as out of range, so the output
+    silently dropped most of the selected K/V.
+    """
+    _require_cuda()
+    from sglang.srt.layers.attention.qsa.owner_sparse_attn import (
+        owner_sparse_attention_partial,
+    )
+
+    torch.manual_seed(0)
+    rows, topk = 4, 64
+    q = torch.randn(rows, NUM_Q_HEADS, HEAD_DIM, device="cuda", dtype=torch.bfloat16)
+    k = torch.randn(num_slots, NUM_KV_HEADS, HEAD_DIM, device="cuda").to(kv_dtype)
+    v = torch.randn(num_slots, NUM_KV_HEADS, HEAD_DIM, device="cuda").to(kv_dtype)
+    slots = torch.randint(0, num_slots, (rows, topk), device="cuda", dtype=torch.int32)
+    slots[0, :7] = -1
+    slots[1, 20:30] = -1
+    slots[2] = -1
+
+    out, lse = owner_sparse_attention_partial(q, k, v, slots, SOFTMAX_SCALE)
+
+    group = NUM_Q_HEADS // NUM_KV_HEADS
+    ref_out = torch.zeros_like(out)
+    ref_lse = torch.full_like(lse, -float("inf"))
+    for row in range(rows):
+        selected = slots[row][slots[row] >= 0].long()
+        if selected.numel() == 0:
+            continue
+        for kv_head in range(NUM_KV_HEADS):
+            heads = slice(kv_head * group, (kv_head + 1) * group)
+            scores = q[row, heads].float() @ k[selected, kv_head].float().T
+            scores *= SOFTMAX_SCALE
+            values = v[selected, kv_head].float()
+            ref_out[row, heads] = torch.softmax(scores, -1) @ values
+            ref_lse[row, heads] = torch.logsumexp(scores, -1)
+    torch.testing.assert_close(out, ref_out, atol=1e-2, rtol=1e-2)
+    torch.testing.assert_close(lse, ref_lse, atol=1e-2, rtol=1e-2)
+
+
 def _time_us(fn, *, warmup=10, iterations=50):
     for _ in range(warmup):
         fn()

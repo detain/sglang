@@ -1090,8 +1090,14 @@ def sparse_gqa_packed_decode_with_lse_triton(
     lse = torch.empty(q.shape[:2], dtype=torch.float32, device=q.device)
     cu_q = torch.arange(total_q + 1, dtype=torch.int32, device=q.device)
     cu_k = torch.zeros(total_q + 1, dtype=torch.int32, device=q.device)
+    # Indices are pool slots (bounds-checked by the owner caller), so the
+    # kernel's index bound must be the pool size; max() with topk keeps its
+    # causal clamp from cutting index columns when the pool is smaller.
     kv_lens = torch.full(
-        (total_q,), indices.shape[-1], dtype=torch.int32, device=q.device
+        (total_q,),
+        max(k.shape[0], indices.shape[-1]),
+        dtype=torch.int32,
+        device=q.device,
     )
     _sparse_gqa_chunk_prefill[(1, total_q * num_kv_heads)](
         q,
