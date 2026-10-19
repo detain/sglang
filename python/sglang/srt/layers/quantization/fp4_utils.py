@@ -98,6 +98,7 @@ class Fp4GemmRunnerBackend(Enum):
     FLASHINFER_CUTEDSL = "flashinfer_cutedsl"
     FLASHINFER_CUTLASS = "flashinfer_cutlass"
     FLASHINFER_TRTLLM = "flashinfer_trtllm"
+    FLASHINFER_B12X = "flashinfer_b12x"
     MARLIN = "marlin"
 
     def is_auto(self) -> bool:
@@ -114,6 +115,9 @@ class Fp4GemmRunnerBackend(Enum):
 
     def is_flashinfer_cutedsl(self) -> bool:
         return self == Fp4GemmRunnerBackend.FLASHINFER_CUTEDSL
+
+    def is_flashinfer_b12x(self) -> bool:
+        return self == Fp4GemmRunnerBackend.FLASHINFER_B12X
 
     def is_marlin(self) -> bool:
         return self == Fp4GemmRunnerBackend.MARLIN
@@ -134,6 +138,7 @@ class Fp4GemmRunnerBackend(Enum):
             'flashinfer_cutlass' -> 'cutlass'
             'flashinfer_cudnn' -> 'cudnn'
             'flashinfer_cutedsl' -> 'cute-dsl'
+            'flashinfer_b12x' -> 'b12x'
         """
         if self == Fp4GemmRunnerBackend.FLASHINFER_CUTEDSL:
             return "cute-dsl"
@@ -157,6 +162,12 @@ def initialize_fp4_gemm_config() -> None:
         elif is_cuda() and (10, 0) > get_device_capability() >= (8, 0):
             backend = "marlin"
         else:
+            # NOTE(fork): upstream PR #38170 maps 'auto' to flashinfer_b12x for
+            # compute capability 12.x here. We keep the b12x capability but not
+            # that default: on this stack 'auto' stays flashinfer_cutlass on
+            # SM120/SM121 and b12x is reachable only by asking for it with
+            # --fp4-gemm-backend=flashinfer_b12x (its mm_fp4 path is unproven on
+            # the installed flashinfer). Do not flip without a measured A/B.
             backend = "flashinfer_cutlass"
 
     FP4_GEMM_RUNNER_BACKEND = Fp4GemmRunnerBackend(backend)
