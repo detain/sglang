@@ -1,6 +1,6 @@
 # stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
 #
-# STACK: qwennext-stack-227-2026-10-19
+# STACK: qwennext-stack-229-2026-10-19
 #   main+pr36787+pr37275+pr38144+pr38209+pr36644+pr39862+pr39809+pr39893+local_hicache_qsa_fixes
 #   +pr39614+pr39978+pr40002+pr39065+pr40501+pr40175+pr40362+pr39391+pr37061+pr39333+pr33778
 #   +pr38977+pr39977+pr40480+pr39880+pr40235+pr39807+cpu-triage+boot-fix+plan_updates_perf
@@ -10,7 +10,7 @@
 #   +diffusion-batch-2026-10-08(pr27673+pr28690*+pr32513+pr32550*+pr33036*+pr33588*
 #    +pr36399+pr36767+pr37460*+pr38650+pr39212+pr40493+pr40588+pr40755+pr41340*
 #    +pr41944+pr42249+pr42928*+pr43028*+pr43064*)
-#   (entries 1-227; *=squash/ported, see commit messages. 10-10 added
+#   (entries 1-229; *=squash/ported, see commit messages. 10-10 added
 #   entries 157-161: parser batch A (Qwen3-Coder tool-call fixes + sampling
 #   upper bounds), on top of upstream merge #3 (see synced). 10-10b added
 #   entries 162-166: SM120 batch B (#42863 PCIe-IPC vocab gathers, #42566
@@ -53,6 +53,14 @@
 #   The prod venv ALSO moved flashinfer 0.7.0.post1 -> 0.7.1 (venv-only,
 #   no repo diff): PCIe-IPC entries 162-164 NOW ACTIVE next restart,
 #   #44115 re-skipped -- see CAVEATS.
+#     [10-19 CORRECTION + SUPERSESSION: two errors in that sentence, both
+#     fixed by entry 228. (i) "NOW ACTIVE" was NEVER true -- PCIe-IPC is an
+#     opt-in transport behind SGLANG_ENABLE_PCIE_IPC_ALLREDUCE (EnvBool
+#     (False), no CLI flag, unset in the prod run script); the wheel only
+#     satisfies the DEPENDENCY, prod stayed NCCL. (ii) the venv has since
+#     moved again, 0.7.1 -> 0.7.2, and 2b46270c5d put that pin in the repo,
+#     so "venv-only, no repo diff" no longer describes the flashinfer
+#     state.]
 #   10-15 apply-m added entries 205-206: NVFP4-under-EP load/ID pair --
 #   205 #31503 EP-slices ModelOpt NVFP4 input scales on the default MoE
 #   runner path (fixes the 512-vs-128 _compute_gemm1_alphas crash that
@@ -133,7 +141,7 @@
 #   make --enable-mixed-chunk safe and fix the QSA verify ring collision.
 #   * = picked with local modifications, see the entries)
 # branch : qwennext-stack
-# tip    : 380b87b054   (the stack.txt commit sits above it)
+# tip    : 2b46270c5d   (the stack.txt commit sits above it)
 # base   : upstream sgl-project/sglang main @ 7ad55e4386 ([HiCache] TMA-staged
 #          host<->device KV transfer kernel (sm_90+) (#40278), 2026-09-21)
 # synced : upstream main @ f209e67767 (#39643, 2026-09-28) MERGED IN as
@@ -153,7 +161,10 @@
 #          pools pinned off in GDN circular-commit stub). Key upstream
 #          landings: FI req pin 0.7.1 (130e11d50e -- prod venv bumped to
 #          0.7.1 2026-10-15, PCIe-IPC 162-164 ACTIVE from the next
-#          restart),
+#          restart),  [10-19 CORRECTION: "ACTIVE" was wrong -- PCIe-IPC
+#          is opt-in via SGLANG_ENABLE_PCIE_IPC_ALLREDUCE (default False,
+#          unset in prod) so the wheel only satisfies the dependency; and
+#          the pin/venv have both moved on to 0.7.2, see entry 228.]
 #          decode-graph max_bs clamp to max_running_requests (33f6b00f32/
 #          #43172), rope_theta preserve 44b44774c3 (entry-173 class),
 #          #43444/#43538 truncation-align boot guard over entry-177's
@@ -179,6 +190,49 @@
 #          at a time and cost ZERO conflicts. MERGE #5 REMAINS OWED (its
 #          conflict surface is 4-5x a per-PR batch); what the sweep
 #          looked at and did NOT pick is the review record in entry 227.
+#          MERGE #5 STILL OWED (refreshed at the 228/229 docs commit):
+#          origin/main is now 716c9151f2 = +325 commits since
+#          12dc623102 (the 319 above was the count at 417606527d earlier
+#          the same day; the extra 6 are what the FI bump took --
+#          44be30d216/#44591 -- plus churn). ONE explicit non-adoption
+#          from that window is load-bearing, record it before any future
+#          merge auto-resolves it: #44590 (4cca7fcd3e, sgl-kernel 0.4.9
+#          -> 0.4.10 + a _load_inline_fragment_probes_available() ABI
+#          probe + deep_gemm/marlin/setup.py hunks) was NOT taken with
+#          its sibling FI bump, so our sglang-kernel floor STAYS 0.4.9.
+#          Pairing constraint: whoever installs a 0.4.10 wheel must
+#          revisit that floor AND take the probe in the same step, and
+#          conversely rolling the flashinfer wheel back requires
+#          reverting 2b46270c5d first (see entry 228).
+# updated: 2026-10-19 (entries 228-229): FLASHINFER 0.7.2 -- the pin, the
+#          wheel and the correction. 2b46270c5d takes upstream
+#          44be30d216/#44591 CLEAN (4 pin strings: both Dockerfiles,
+#          python/pyproject.toml:42, and the assert_pkg_version FLOOR in
+#          srt/entrypoints/engine.py:1925 0.7.1 -> 0.7.2); the prod venv
+#          /root/sglang/.venv was moved 0.7.1 -> 0.7.2 on 10-19 ~12:57
+#          with a one-line pip-freeze diff. 229 = b0fce3bf47, the test
+#          follow-up for entry-225's b12x arm (wheel-INDEPENDENT
+#          pre-existing 1F, now 9P on both wheels).
+#          FIRST BOOT ON 0.7.2 WILL BE SLOWER THAN THE 147 s BASELINE:
+#          flashinfer's JIT cache is version-tagged
+#          ($FLASHINFER_CACHE_DIR=<SGLANG_CACHE_DIR>/.cache/flashinfer/
+#          <version>/120f/cached_ops) -- 0.7.1/120f holds 102 MiB/6 .so
+#          (sampling + the XQA spec-decode kernel included) while
+#          0.7.2/120f holds only a 0-byte flashinfer_jit.log, so the
+#          first 0.7.2 boot RE-JITS sampling and XQA (minutes); the
+#          autotune cache is version-keyed too (0.6.18 and 0.7.1 dirs
+#          exist, 0.7.2 has none) so the autotune sweep starts COLD. Do
+#          NOT repoint FLASHINFER_CACHE_DIR away from /root/.cache/sglang
+#          -- the 0.7.1 tree is what keeps rollback warm.
+#          AND ONE HEADLINE CORRECTION: entries 162-164 (PCIe-IPC vocab
+#          gathers) are NOT active and never were. The wheel satisfies a
+#          DEPENDENCY; the transport is gated by SGLANG_ENABLE_PCIE_IPC_
+#          ALLREDUCE (EnvBool(False), no CLI flag, zero hits in the prod
+#          run script and absent from the live process env). Prod TP4
+#          vocab gathers and the bf16 decode all-reduce REMAIN ON NCCL.
+#          Testing the path is now the top-priority pending A/B, armed in
+#          the ab harness as arms pcie_ipc_on / pcie_ipc_on_ll /
+#          pcie_ipc_off_recheck. Full detail in entry 228 + CAVEATS.
 # updated: 2026-10-19 (entries 215-227): week's upstream sync-by-port --
 #          29 merged-upstream cherry-picks from origin/main
 #          12dc623102..417606527d (319 commits) + 4 open-PR ports
@@ -217,6 +271,10 @@
 #          is the A/B arm vs --enable-linear-replayssm-spec (exclusive
 #          by validation). FI 0.7.1 venv bump (venv-only): entries
 #          162-164 PCIe-IPC vocab gathers go LIVE this restart.
+#          [10-19 CORRECTION: they did NOT go live and never do without
+#          SGLANG_ENABLE_PCIE_IPC_ALLREDUCE=1 (EnvBool(False), no CLI
+#          flag, unset in prod) -- dependency satisfied, transport opt-in.
+#          Wheel is 0.7.2 now; see entry 228.]
 #          Batteries CVD=9 on the final tree all rc=0 and EXACT vs the
 #          per-agent claims: validation 11P/4sub, spec dir 333P/9S/
 #          180sub, pool_configurator 59P/4S/23sub, kernels namespace
@@ -1694,7 +1752,23 @@ STACK, IN BUILD ORDER (bottom first)
       # Workspace -> _can_build_pcie_ipc_gather caught it, ranks agreed
       # on NCCL (b603cfa1a9 makes that collective-safe). [10-15: prod
       # venv bumped to flashinfer 0.7.1, workspace verified present --
-      # PCIe-IPC path ACTIVATES at the next restart.] Tests:
+      # PCIe-IPC path ACTIVATES at the next restart.] [10-19 CORRECTION:
+      # that bracket was WRONG -- the wheel only satisfies a DEPENDENCY,
+      # the transport is opt-in and has stayed OFF. Real gate chain:
+      # SGLANG_ENABLE_PCIE_IPC_ALLREDUCE = EnvBool(False) (environ.py:1450)
+      # -> eligible_group() (device_communicators/pcie_ipc_ar.py:98: env
+      # ON + world_size>1 + group_name=="tp" + not deterministic) ->
+      # parallel_state.py:503/508 builds pcie_ipc_comm only then ->
+      # vocab_gather.py:268-273 returns None unless pcie_ipc_eligible and
+      # world_size==4 (plus _on_one_host + rank agreement). There is NO
+      # CLI flag; the env has zero hits in the prod run script
+      # /root/run_sglang_qwenflashnext9.sh and is absent from the live
+      # prod process env. So 162-164 have
+      # NEVER been on: prod TP4 vocab gathers and the bf16 decode all-
+      # reduce remain NCCL. Testing the path is the top-priority pending
+      # A/B -- harness arms pcie_ipc_on / pcie_ipc_on_ll /
+      # pcie_ipc_off_recheck, with transport-selection needles. See 228.]
+      # Tests:
       # test_pcie_ipc_gather_selection 30P+15sub
       # (CPU CI); test_pcie_ipc_vocab_gather = 4-GPU CI, deferred.
         163. a77d1dfbf5  PR #42566  block-FP8 MoE TP-shard scale refine + SM120 UE8M0 requant (3 commits -> also 18d738d8cb, 7ddca23aac)
@@ -1980,7 +2054,9 @@ STACK, IN BUILD ORDER (bottom first)
       # invariant; edge gap: QSA alignment LCM>chunk not covered by the
       # boot check). FI requirements pin 0.7.1 (130e11d50e) -- [10-15:
       # venv bump DONE, prod venv now 0.7.1; PCIe-IPC entries 162-164
-      # ACTIVE next restart -- see CAVEATS]. sglang-renderer crate
+      # ACTIVE next restart -- see CAVEATS] [10-19: "ACTIVE" was WRONG --
+      # opt-in env gate, prod stayed NCCL; and the venv+pin are 0.7.2 now
+      # (entry 228)]. sglang-renderer crate
       # REMOVED (12dc623102/#43451); upstream independently landed the
       # #42779-equivalent vocab bound in sglang-server message/
       # sampling.rs -- nothing to port. Follow-ups: d6b9eb1c73 qsa
@@ -2152,7 +2228,10 @@ STACK, IN BUILD ORDER (bottom first)
       # flashinfer_autotune gate fixed so compressed-tensors-format
       # NVFP4 checkpoints get the FP4 GEMM autotune (matters only if a
       # CT-quantized model is served). autotune_gate test 8P. from
-      # apply-e.
+      # apply-e. [10-19: that file is 9P now -- 8P held until entry 225's
+      # b12x arm made one node read a truthy auto-Mock (7P/1F, a
+      # wheel-independent pre-existing red), and b0fce3bf47 (entry 229)
+      # fixed that and added test_modelopt_fp8_per_tensor_gating.]
 
         192. fa55f59119  PR #43247-update  capture-guarded dequant-workspace decode
       # Hand-port of two hunks (a third skipped): (a) flashinfer
@@ -3351,7 +3430,15 @@ STACK, IN BUILD ORDER (bottom first)
       #     #39210 (MegaMoE runner); #41745/#44500 (online-NVFP4 and
       #     RunAI-streamer load paths we do not use); #44591 (see
       #     CAVEATS -- the FI 0.7.2 pin plus the engine.py assert would
-      #     break boot on our 0.7.1 venv); #44430 (FlashInfer IS
+      #     break boot on our 0.7.1 venv) [10-19 SUPERSEDED: TAKEN later
+      #     the same day as 2b46270c5d, entry 228. That reasoning was
+      #     direction-correct -- never split the pin from the wheel -- but
+      #     mechanism-wrong: assert_pkg_version is a FLOOR (common.py:2380,
+      #     param literally named min_version), so new wheel + old pin
+      #     BOOTS (that was the 12:57->commit window); what hard-fails is
+      #     the pin going UP past an old wheel, and the quiet hazard is
+      #     `uv pip install -e 'python[dev]'` re-resolving the == pin back
+      #     DOWN to 0.7.1]; #44430 (FlashInfer IS
       #     installed here; our import debt was the device-query class
       #     entry 187 fixed); #44113 (subclass hooks only); #40941/
       #     #44112/#44537/#43520/#44288/#44785/#45095/#40066/#44220/
@@ -3421,6 +3508,304 @@ STACK, IN BUILD ORDER (bottom first)
       #     session. 319 commits is a 4-5x conflict surface against this
       #     stack; per-PR picks cost zero conflicts and keep every change
       #     reviewable one commit at a time. MERGE #5 REMAINS OWED.
+      #     [10-19 later: the count is 325 at origin/main 716c9151f2, and
+      #     #44591 from that window HAS since been taken -- entry 228.]
+
+        228. 2b46270c5d  FlashInfer 0.7.2 -- upstream 44be30d216/#44591 + the PROD VENV BUMP + the PCIe-IPC "ACTIVE" CORRECTION + first-boot JIT/autotune cost
+      # TWO HALVES OF ONE DEPENDENCY, and one long-standing error in this
+      # file corrected. This entry is the reason the FI pin moved; the
+      # "NOT TAKEN (a) FLASHINFER IS NOT BUMPED" CAVEATS bullet carries
+      # the superseded decision as history.
+      # (A) REPO SIDE: git cherry-pick -x 44be30d216 (#44591, "[Chore]
+      # deps: Bump FlashInfer to 0.7.2") landed CLEAN -- 4 files, +4/-4,
+      # range-diff vs upstream is the cherry-pick trailer only:
+      #   docker/Dockerfile:21 + docker/Dockerfile.cu134:29  ARG
+      #     FLASHINFER_VERSION 0.7.1 -> 0.7.2
+      #   python/pyproject.toml:42  "flashinfer_python[cu13]==0.7.2"
+      #     (the "# keep it aligned with jit-cache version in Dockerfile"
+      #     comment kept) -- this is the ONLY flashinfer pin in the file.
+      #     A claimed second site at :135 was investigated and is FALSE
+      #     (blank line). pyproject_other.toml:154 is the unrelated
+      #     Mthreads "0.2.6+musa"; python/sglang.egg-info/requires.txt:15
+      #     still says 0.7.1 but is git-ignored (.gitignore:24
+      #     *.egg-info/) and regenerates.
+      #   python/sglang/srt/entrypoints/engine.py:1925  the boot-time
+      #     assert_pkg_version("flashinfer_python", ...) floor 0.7.1 ->
+      #     0.7.2, inside _set_envs_and_config.
+      # assert_pkg_version IS A FLOOR, NOT AN EQUALITY CHECK
+      # (srt/utils/common.py:2380 -- the parameter is literally named
+      # min_version and it raises only when installed < min). Consequence
+      # for the record: during the ~12:57->commit window the venv already
+      # ran 0.7.2 while the floor said 0.7.1, and boot did NOT break. The
+      # combination that hard-fails is the opposite one -- pin going UP
+      # past an old wheel.
+      # SO WHY DID THE PIN HAVE TO LAND? The quiet hazard, not the assert:
+      # the operator's rebuild command `uv pip install -e 'python[dev]'`
+      # re-resolves the == pin and would have SILENTLY DOWNGRADED
+      # flashinfer back to 0.7.1 at the next rebuild -- no error, just a
+      # different wheel under the running code. Related trap worth
+      # knowing: that command, run from /root/sglang/sglang, resolves UP
+      # to the PROD venv /root/sglang/.venv, because there is no .venv in
+      # the repo root and uv walks the tree looking for one.
+      # NO CI FOLLOW-UP NEEDED -- the CI install script greps the required
+      # version straight out of python/pyproject.toml
+      # (uninstall_stale_flashinfer() at
+      # scripts/ci/cuda/ci_install_dependency.sh:479), so the CI
+      # jit-cache download tracks the pin automatically.
+      # (B) VENV SIDE (operator action, 10-19 ~12:57): /root/sglang/.venv
+      # flashinfer-python 0.7.1 -> 0.7.2 via `uv pip install --python
+      # /root/sglang/.venv/bin/python "flashinfer-python[cu13]==0.7.2"`.
+      # 62.2 MiB wheel from PyPI; uv dry-run resolved 56 packages and
+      # performed uninstall 1 / install 1. pip-freeze diff = EXACTLY ONE
+      # LINE, 328 -> 328 packages. sglang-kernel 0.4.9, torch
+      # 2.14.1+cu130, triton 3.8.0, apache-tvm-ffi 0.1.11 all UNCHANGED.
+      # There is NO flashinfer-jit-cache and NO flashinfer-cubin package
+      # in this venv at all, so nothing needed realigning (the Docker
+      # ARGs above matter for image builds, not here). Artifacts in
+      # /tmp/opencode/fi-bump-072/: pipfreeze-before.txt,
+      # pipfreeze-after.txt, CHANGES.txt, fi-imports.json, ROLLBACK.sh.
+      # The install REQUIRED network; 0.7.1 IS in the uv cache
+      # (/root/.cache/uv/wheels-v6/pypi/flashinfer-python/
+      # 0.7.1-py3-none-any -- its contents were opened and confirmed to
+      # carry flashinfer/comm/pcie_ipc_collectives/all_gather.py, so the
+      # 0.7.1 bump genuinely satisfied the dependency), which makes the
+      # rollback offline-capable.
+      # API SURFACE ON 0.7.2 (import audit: 53 modules / 198 symbols,
+      # fi-imports.json -- the brief's "197 symbols across 48 modules"
+      # undercounted): ZERO module import failures, ONE missing symbol,
+      # and that one is BENIGN --
+      # flashinfer.decode._grouped_size_compiled_for_decode_kernels is a
+      # deliberate try/except probe for flashinfer <=0.1.6 at
+      # flashinfer_backend.py:2804 and is EQUALLY ABSENT on 0.6.18.
+      # Symbols checked on the live 0.7.2 wheel, grouped by whether the
+      # bump actually changed anything:
+      #   UNLOCKED BY THE NEW API (NONE of these exist on 0.6.18, which
+      #   is the blocker this family of entries had):
+      #   flashinfer.comm.PcieIpcAllGatherWorkspace,
+      #     PcieIpcAllGatherLaunchConfig, PcieIpcAllGatherVariant,
+      #     PcieIpcAllReduceWorkspace, PcieIpcVariant, PcieIpcLaunchConfig,
+      #     PcieIpcReduceScatter{Workspace,LaunchConfig,Variant},
+      #     pcie_ipc_tuning  <- precisely what entries 162-164 need; note
+      #     0.7.1 ALREADY carried them (the cached wheel was opened and
+      #     verified), so the dependency was satisfied since 10-15 and
+      #     0.7.2 only KEEPS it satisfied. bare comm.Variant is not one.
+      #   flashinfer.autotune_v2(mode='tune', persistent_cache=False,
+      #     cache_root, measurement_policy, tuning_buckets, round_up,
+      #     skip_ops) -- TOP-LEVEL, not under flashinfer.autotuner; absent
+      #     entirely on 0.6.18.
+      #   PRESENT ON 0.7.2, no old-wheel comparison claimed (checked
+      #   because our code or a deferral depends on them):
+      #     kv_cache_sf on BOTH trtllm entry points (
+      #     prefill.trtllm_batch_context_with_kv_cache and
+      #     decode.trtllm_batch_decode_with_kv_cache, decode.py:3691,
+      #     plus single_prefill_with_kv_cache{_return_lse}),
+      #     top_k_ragged_transform (entry-166 batch-invariant path), the
+      #     gdn_* family, BatchPrefillWithPagedKVCacheWrapper.
+      #   mm_fp4 backend Literal is now ['cudnn','trtllm','cutlass',
+      #     'cute-dsl','cutedsl_low_latency','b12x','cake','auto']: b12x
+      #     (entry 225's opt-in) is STILL REACHABLE, and `cake` is NEW --
+      #     flashinfer/jit/cake_blackwell_softmax.py, bound at
+      #     kernels/cake_kernels/sampling.py:19, unresolvable on 0.6.18.
+      #     Informational only: this repo has ZERO cake references (the
+      #     only "cake" here is Mooncake).
+      # GDN / ReplaySSM LEVER: gated_delta_rule_mtp (
+      # flashinfer.gdn_decode, gdn_decode.py:1112, 21 params) gained ONLY
+      # trailing DEFAULTED kwargs -- cache_replayssm, replayssm_rawv,
+      # replayssm_rawk, replayssm_g, replayssm_beta -- which we never
+      # pass (the in-tree replayssm_rawv hits are our OWN memory_pool.py
+      # fields at :621/:856/:929), so the port is a no-op for us today.
+      # WORTH RECORDING: 0.7.2 ships a NATIVE ReplaySSM path in those
+      # kernels; our ReplaySSM is Triton (entry 168/#42701 + the
+      # replayssm-spec family) and nothing in-tree calls theirs. A future
+      # convergence candidate -- NOT taken, NOT measured here.
+      # #44115 IS PERMANENTLY NOT-APPLICABLE, not merely declined (this
+      # upgrades entry 227's wording): BatchPrefillWithPagedKVCacheWrapper
+      # .plan STILL has no uniform_q_len parameter on 0.7.2 (36 params),
+      # and the low-level _cached_module.plan fa2 positional list is
+      # BYTE-IDENTICAL between the two wheels -- 16 common params then the
+      # tail [fixed_split_size, -1, disable_split_kv,
+      # num_colocated_ctas=0, uniform_q_len=False] -- which is exactly
+      # what our hand-rolled 20-element fast_prefill_plan
+      # (flashinfer_backend.py:181-292; `0,  # uniform_q_len` at :290)
+      # passes. Our sync-free prefill-plan path therefore stays valid.
+      # RE-CHECK ONLY AT flashinfer >= 0.8. One honest caveat in the same
+      # corner: 0.7.2's wrapper can force disable_split_kv=True for NVFP4
+      # KV where our positional passes False -- but that guard PREDATES
+      # the bump (present identically in 0.6.18) and is inert for prod
+      # (fp8_e4m3 KV + prefill graphs disabled). It joins the NVFP4-KV
+      # GPU-window debt list; it is not new risk created by 228.
+      # #43471 (native NVFP4 prefill, deferred in entry 227) WAS NEVER
+      # VERSION-BLOCKED either: kv_cache_sf is present, so that deferral
+      # is gated by OUR --kv-cache-dtype choice, not by flashinfer.
+      # FIRST-BOOT COST ON 0.7.2 -- READ BEFORE THE RESTART. flashinfer's
+      # JIT cache is VERSION-TAGGED: FLASHINFER_WORKSPACE_BASE comes from
+      # the SGLANG_CACHE_DIR third-party redirect (environ.py:2124, base
+      # default ~/.cache/sglang per environ.py:1302) and flashinfer
+      # appends .cache/flashinfer/<version>/120f/cached_ops itself.
+      # Measured on this box: 0.7.1/120f = 102 MiB across 6 .so
+      # (fused_moe_120 32.7 MiB, sampling 2.2, rope 1.4, two XQA kernels
+      # incl. xqa_input_bf16_kv_cache_e4m3_..._page_size_64_head_dim_256_
+      # head_group_ratio_6_..._spec_q_seq_len_1.so 0.2, trtllm_utils 0.2)
+      # while 0.7.2/120f holds ONLY a 0-byte flashinfer_jit.log -- no
+      # cached_ops dir, 0 .so. => the FIRST 0.7.2 BOOT RE-JITS sampling
+      # and XQA (minutes). The autotune cache is keyed the same way:
+      # flashinfer_autotune_cache_path() (flashinfer_autotune.py:165) =
+      # SGLANG_CACHE_DIR/flashinfer/autotune/<version>/sm120/<key>; the
+      # 0.6.18 (76K, 2 keys) and 0.7.1 (140K, 2 tactic sets dated 10-15
+      # 16:40) dirs exist and 0.7.2 has NONE, so the autotune sweep
+      # starts COLD (correcting the brief's "no autotune cache for any
+      # version" -- older versions DO have one, it just does not carry
+      # over). BASELINE TO BEAT: boot 03:51:16 -> "fired up" 03:53:43 =
+      # 147 s; expect a one-off overshoot and compare the SECOND boot.
+      # Keep FLASHINFER_CACHE_DIR/SGLANG_CACHE_DIR pointed at
+      # /root/.cache/sglang -- do NOT clean or repoint it, the 0.7.1 tree
+      # is the warm-rollback asset. Direct proof the running server is
+      # unaffected by the wheel swap (and that 0.7.2 reuses nothing):
+      # prod pid 3907514 maps no flashinfer .so at all while its TP-rank
+      # children 3908026/3908234/3908487 each map 10 flashinfer paths
+      # including 0.7.1/120f/cached_ops/sampling/sampling.so and the
+      # ratio_6 XQA kernel.
+      # CORRECTION -- entries 162-164 ARE NOT ACTIVE AND NEVER WERE. This
+      # file asserted, at eight separate places, that the 10-15 0.7.1 venv
+      # bump made the PCIe-IPC vocab gathers (#42863) ACTIVE. Wrong: the
+      # wheel satisfies a DEPENDENCY, the transport is OPT-IN. Real gate
+      # chain, end to end (paths as measured, the brief's were partly
+      # wrong):
+      #   srt/environ.py:1450  SGLANG_ENABLE_PCIE_IPC_ALLREDUCE =
+      #     EnvBool(False)   (+ :1451 SGLANG_PCIE_IPC_MAX_NUMEL=0)
+      #   -> device_communicators/pcie_ipc_ar.py:98-104 eligible_group():
+      #      env ON + world_size>1 + group_name=="tp" + not deterministic
+      #   -> distributed/parallel_state.py:503 sets pcie_ipc_eligible,
+      #      :508 builds the PcieIpcCommunicator only then (:494 defaults
+      #      None, :982-987 _get_out_of_place_all_reduce_method returns
+      #      "pcie_ipc", :1069-1070 dispatches, :2110-2112 destroys)
+      #   -> device_communicators/vocab_gather.py:268-273 returns None
+      #      unless group.pcie_ipc_eligible and world_size==4 and
+      #      max_rows>0, then needs _on_one_host() (:319) plus all-rank
+      #      agreement via _count_ranks.
+      # There is NO CLI flag for it. SGLANG_ENABLE_PCIE_IPC_ALLREDUCE has
+      # ZERO hits in /root/run_sglang_qwenflashnext9.sh and is absent from
+      # /proc/3907514/environ (which also carries no FLASHINFER*/cache
+      # overrides); docs confirm the default at
+      # docs/docs/references/environment_variables.mdx:1739. VERDICT:
+      # dependency satisfied by 0.7.2 (it was equally satisfied by 0.7.1),
+      # transport still OFF, so prod TP4 vocab gathers and the bf16 decode
+      # all-reduce REMAIN ON NCCL. Annotated in place at all eight stale
+      # claims: the header STACK block's 10-15 sentence, the 10-15
+      # `updated:` block, the FOURTH-merge synced line, the entry-162
+      # bracket, the merge-4 entry's "FI requirements pin 0.7.1" line, the
+      # merge-4 CPU-battery bullet, the entries-200-204 BEHAVIOR WATCH
+      # bullet and the LIVE VENV bullet.
+      # PRIORITY NOW: making that call is the top pending A/B (perf-audit
+      # lever 10 -- 96 all-reduces + 4 vocab gathers per step at bs1).
+      # Armed in the ab harness as arms pcie_ipc_on, pcie_ipc_on_ll and
+      # pcie_ipc_off_recheck, with comm-latency profiles plus the
+      # transport-selection needle (the startup line naming the chosen
+      # out-of-place all-reduce method must read pcie_ipc, not nccl).
+      # sglang-kernel FLOOR DELIBERATELY LEFT AT 0.4.9: upstream's
+      # sibling #44590 (4cca7fcd3e -- sgl-kernel 0.4.9 -> 0.4.10 plus a
+      # _load_inline_fragment_probes_available() ABI probe and
+      # deep_gemm/marlin/setup.py hunks) was NOT adopted and is NOT in
+      # this tree (it is an ancestor of origin/main, so a future merge
+      # must not auto-resolve it silently). Pairing constraint in BOTH
+      # directions: installing a 0.4.10 wheel means revisiting that floor
+      # and taking the probe in the same step; and rolling the flashinfer
+      # WHEEL back requires reverting 2b46270c5d FIRST, else the 0.7.2
+      # floor assert stops boot.
+      # ROLLBACK ORDER: (1) git revert 2b46270c5d, (2) run the saved
+      # script /tmp/opencode/fi-bump-072/ROLLBACK.sh, i.e.
+      # uv pip install --python /root/sglang/.venv/bin/python
+      # "flashinfer-python[cu13]==0.7.1" -- offline from the uv cache.
+      # Single-commit revert; nothing else in the stack depends on the
+      # pin, and no key/layout change is
+      # involved, so /root/hicache_store and the MoE config mirrors are
+      # untouched either way.
+      # BATTERIES ON THE NEW WHEEL -- every number IDENTICAL on 0.7.2
+      # (/root/sglang/.venv) and 0.6.18 (.venv2), CVD=9, per-file: so
+      # ZERO deltas are attributable to the flashinfer version.
+      # kernels_namespace 76P -- it REMAINS 76P; a "76P -> 78P in the FI
+      # venv" claim was investigated and is FALSE (76 nodes collect in
+      # both interpreters and `grep -n 78P stack.txt` finds nothing, so
+      # the 76P pins at this file's baseline/entry lines all stand).
+      # autotune_gate 9P (see 229), test_jit_cache 42P (NEW pinned
+      # baseline; the file cited as
+      # test/registered/unit/kernels/test_flashinfer_jit_cache_smoke.py
+      # DOES NOT EXIST -- the only CI-side check is the shell script
+      # scripts/ci/cuda/ci_check_flashinfer_jit_cache.sh, which
+      # legitimately rc=1s here because flashinfer-jit-cache is not
+      # installed), autotune_sync 9P/1S/5sub, pcie_ipc_gather_selection
+      # 30P/15sub, pcie_ar 34P/15sub, kv_loc_plan 14P,
+      # test_flashinfer_nvfp4_speculative 6P, fp4_gemm_backend_sm120 12P,
+      # gdn_flashinfer_alignment 10P/9sub,
+      # test_gdn_prefill_backend_policy 19P/38sub (the cited
+      # test_qwen_gdn_backend_contract.py 54P DOES NOT EXIST -- this is
+      # the real neighbour), spec dir 333P/9S/180sub, diffusion test_sites
+      # 12P/13S, test_norm 254 collected, test_modulate 1038 collected.
+      # STILL BROKEN, DELIBERATELY NOT FIXED IN FI SCOPE: the gdn
+      # unittests dir keeps its wheel-INDEPENDENT collection error
+      # (test_gdn_cutedsl_ring_verify.py:20 ->
+      # kernels/ops/attention/cutedsl_gdn_mtp_ring.py:2770 module-level
+      # get_device_properties, an SM100 file). The entry-187 try/except
+      # pattern fixes it; recorded as OWED test maintenance.
+      # GPU-WINDOW DEBTS THIS ENTRY CREATES: the cold JIT/autotune boot
+      # cost measurement vs the 147 s baseline; the whole entry 210-214
+      # needle set re-read on 0.7.2 (paged KV source x4, "Triton prewarm:
+      # loaded N cubins", ~zero late device-loads); the first REAL run of
+      # the PCIe-IPC transport (never exercised on this box at any FI
+      # version); b12x runtime reachability on 0.7.2 (entry 225's opt-in,
+      # still CUDA-13-gated); NVFP4-KV disable_split_kv caveat above.
+      # LIVE ONLY AFTER RESTART (user-driven).
+      # PUSH STATE, recorded because this file's "not pushed" notes went
+      # stale: the `detain` fork DOES carry the branch up to 3c446853f8
+      # (an earlier agent pushed the tip despite the notes -- verified
+      # `git status -sb` = ahead 2, detain tip = 3c446853f8, rev-list
+      # left-right = 0 2, before this docs commit). b0fce3bf47,
+      # 2b46270c5d and this stack.txt commit are UNPUSHED by instruction.
+
+        229. b0fce3bf47  test maintenance: pre-existing flashinfer autotune-gate mock for the b12x arm (#38170 follow-up) -- autotune_gate 7P/1F -> 9P, WHEEL-INDEPENDENT
+      # NOT a flashinfer-0.7.2 regression. The file was ALREADY `1 failed,
+      # 7 passed` at 3c446853f8 on BOTH wheels (prod 0.7.2 and .venv2
+      # 0.6.18), same node
+      # test_compressed_tensors_nvfp4_needs_flashinfer_fp4_backend. Root
+      # cause: entry 225 added the is_flashinfer_b12x() arm to the gate at
+      # srt/model_executor/runner/flashinfer_autotune.py:136-138
+      # (is_flashinfer_cutlass() or is_flashinfer_cutedsl() or
+      # is_flashinfer_b12x()), but the test's fp4_backend stub is a truthy
+      # auto-Mock, so an UNMOCKED b12x() answered True and the gate
+      # reported "needs autotune" where the test asserted it did not
+      # (AssertionError: True is not false at test file line 96). Red/
+      # green evidence recorded in the commit message; the brief's line
+      # refs were off (fp4_utils.py:212 cannot exist -- is_flashinfer_b12x
+      # is at fp4_utils.py:119 in a 181-line file -- and the gate arm is
+      # at flashinfer_autotune.py:136-138, not :99-102).
+      # FIX = explicit stubs instead of inherited mocks:
+      # _should_run(...) gains cutedsl: bool = False and
+      # per_tensor_fp8: bool = False, is_flashinfer_cutedsl is driven by
+      # the kwarg, is_flashinfer_b12x.return_value = False is pinned, and
+      # flashinfer_per_tensor_fp8_supported is patched to per_tensor_fp8
+      # (that symbol lives in sglang.srt.layers.quantization.fp8_utils).
+      # WHY THAT LAST PATCH IS LEGITIMATE, NOT A WORKAROUND: the
+      # per-tensor-FP8 arm is real production code the gate consults
+      # (flashinfer_autotune.py:142 import, :149
+      # fp8_gemm_needs_autotune = flashinfer_per_tensor_fp8_supported(),
+      # defined at fp8_utils.py:438). The gate's decision genuinely
+      # depends on a host-capability probe, so a unit test OF THE GATE
+      # must pin that input rather than let it read the machine it happens
+      # to run on -- exactly the same reason b12x is pinned. Without it
+      # the test result would differ between this box and CI.
+      # Adds test_modelopt_fp8_per_tensor_gating (assertTrue with
+      # per_tensor_fp8=True, assertFalse with False): the file is now 9P
+      # on both wheels. Baseline arithmetic for the record: pinned at 8P
+      # when entry 191 landed this gate, 7P/1F from the moment entry 225's
+      # b12x arm met the auto-Mock, 9P now (+1 fixed, +1 new). Refreshed
+      # in CAVEATS and annotated on entry 191 where the old number lived.
+      # HYGIENE: an intermediate WIP revision carried DBG print()/
+      # traceback scaffolding; verified STRIPPED before the commit. Diff
+      # is 1 file, +29/-2 (the handoff's "+31/-2" was 2 lines off).
+      # ORDERING NOTE: b0fce3bf47 sits BELOW 2b46270c5d and is kept as its
+      # own commit on purpose -- it is #38170 follow-up debt, not part of
+      # a dependency bump, so a revert of the FI bump does not take a test
+      # fix with it.
 
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
@@ -3699,6 +4084,39 @@ CAVEATS
       disagg 79P/70sub, radix_cache_unit 44P/1S/55sub, hicache
       trailing_endpoint 17P, fast_file 54P/13sub, cargo
       sglang-radix-tree 932P/0F.
+    FI 0.7.2 ADDENDUM, later the same day (entries 228-229). EVERY number
+      below was measured TWICE -- prod .venv on flashinfer 0.7.2 and
+      .venv2 on 0.6.18 -- and came out IDENTICAL in both, so nothing moves
+      because of the wheel: test_flashinfer_autotune_gate.py 7P/1F -> 9P.
+      Baseline chain for the record: this file was pinned at 8P when the
+      gate landed (entry 191), entry 225's b12x arm broke one node against
+      a stale auto-Mock (7P/1F), and b0fce3bf47 fixed it (+1) and added
+      test_modelopt_fp8_per_tensor_gating (+1). The failure was
+      wheel-INDEPENDENT -- `1 failed, 7 passed` at 3c446853f8 on BOTH
+      wheels. NEW pinned
+      baseline: test/registered/unit/kernels/test_jit_cache.py 42P (both
+      wheels; the file test_flashinfer_jit_cache_smoke.py does NOT exist
+      -- the only CI-side check is the shell script
+      scripts/ci/cuda/ci_check_flashinfer_jit_cache.sh, which
+      legitimately returns rc=1 here because flashinfer-jit-cache is not
+      installed). IMPORTANT: test_kernels_namespace.py REMAINS 76P -- a
+      "76P -> 78P in the FI venv" claim was investigated and is FALSE
+      (76 nodes collect in both interpreters, and grep finds no 78P
+      anywhere in this file).
+    Re-measured UNCHANGED across both wheels: autotune_sync 9P/1S/5sub,
+      gdn_flashinfer_alignment 10P/9sub,
+      test_gdn_prefill_backend_policy 19P/38sub (there is no
+      test_qwen_gdn_backend_contract.py -- that 54P datum was a phantom;
+      the real neighbour is this policy file), kv_loc_plan 14P,
+      pcie_ipc_gather_selection 30P/15sub, pcie_ar 34P/15sub,
+      test_flashinfer_nvfp4_speculative 6P, fp4_gemm_backend_sm120 12P,
+      spec dir 333P/9S/180sub, diffusion test_sites 12P/13S, test_norm
+      254 collected, test_modulate 1038 collected. The gdn unittests dir
+      keeps its documented wheel-INDEPENDENT collection error
+      (test_gdn_cutedsl_ring_verify.py:20 ->
+      kernels/ops/attention/cutedsl_gdn_mtp_ring.py:2770 module-level
+      get_device_properties) -- deliberately NOT fixed in FI scope; the
+      entry-187 try/except pattern is the known fix and stays OWED.
   * NOT TAKEN FROM UPSTREAM 2026-10-19 (deliberate, both are boots-
     breakers or prod flips): (a) FLASHINFER IS NOT BUMPED -- upstream
     44be30d216/#44591 moves 0.7.1 -> 0.7.2 (4 pin strings AND an
@@ -3706,10 +4124,57 @@ CAVEATS
     that code while the prod venv stays on 0.7.1 HARD-FAILS boot, and
     the venv bump is the operator's call, so our pin + engine assert
     stay at 0.7.1 (requirements/pyproject + engine.py:1925 verified).
+      [10-19 LATER THE SAME DAY: REVERSED by the operator's decision --
+      2b46270c5d takes 44be30d216/#44591 and the prod venv moved to
+      0.7.2. Full record in entry 228. Keep the reasoning as history but
+      note that it was direction-correct and mechanism-wrong: direction-
+      correct because the pin and the wheel must never be left split,
+      mechanism-wrong because assert_pkg_version is a FLOOR, not an
+      equality check (utils/common.py:2380, the parameter is literally
+      named min_version) -- so new wheel + old pin BOOTS, and the box in
+      fact ran that way for hours, while the pin going UP past an old
+      wheel is what hard-fails boot. The reason the pin nevertheless had
+      to land is quieter: the operator's rebuild command
+      `uv pip install -e 'python[dev]'` re-resolves the `==0.7.1` pin and
+      would have SILENTLY DOWNGRADED flashinfer back to 0.7.1 (run from
+      /root/sglang/sglang, uv walks UP to the prod /root/sglang/.venv --
+      there is no .venv in the repo root). Deferring the code pin until
+      the wheel actually moved was sound; the stated failure mode was
+      not the real one.]
     (b) 0ab86549d0, upstream's "batch HiCache write-through backups BY
     DEFAULT", was NOT taken -- our SGLANG_ENABLE_HICACHE_BATCHED_BACKUP
     stays EnvBool(False) (entry 199's opt-in A/B lever for the 2400:1
     L3 write-amp; still not measured on prod).
+  * BEHAVIOR WATCH -- TOP PRIORITY, FIRST BOOT ON FLASHINFER 0.7.2
+    (entry 228). (1) EXPECT A SLOWER BOOT. flashinfer's JIT cache is
+    version-tagged at <FLASHINFER cache base>/<version>/120f/cached_ops
+    (SGLANG_CACHE_DIR redirect, environ.py:2124, so on this box
+    /root/.cache/sglang/.cache/flashinfer/), and 0.7.2/120f currently
+    holds NOTHING but a 0-byte flashinfer_jit.log while 0.7.1/120f holds
+    102 MiB / 6 .so -- including sampling.so and the XQA spec-decode
+    kernel (xqa_input_bf16_kv_cache_e4m3_..._head_dim_256_head_group_
+    ratio_6_..._spec_q_seq_len_1.so). The first 0.7.2 boot therefore
+    RE-JITS sampling + XQA (minutes), and the autotune sweep starts COLD
+    as well: that cache is version+arch-keyed
+    (SGLANG_CACHE_DIR/flashinfer/autotune/<version>/sm120/<key>, see
+    flashinfer_autotune_cache_path at flashinfer_autotune.py:165) so the
+    0.6.18/sm120 (76K) and 0.7.1/sm120 (140K, two tactic sets, dated
+    10-15 16:40) dirs do NOT carry over. Compare boot_s against the
+    standing baseline -- boot 03:51:16 -> "fired up" 03:53:43 = 147 s --
+    and treat a one-off jump as JIT cost, not a regression; the SECOND
+    boot is the comparable one. (2) Do NOT repoint the cache away from
+    /root/.cache/sglang: the 0.7.1 tree is what keeps a rollback warm,
+    and the live prod TP-rank children have those .so files mmapped right
+    now (each of 3908026/3908234/3908487 maps 10 flashinfer paths; the
+    wheel swap does not disturb a running server). (3) The entry 210-214
+    restart needles must be RE-READ ON THE NEW WHEEL -- "using the paged
+    chunked-prefill KV source" x4 with no gate-refusal, "Triton prewarm:
+    loaded N cubins" x1/rank, ~zero "device-loaded after serving
+    started" -- they were all calibrated against a 0.7.1 boot. (4)
+    PCIe-IPC (entries 162-164) does NOT come on by itself: it needs
+    SGLANG_ENABLE_PCIE_IPC_ALLREDUCE=1, and the A/B is armed in the ab
+    harness as pcie_ipc_on / pcie_ipc_on_ll / pcie_ipc_off_recheck with
+    comm-latency profiles + transport-selection needles.
   * BEHAVIOR WATCH for the NEXT restart (entries 215-227):
     (1) #44158/entry-221 changes the EFFECTIVE CALL PATH of every
     @register_custom_op op under plain eager with NO runtime switch --
@@ -3751,6 +4216,17 @@ CAVEATS
     the uv cache). PCIe-IPC vocab gathers (entries 162-164) NOW ACTIVE
     from the next restart (PcieIpcAllGatherWorkspace verified present
     in 0.7.1 flashinfer.comm); full FI battery zero regressions.
+      [10-19 CORRECTIONS to that bullet, both verified: (i) "NOW ACTIVE"
+      was WRONG -- PCIe-IPC is gated by SGLANG_ENABLE_PCIE_IPC_ALLREDUCE
+      (EnvBool(False), environ.py:1450) with no CLI flag, unset in the
+      prod run script and absent from the live process env, so 162-164
+      have never run: the wheel satisfies a dependency, the transport is
+      opt-in, prod stayed NCCL. See entry 228 and the PCIe-IPC correction
+      on entry 162. (ii) The venv has since moved 0.7.1 -> 0.7.2 with the
+      pin in-tree (2b46270c5d), and 0.7.1 IS now in the uv cache
+      (/root/.cache/uv/.../flashinfer-python/0.7.1-py3-none-any), so a
+      rollback to 0.7.1 is offline-capable -- the "needs network" note
+      applied to 0.7.0.post1 only.]
   * BEHAVIOR WATCH for the NEXT restart (entries 194-199): #37612/
     entry-198 resets batch_is_full EVERY admission round on hybrid-SSM
     trees (prod Qwen3.8-Flash-Next qualifies) -- measure TTFT/
@@ -3774,7 +4250,15 @@ CAVEATS
     rollback = revert the four picks, no flag exists. flashinfer 0.7.1
     makes entries 162-164 PCIe-IPC vocab gathers ACTIVE (TP4 same-host
     vocab gathers switch NCCL->PCIe-IPC at startup -- watch first-step
-    latency + gather correctness). New opt-ins available, both default
+    latency + gather correctness). [10-19 CORRECTION: it does NOT, and it
+    never did. The wheel only PROVIDES the API; using it requires
+    SGLANG_ENABLE_PCIE_IPC_ALLREDUCE=1 -- EnvBool(False) at environ.py
+    :1450, no CLI flag, zero hits in /root/run_sglang_qwenflashnext9.sh
+    and absent from the live prod process env -- so entries 162-164 are
+    still INERT and prod TP4 vocab gathers plus the bf16 decode all-
+    reduce remain on NCCL. See entry 228 for the full gate chain and for
+    the now-armed A/B (harness arms pcie_ipc_on / pcie_ipc_on_ll /
+    pcie_ipc_off_recheck).] New opt-ins available, both default
     OFF: --qsa-cache-sharding-size N (entry-200, the TP4 QSA-states
     capacity lever; SM120 rides the NCCL candidate transport) and
     --enable-linear-lossless-verify (entry-203; EXCLUSIVE with prod's
@@ -3897,7 +4381,9 @@ CAVEATS
     /root/sglang/.venv is editable to the OLD checkout /root/sglang/sglang.prev;
     THIS repo was verified via a hardlink clone at .venv2 -- see next caveat.)
 
-  * LIVE VENV (2026-10-15 bump): /root/sglang/.venv (PROD) runs
+  * LIVE VENV (2026-10-15 bump; flashinfer moved AGAIN 10-19 to 0.7.2 --
+    read the CURRENT line at the end of this bullet): /root/sglang/.venv
+    (PROD) runs
     torch 2.14.1 / triton 3.8.0 / flashinfer 0.7.1 / sglang-kernel
     0.4.9 wheel -- SUPERSEDES the 10-09 rebuild note (0.7.0.post1, kept
     as HISTORY below) and the 09-22 pin / 09-17 AOT-0.4.7 notes.
@@ -3909,6 +4395,29 @@ CAVEATS
     (INERT then; HISTORY). The .venv2 verification venv is UNCHANGED at
     triton 3.7.1/flashinfer 0.6.18 -- CVD=9 batteries run there, not on
     prod pins.
+    [10-19 CORRECTION to "UNLOCKED -- the NCCL->PCIe switch arms at
+    startup on the next restart": UNLOCKED is not ON. Having
+    PcieIpcAllGatherWorkspace importable is a PRECONDITION only; the
+    transport is behind SGLANG_ENABLE_PCIE_IPC_ALLREDUCE = EnvBool(False)
+    (environ.py:1450, no CLI flag), unset in the prod run script and
+    absent from the live process env, so 162-164 stayed INERT through the
+    0.7.1 bump too. Full gate chain in entry 228.]
+    CURRENT (2026-10-19, entry 228): flashinfer-python 0.7.1 -> 0.7.2 in
+    the PROD venv (/root/sglang/.venv) at ~12:57 -- one-line
+    pip-freeze diff (328 -> 328 packages), torch 2.14.1+cu130 /
+    triton 3.8.0 / sglang-kernel 0.4.9 / apache-tvm-ffi 0.1.11 all
+    UNCHANGED -- and 2b46270c5d moved the repo pin + boot floor WITH it,
+    which is the part that protects the wheel: `uv pip install -e
+    'python[dev]'` re-resolves the == pin and would otherwise have
+    silently downgraded flashinfer back to 0.7.1 (that command, run from
+    /root/sglang/sglang, resolves UP to the prod venv -- there is no
+    .venv in the repo root). No flashinfer-jit-cache / flashinfer-cubin
+    package exists in this venv, so nothing had to be realigned. .venv2
+    stays 0.6.18 and is still where CVD=9 batteries run; every FI-related
+    number matched on BOTH wheels. Rollback ORDER matters: revert
+    2b46270c5d FIRST (else the 0.7.2 floor assert kills boot), then run
+    /tmp/opencode/fi-bump-072/ROLLBACK.sh -- 0.7.1 IS in the uv cache, so
+    that step is offline-capable, unlike the 0.7.0.post1 rollback above.
     HISTORY (2026-10-09 rebuild): flashinfer was 0.7.0.post1.
   * HISTORY (2026-09-22): /root/sglang/.venv is now editable to THIS repo
     (sglang 0.5.21.dev550+gdb9d0720f). Refresh procedure with the server
