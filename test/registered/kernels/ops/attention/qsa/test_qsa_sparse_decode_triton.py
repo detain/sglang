@@ -214,6 +214,11 @@ def _make_flash_call(case, flash_attn_varlen_func):
 
 def test_qsa_sparse_decode_triton_matches_flash_attn():
     _require_cuda()
+    if torch.cuda.get_device_capability()[0] == 12:
+        # SM12x never decodes through the flash_attn fallback (SM120 defaults
+        # to Triton, SM121 has its own varlen), and flash-attn-4 does not
+        # compile on SM12x; the torch-oracle test covers Triton here.
+        pytest.skip("flash_attn varlen fallback is not an SM12x decode path")
     flash_attn_varlen_func = _resolve_flash_attn()
     if flash_attn_varlen_func is None:
         pytest.skip("flash_attn varlen is not importable")
@@ -473,6 +478,9 @@ def test_qsa_explicit_triton_bypasses_available_trtllm(monkeypatch):
             return q
 
     backend = object.__new__(backend_module.QwenSparseAttnBackend)
+    backend.owner_sparse_attn_group = None
+    backend.owner_sparse_attn_runtime = None
+    backend.qsa_profile = None
     backend.token_to_kv_pool = Pool()
     backend.req_to_token_pool = SimpleNamespace(
         req_to_token=torch.zeros(1, 1, dtype=torch.int32, device=q.device)
