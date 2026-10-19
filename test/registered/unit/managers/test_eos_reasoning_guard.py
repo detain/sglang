@@ -7,6 +7,7 @@ finish the request; model eos / tokenizer eos / additional_stop_token_ids
 are suppressed.
 """
 
+import unittest
 from array import array
 from types import SimpleNamespace
 
@@ -100,6 +101,4 @@ class TestEosReasoningGuard(CustomTestCase):
 
 
 if __name__ == "__main__":
-    from unittest import main
-
-    main()
+    unittest.main()
