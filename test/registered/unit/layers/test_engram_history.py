@@ -1,5 +1,8 @@
-"""Engram history rows the scheduler builds for multimodal requests. CPU only."""
+"""Engram history rows the scheduler builds for multimodal requests, plus the host
+table's memfd helper. CPU only."""
 
+import mmap
+import os
 import unittest
 from types import SimpleNamespace
 
@@ -7,7 +10,7 @@ import torch
 from torch import nn
 
 from sglang.kernels.ops.embeddings.engram_hash import MODE_EXTEND
-from sglang.srt.layers.engram import EngramHasher
+from sglang.srt.layers.engram import EngramHasher, _memfd_create
 from sglang.srt.managers.schedule_batch import MM_PAD_SHIFT_VALUE
 from sglang.srt.model_executor.forward_batch_info import ForwardMode
 from sglang.srt.model_executor.model_runner_components.ngram_embedding_manager import (
@@ -83,6 +86,33 @@ class TestEngramHistoryMultimodalPads(CustomTestCase):
         self.assertEqual(
             manager.engram_hasher.history[1].tolist(), [MM_PAD_SHIFT_VALUE] * 2
         )
+
+
+class TestEngramHostTableMemfd(CustomTestCase):
+    def test_memfd_create_fallback(self):
+        # Some CPython builds (this box included) have no os.memfd_create binding, so
+        # the shared host table must still get an fd that maps MAP_SHARED and reopens
+        # through /proc/<pid>/fd/<n> -- the way TP ranks inherit rank 0's table.
+        fd = _memfd_create("sglang_test_memfd", 0)
+        size = 1 << 20
+        try:
+            os.ftruncate(fd, size)
+            mm = mmap.mmap(
+                fd, size, flags=mmap.MAP_SHARED, prot=mmap.PROT_READ | mmap.PROT_WRITE
+            )
+            try:
+                mm[0] = 7
+                self.assertEqual(mm[0], 7)
+                reopened = os.open(f"/proc/{os.getpid()}/fd/{fd}", os.O_RDWR)
+                try:
+                    self.assertEqual(os.fstat(reopened).st_size, size)
+                    self.assertEqual(os.pread(reopened, 1, 0), b"\x07")
+                finally:
+                    os.close(reopened)
+            finally:
+                mm.close()
+        finally:
+            os.close(fd)
 
 
 if __name__ == "__main__":

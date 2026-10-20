@@ -13,6 +13,7 @@ import glob
 import logging
 import mmap
 import os
+import platform
 import re
 import time
 from typing import Optional
@@ -654,6 +655,42 @@ def _registered_device_ptr(host_ptr: int) -> int:
     return device_ptr.value
 
 
+# Some CPython builds omit the os.memfd_create binding even though the Linux kernel
+# has had the memfd_create(2) syscall since 3.17 (this host is one of them). Call the
+# syscall directly via ctypes, and only fall back to an unlinked /dev/shm file (which
+# is bounded by the tmpfs size) if even that fails. The returned fd maps MAP_SHARED
+# and reopens via /proc/<pid>/fd/<n>, exactly what _open_shared_fd needs for TP ranks.
+_SYS_MEMFD_CREATE = {"x86_64": 319, "amd64": 319, "aarch64": 279, "arm64": 279}.get(
+    platform.machine()
+)
+
+
+def _memfd_create(name: str, flags: int = 0) -> int:
+    if hasattr(os, "memfd_create"):
+        return os.memfd_create(name, flags)
+    if _SYS_MEMFD_CREATE is not None:
+        libc = ctypes.CDLL(None, use_errno=True)
+        libc.syscall.restype = ctypes.c_long
+        c_name = name.encode() if isinstance(name, str) else name
+        fd = libc.syscall(
+            ctypes.c_long(_SYS_MEMFD_CREATE),
+            ctypes.c_char_p(c_name),
+            ctypes.c_uint(flags),
+        )
+        if int(fd) >= 0:
+            return int(fd)
+        err = ctypes.get_errno()
+        if err != errno.ENOSYS:
+            raise OSError(err, os.strerror(err), name)
+    shm_path = f"/dev/shm/{name}"
+    fd = os.open(shm_path, os.O_CREAT | os.O_RDWR | os.O_TRUNC, 0o600)
+    try:
+        os.unlink(shm_path)
+    except OSError:
+        pass
+    return fd
+
+
 class _HostTable:
     """Host-memory backing for one engram table ('shared' or 'per_rank' layout).
 
@@ -707,7 +744,7 @@ class _HostTable:
     def _open_shared_fd(self, nbytes: int, name: str) -> int:
         owner = None
         if self.group.rank_in_group == 0:
-            fd = os.memfd_create(name, 0)
+            fd = _memfd_create(name, 0)
             os.ftruncate(fd, nbytes)
             owner = (os.getpid(), fd)
         pid, owner_fd = self.group.broadcast_object(owner, src=0)
