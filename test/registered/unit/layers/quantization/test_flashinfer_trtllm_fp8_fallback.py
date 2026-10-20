@@ -28,6 +28,7 @@ from unittest.mock import MagicMock, patch
 
 import torch
 
+import sglang.srt.layers.deep_gemm_wrapper as deep_gemm_wrapper
 import sglang.srt.layers.quantization.fp8 as fp8
 import sglang.srt.layers.quantization.fp8_utils as fp8_utils
 from sglang.srt.layers.quantization.fp8 import Fp8Config, Fp8LinearMethod
@@ -122,6 +123,17 @@ class TestBlockSizeDispatch(CustomTestCase):
                     fp8_utils, "FP8_GEMM_RUNNER_BACKEND", Fp8GemmRunnerBackend(name)
                 ),
             ):
+                if name == "deep_gemm" and not deep_gemm_wrapper.ENABLE_JIT_DEEPGEMM:
+                    # "Keep the backend choice" only means something when the
+                    # backend exists. This file is a register_cpu_ci test, and on
+                    # a device-less runner _compute_enable_deep_gemm() returns
+                    # False (get_device_sm() == 0 < 90), so the dispatcher's real
+                    # contract here is to refuse the request loudly rather than
+                    # quietly run Triton -- pin that instead of asserting a
+                    # selection this lane cannot make.
+                    with self.assertRaisesRegex(RuntimeError, "DeepGEMM"):
+                        dispatch_w8a8_block_fp8_linear()
+                    continue
                 default = dispatch_w8a8_block_fp8_linear()
                 self.assertIs(dispatch_w8a8_block_fp8_linear([128, 128]), default)
                 self.assertIs(dispatch_w8a8_block_fp8_linear([1, 128]), default)
