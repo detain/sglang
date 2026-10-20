@@ -56,7 +56,11 @@ class TestWarmupState(CustomTestCase):
         }.items():
             stack.enter_context(patch.object(compile_utils, name, value, create=True))
         self.kernel_type = compile_utils.DeepGemmKernelType.GEMM_NT_F8F8BF16
-        self.key = (self.kernel_type, 128, 128, 1)
+        # compile_utils keys _INITIALIZATION_DICT with
+        # (kernel_type, n, k, num_groups, recipe); the blockwise FP8
+        # gemm_nt_f8f8bf16 entry point calls the hook without a recipe,
+        # so the fifth element is None.
+        self.key = (self.kernel_type, 128, 128, 1, None)
 
     def warmup(self):
         compile_utils._maybe_compile_deep_gemm_one_type_all(*self.key)
@@ -146,7 +150,7 @@ class TestWarmupState(CustomTestCase):
         self.assertNotIn(self.key, compile_utils._INITIALIZATION_DICT)
 
     def test_lock_failure_does_not_remove_other_completed_groups(self):
-        other_key = (self.kernel_type, 256, 128, 1)
+        other_key = (self.kernel_type, 256, 128, 1, None)
         compile_utils._INITIALIZATION_DICT[other_key] = True
         error = OSError("lock unavailable")
         with patch.object(compile_utils, "_local_rank_compile_lock", side_effect=error):

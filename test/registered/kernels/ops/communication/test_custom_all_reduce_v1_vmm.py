@@ -25,7 +25,7 @@ import torch.distributed as dist
 
 import sglang.srt.distributed.parallel_state as ps
 from sglang.kernels.jit.utils import cache_once
-from sglang.kernels.ops.communication.mp import register_comm_cleanup
+from sglang.srt.distributed.comm_cleanup import register_comm_cleanup
 from sglang.srt.distributed.device_communicators.custom_all_reduce import (
     CustomAllreduce,
 )
@@ -35,6 +35,11 @@ from sglang.test.ci.ci_register import register_cuda_ci
 from sglang.test.kernels.utils import multigpu_pytest_main
 
 register_cuda_ci(est_time=60, stage="extra-b", runner_config="8-gpu-h200")
+
+# The whole file drives real CUDA graph capture through torchrun ranks; when
+# pytest is invoked directly on a GPU-less host (no relaunch), skip cleanly
+# instead of failing in _init_groups() on the missing LOCAL_RANK.
+pytestmark = pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a GPU")
 
 TEST_SIZES = [16, 1024, 32 * 1024, 1024 * 1024]
 TEST_LAYERS = 4
