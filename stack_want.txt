@@ -1,4 +1,9 @@
 # stack_want.txt — DeepSeek-V4.1-Flash on 4x RTX PRO 6000 Blackwell Max-Q (SM120, PCIe-only)
+# >>> EXECUTION STATUS (this pass): ALL decided PRs MERGED + PUSHED to deepseek-41-flash-1017-stack (tip 5dd6ec7096,
+#     ~57 PRs across 43 stack entries). See stack.txt for the per-entry record incl. the full SKIPPED/DEFERRED/AVOID
+#     list with reasons. venv /root/sglang/.venv-dsv41f3 + ~/run_sglang_dsv41flash3.sh done. Deferred items (NCCL-EP-LL
+#     stack, MegaMoE, NVFP4-KV family, broad-autotune/VRAM levers) are gated on a real boot demand — revisit list below.
+#     Everything is LIVE ONLY AFTER RESTART.
 # Branch: deepseek-41-flash-1017-stack   Fork remote: origin = detain/sglang
 # Decision-grade findings + rationale. Authoritative PR-by-PR status lives in stack.txt as entries land.
 # Evaluation method: PR sweep (422 dsv41 + 254 SM120 candidates) -> 8 parallel deep-evaluators (groups

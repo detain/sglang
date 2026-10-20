@@ -103,3 +103,58 @@
 #          Kernel self-test bit-exact vs torch ref on this box's SM120 (native e4m3). SGLANG_DSV4_O_FP8_QDQ_EMULATE exists.
 #          All 24 touched .py py_compile OK; repo conflict-marker count 0.
 #        ALL LIVE ONLY AFTER RESTART.
+#
+# ── BATCH 3A: MoE/NVFP4 boot + skinny GEMM + DeepGEMM warmup + autotune + mHC — merged e4a7f5c..098ddfd (26 commits) ──
+# [24] 497d394b1e(+2) #39807  consumer-Blackwell NVFP4 FusedMoE: auto->FLASHINFER_CUTLASS on SM120 (else SM100-only
+#        trtllm -> NotImplementedError, NVFP4 variants won't boot). + CUDA-toolkit selection block (90e408e460)
+#        VERIFIED SAFE: cuda_home() early-returns on our pinned CUDA_HOME=/usr/local/cuda (12.9); cu13 pip fallback
+#        needs CUDA_HOME unset AND glibc>=2.41 (we are 2.39) -> cannot re-trigger sm_120f/Xid43. trtllm_mha+FP8KV
+#        guard (464189bb81) is MLA-unaffected (we use dsv4 backend).
+# [25] 257fafd698 #40173  hybrid NVFP4/MXFP4 draft (DSpark/MTP) experts -> CUTLASS MoE SM90/SM120. No flag workaround;
+#        author-validated on nvidia/DeepSeek-V4.1-Flash-NVFP4, DSpark block5.
+# [26] b168402212+fd69bc1401 #42566  block-FP8 MoE TP-shard refine (gate/up divisible by block_n under TP; FP8 128x128
+#        MTP/DSpark experts). Skipped stale #43556 re-carry (in base).
+# [27] 53d5ec7714 #43619  DeepSeek-V4 k-pool indexer prefill row-split across TP (SM120 variant of #42968; measured on
+#        4xPRO6000 Max-Q PCIe). Default OFF: SGLANG_DSA_INDEXER_ROW_SPLIT_MIN_ELEMS=0.
+# [28] e509482384..d84afdf25c #42865  SM120 split-K MXFP8 skinny GEMM, DEFAULT-ON (is_sm120+[32,32]+DSV4.1-Flash shapes).
+#        Port fix 098ddfd3a5: mxfp8_epilogue lives under ops/quantization in this tree.
+# [29] 7c274e92f7..9c2119e7c0 #42867  BF16 skinny lm_head (opt-in SGLANG_ENABLE_BF16_SKINNY_LM_HEAD=False). gemm/__init__
+#        hand-merged to keep BOTH #42865+#42867 register blocks.
+# [30] 5f1c02500e #32686  deep_gemm warmup startup-OOM guard (budget select + warmup-skip). Guards 96GB boot.
+# [31] 11bb66a5f2 #43712  DeepGEMM warmup-state restore after failed warmup (E2/Xid43-class guard).
+# [32] 8ff1e046ba #43363  CUTLASS-MoE autotune prefill-chunk buckets (CUTLASS = SM120 default MoE path).
+# [33] 67c9bbe81d #40420  EP: keep per-rank FlashInfer fused-MoE autotune cache (was dropped each step). #42736 NOT taken.
+# [34] c6172ab06f #42985  DSV4.1 mHC: restore wide-prefill stats/all-reduce overlap (self-gated TP4; 4xPRO6000).
+# [35] 7fc2fbfe97 #42821  precompile FP8 einsum at startup; UNION onto Group C _fp8_wo_a_einsum (mega+wo_a sites).
+#
+# ── BATCH 3B: PCIe transport/guards + TP-sampling correctness + VRAM — merged 098ddfd..5dd6ec7 (25 commits) ──
+# [36] d01ebcea16..ed21273f7d #44448  stage VMM graph inputs in v1 CustomAllreduce (fixes expandable_segments+PCIe
+#        graph-capture crash we are exposed to). Dep is_vmm_pointer in tree.
+# [37] cf94f8d795..1fe785f331 #44480  StandardDispatcher local expert ids under global-ids MoE-backend pin (our EP4).
+#        RECONCILED with base #40498 (-1 drop sentinel kept, single def, no dup).
+# [38] 028ddf1fd7 #44202  scheduler: broadcast TP requests over shm MessageQueue (not gloo collective).
+# [39] a6a63ba525+3c811c5999+526ba49433 #42863  TP4 logits + DSpark vocab ALL-GATHER over PCIe-IPC (all-gather half;
+#        all-reduce half already in base). Rides SGLANG_ENABLE_PCIE_IPC_ALLREDUCE (default OFF -> opt-in A/B).
+# [40] 9b87ac0a49 #41888  guard MultimemAllGatherer when host lacks CUDA multicast (no-P2P box) -> boot SIGFPE #41882.
+#        Inserted INSIDE #42863's _build_multimem (ordering enforced).
+# [41] 1e8a2e5356..939082c62e #41916  top-k/top-p consistent across sampler/EAGLE/DFlash/DSpark-verify (supersedes
+#        #36173). Landed before #38565; dflash_utils UNION (PR ordering + our padding-verify guard).
+# [42] 61f973a4f3+92af4129d3 #38565  deterministic top-p/top-k renorm when attn_tp_size>1 -> prevents TP-rank divergence
+#        = collective HANG. New layers/sampling_renorm.py; auto-on for attn_tp>1. Wired on #41916 (single helper).
+# [43] abab73d428 #37155  idempotent share_target_embed_and_head() before KV-pool profiling frees DSpark draft
+#        embed+lm_head into pool (96GB VRAM). #43074/#32468 skipped. port adapt 5dd6ec7096 (test-only multicast stub).
+#
+# ── SKIPPED / DEFERRED (recorded so a future merge doesn't silently re-add) ──
+#  In base (no port): #39671 #39095 #34528 #44158 #44097 #39294 #40917 #44351 #44401 #44420 #40498 #44591 #44590
+#    #43556 #34827 #34021 #34024 (depth-5 corruption root-caused away by mhc_combine #45112/#42245+#43790) #42710
+#    (step_logits already fp32 #43668/#43790) #42789.
+#  Dead on flashinfer 0.7.2: #33407 #34717.  Superseded/restructured: #38646 (use #43247/#43356/#43524 family) #43401
+#    (DeepSelect in base) #44990/#44623/#44610 (dormant linker/HiCache; #44990 REGRESSES encoder-replay) #37239 (PD)
+#    #43074/#32468 #45073/#42715/#42921/#43241.
+#  DEFERRED (high-risk/source-dep): NCCL-EP-LL stack #41353->#38683->#38886->#38887->#38888->#39546 (strict 6-deep,12k
+#    lines,unreviewed); #44359/#38321 MegaMoE; #42736/#44495/#37826/#35268/#43356/#43247/#43524/#43471; #33250;
+#    #42805/#35617/#33259 (conditional).
+#  AVOID (no-P2P): CustomAllReduce v2 family, DCP/CP symm, #42416 (forces NVSHMEM), #39605/#32479.
+#
+# tip: 5dd6ec7096 (pushed to origin). NEXT: boot smoke (HF_TOKEN + ~557GB download, not in cache); set
+#   SGLANG_DSV4_O_FP8_QDQ_BLOCK=32 for -1017; A/B SGLANG_ENABLE_PCIE_IPC_ALLREDUCE=1 (#42863 landed).
