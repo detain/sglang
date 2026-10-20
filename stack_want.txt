@@ -1,0 +1,61 @@
+# stack_want.txt — DeepSeek-V4.1-Flash on 4x RTX PRO 6000 Blackwell Max-Q (SM120, PCIe-only)
+# Branch: deepseek-41-flash-1017-stack   Fork remote: origin = detain/sglang
+# Decision-grade findings + rationale. Authoritative PR-by-PR status lives in stack.txt as entries land.
+# Evaluation method: PR sweep (422 dsv41 + 254 SM120 candidates) -> 8 parallel deep-evaluators (groups
+# A-F3) reading diffs/comments/reviews + git merge-tree conflict sims against OUR actual base tree.
+#
+# ============================ PRIORITY LADDER ============================
+# P0 BOOT-CRITICAL (dsv41 won't even start / crashes first forward on SM120):
+#   #42371 run candidate indexer on SM12x paged decode  (init RAISES without it)
+#   #45261 DeepGEMM paged-MQA metadata for low-ratio indexers (split_kv 128-vs-256 first-forward crash)
+#   #39914 SM120 candidate fallback + extra-KV 64-token pages (our hard-fail topk_extra=512 extra_page_block_size=128)
+#   #42714 stop CUDA graphs writing into freed FlashMLA page-split buffers (inherits #39914 hazard)
+#   #42717 keep TP ranks planning same verify budget under overlap (TP4+overlap+DSpark hang)
+# P1 ACCURACY / CORRECTNESS on our exact config (DSpark, engram, TP4, FP8/NVFP4):
+#   #45185 FP8 quantize-dequant attention output before wo_a for V4.1-Flash-1017 (OUR model; default OFF)
+#   #42718 #43225 #42713 #45301 #42710 #43374 dsv4.1 DSpark/engram/prefill-graph correctness cluster
+#   #44158 already-in-base (custom-op eager-direct, DEFAULT-ON, free win)
+# P2 PERF on SM120/PCIe (measured on 4xPRO6000 boxes by authors):
+#   #42861 FP4 indexer scorer w/o exp2 · #43008 WO-A exact FP8 copy · #42294 C4 row-chunk planner (OOM)
+#   #42863 PCIe-IPC TP4 logits+DSpark vocab all-gather (needs #43528 already in base? verify)
+#   group F2/F3 SM120 GEMM/autotune/perf picks
+# P3 ENV / RUNTIME (independent of any PR — see run_sglang_dsv41flash3.sh):
+#   flashinfer 0.7.2 (0.6.18 silently corrupts >64-tok SM120 prefill); CUDA_HOME=/usr/local/cuda 12.9
+#   (CUDA13 nvcc -> sm_120f -> Xid43); expandable_segments (TP>=4 only); Engram host table + ulimits.
+#
+# ===================== STATUS BY GROUP =====================
+# DONE (committed+pushed): 1 Max-Q FP8 GEMM tables (88f6f2326c) · 2 [32,32] tuner fix (8ee5089753)
+# MERGING NOW (Group A, verified clean order): #42371 #42861 #45261 #42294 #43008
+# QUEUED (after A; share v41_indexer files -> sequential): Group B = #39914 -> #42714 -> #32464
+# GROUP E VERDICT: MERGE ONLY #43376 (dsv41 long-ctx prefill-indexer OOM bound; our exact 485K/0.85 repro;
+#   LOW conflict but touches deepseek_v4_backend.py+v41_indexer/* -> sequential AFTER A). Port recipe: apply
+#   6 source files + new test_dsv41_prefill_score_tiles.py clean; hand-resolve only test_dense_prefill_indexer.py
+#   import (use OUR sglang.kernels.ops.quantization.fp4_indexer_quant). Tuning knob SGLANG_DSA_MQA_LOGITS_FREE_MEM_FRACTION=0.2 default.
+#   SKIP: #44623/#44990/#44610 (dormant linker/HiCache, mutually exclusive, #44990 would REGRESS us by rejecting
+#   encoder-replay SWA), #37239 (PD-disagg only, NotImplementedError on our _unified_kv path).
+# QUEUED (Group C correctness, order): #42717 #42710 #43225 #43374 #42718 #42713 #45301 #45185(ENV-OFF last) #44141
+# DROPPED-C (already in base / restructured / VLM-only): #42715 #42921 #43241 #45073
+# DROPPED-A: #43401 (conflicts DeepSelect in base; overlaps open #40860) · #44350 (draft; blocked on unreleased sgl-deep-gemm wheel rebuilt from DeepGEMM#103)
+# SKIPPED-ALREADY-IN-BASE: #39671 #39095 #34528 #44158 #44097 #39294 #40917 #44351 #44401 #44420 #40498 #44591 #44590
+# UNDER EVALUATION (groups D,E,F1,F2,F3 pending): #44359 #38321 #42368 #38646 #33407 #34717 (D);
+#   #43376 #44623 #44990 #44610 #37239 (E); SM120 boot/quant + NVFP4 (F1); ormandj perf + TP sampling (F2);
+#   PCIe guards + NCCL-EP-LL stack #41353..#39546 + autotune (F3).
+#
+# ===================== DEPENDENCY / HIDDEN-LINK NOTES =====================
+# - #45261 depends on #42371 (both Group A). #39914's candidate half is DEAD (dsv4/candidate_indexer.py moved to
+#   v41_indexer/ by #41125, in base) -> port kernel+test only + 2-line dense-fallback patch. #42714 soft-refs #42440 (closed, not needed).
+# - #45073 -> #45283 ordered pair; #45073 already reshaped in base, so #45283 must rebase on upstream not the PR.
+# - dsv41 Sept series (day-0, DSpark/engram fusions, encoder bounded-replay) + flashinfer 0.7.2 + sgl-kernel 0.4.10
+#   already in base. sgl-deep-gemm pin is 0.2.3 (>=0.2.0 OK for #39914 candidate path, but candidate half skipped anyway).
+# - AVOID (no-P2P won't engage): #42416 (forces NVSHMEM -> drops custom-AR to NCCL), #43405 device full_shared,
+#   #34230/#44170 symm-mem, CustomAllReduce V2 family (#37042/#43296/#42811), DCP/CP symm (#32560/#33364/#37337).
+#
+# ===================== SIBLING qwen-stack reusable (confirmed via grep of /root/sglang/sglang/stack.txt) =====================
+# Generic SM120/FP4/MoE/spec items (verify open-ness; merge via upstream pull/N/head, or from qwennext-stack local
+# commits for CLOSED ones): #39977(fp8-scale UAF) #39065/#42566(block-FP8 TP refine) #31503/closed(EP-slice NVFP4
+# input scales) #44480(EP local expert ids) #43419(NVFP4 Marlin in-place repack) #42452(defer CUTLASS NVFP4 scale
+# layouts - load OOM 96GB) #43363(CUTLASS-MoE autotune prefill) #43712(DeepGEMM warmup restore) #42803(spec KV index
+# token blocks) #39716(tokenizer-clone parallel preprocess) #42736(flashinfer prefill autotune) #41168(skip spec KV
+# transfer when 0) #38144(fast_topk SMEM overflow + fix deepseek_v4/topk_v1.cuh etc directly) #41732(satfinite MLA)
+# #43247/#43356/#43524/#38646(NVFP4-KV family) #43527(QSA cache sharding - Qwen, skip). CLOSED-ported-from-local:
+# #39978(SM120 CUTLASS FP8 decode GEMM) #31503 entry-75(custom-AR VMM guard) entry-211(Triton cubin prewarm).

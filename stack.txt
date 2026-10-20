@@ -1,0 +1,63 @@
+# stack.txt — sglang stack for DeepSeek-V4.1-Flash on 4x RTX PRO 6000 Blackwell Max-Q
+#
+# branch : deepseek-41-flash-1017-stack   (fork remote: origin = https://github.com/detain/sglang.git)
+# base   : main @ 7f19eb3ed5 (fork main, already carries a recent upstream/main merge)
+# hardware: 4x NVIDIA RTX PRO 6000 Blackwell **Max-Q** Workstation Edition, 96GB each,
+#           SM120 (sm_120), PCIe-only (NO NVLink / NO P2P).
+# models : deepseek-ai/DeepSeek-V4.1-Flash  (+ "-1017" revision); a.k.a. dsv41 / deepseek-v4.1 / 1017.
+#          Also FP4/FP8 and RDXA/NVDA NVFP4 variants are in scope (do NOT skip FP4/FP8 PRs).
+# venv   : /root/sglang/.venv-dsv41f3   (isolated; editable install of THIS checkout).
+# launch : /root/run_sglang_dsv41flash3.sh  (non-docker, sources the venv above).
+#
+# ── FOUNDATION ALREADY IN BASE (merged upstream before our tip — no action) ──
+#   Full DeepSeek-V4.1-Flash day-0 + Sept series (#38879..#39138: DSpark verify fusion,
+#   engram-decode-history-in-hash, raw-index TopK v2, Blackwell small-batch DSpark, VL shared
+#   expert, /v1/responses routing, HiCache+SWA-replay, encoder bounded-replay paged), plus:
+#   #44591 flashinfer 0.7.2, #44590 sgl-kernel 0.4.10 (FP4/NVFP4/PCIe floors), #34528
+#   SGLANG_ENABLE_PCIE_IPC_ALLREDUCE (present, default OFF), #44158 custom-op eager-direct
+#   (DEFAULT-ON, active), admission trio #44351/#44401/#44420, #40498 EP -1 drop sentinel,
+#   #44097/#39294 unified-memory pool, #40917 memory-pool ctor, #39095/#39657/#41251/#44837.
+#
+# ── ENV / RUNTIME REQUIREMENTS (live only after restart) ──
+#   * flashinfer must be 0.7.2 (0.6.18 silently corrupts SM120 sparse-MLA prefill for any
+#     prompt > 64 tokens — flashinfer #5075/#5095). Our venv installs 0.7.2 from pyproject.
+#   * CUDA_HOME=/usr/local/cuda (CUDA 12.9 nvcc). CUDA 13 miscompiles deep_gemm SM120 kernels
+#     as sm_120f -> Xid 43 fault on this driver.
+#   * SGLANG_ENABLE_DSV41_ENGRAM_HOST_TABLE=1 + ulimit -l unlimited (189GiB FP8 Engram, layers 1&14).
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# STACK ENTRIES (applied in order on top of base)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# [1] 88f6f2326c  [Perf] [NVIDIA] sm120: Add tuned block-FP8 GEMM configs for RTX PRO 6000 Blackwell Max-Q
+#       - 11 block_shape=[32,32] fp8_w8a8 tables keyed NVIDIA_RTX_PRO_6000_Blackwell_Max-Q_Workstation_Edition
+#         under python/sglang/kernels/ops/gemm/configs/. (N,K): 512x5120 1152x5120 1280x5120 1536x5120
+#         1792x5120 4096x1280 5120x576 5120x2048 5120x15360 8192x1280 25600x6144. M=1..4096.
+#       - source: netsphere dsv41-flash-rtx-pro-6000 configs-maxq (device key differs from
+#         Server/Workstation Edition => net-new; loader had zero RTX_PRO_6000 files).
+#       - measured on this card class: decode ~120->161 / 248->331 / 239->321 tok/s.
+#       - LIVE ONLY AFTER RESTART (configs lru_cached per shape at first read).
+#
+# [2] 8ee5089753  [Perf] fix: allow [32,32] block-K tiles in compute-bound FP8 tuner
+#       - benchmark/kernels/quantization/tuning_block_wise_kernel.py: get_configs_compute_bound()
+#         non-ROCm branch block_k [64,128] -> [32,64,128]. Without 32, the [32,32] SM120 tables
+#         above could never be re-tuned (empty search space after the % filter). py_compile clean.
+#       - (upstream: no PR exists; this is our own contribution.)
+#
+# ── GROUP A: SM120 indexer / DeepGEMM paged-MQA (P0 BOOT-CRITICAL) — merged 7f19eb..0dbd8c56d9 ──
+# Cherry-picked -x from upstream pull/N/head, verified conflict-free in-order, py_compile clean.
+# [3] fe7be8590d  #42371  [DSv4.1] Run candidate indexer on SM12x via paged decode
+#       - WITHOUT this, dsv41 attention-backend init RAISES on SM120 (candidate indexer demanded SM100-only
+#         sparse MQA). Entry point for the rest. Validated by third-party RTX PRO 6000 report (init fix #42364).
+# [4] b948cf94ca  #42861  Decode FP4 index keys without exp2 in Triton scorer  (bit-safe perf)
+# [5] 3b2d7c7ea2  #42861  note E8M0 decode vs dequant helper (doc)
+# [6] 6d28f8dea4  #45261  DeepGEMM paged-MQA metadata for low-ratio indexers on SM120
+#       - fixes split_kv 128-vs-256 first-forward crash (fp8_fp4_paged_mqa_logits). Dep #42371. GSM8K 0.905 PRO-5000.
+# [7] 6cf93ee683  #42294  plan C4 indexer row chunks whichever paged kernel scores them
+#       - our torch/TileLang-default SM120 path silently disabled row chunking -> ~5GiB single logits call at 16K rows;
+#         direct mitigation for 96GB long-ctx OOM. 30/30 UTs.
+# [8] 038b0982b5  #43008  read SM120 decode/verify WO-A from an exact FP8 copy
+#       - bit-exact FP8 copy halves weight traffic on bandwidth-bound WO-A proj under TP4; 8MiB/layer/rank.
+# [9] 0dbd8c56d9  #43008  keep WO-A FP8 copy out of weight checks + test dispatch
+#       opt-out: SGLANG_DSV41_WO_A_FP8_COPY=0 (environ.py, added here). LIVE ONLY AFTER RESTART.
+# DROPPED A: #43401 (conflicts DeepSelect already in base; overlaps open #40860) #44350 (draft, needs unreleased sgl-deep-gemm wheel).
