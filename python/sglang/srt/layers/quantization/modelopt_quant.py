@@ -859,6 +859,24 @@ class ModelOptMixedPrecisionConfig(ModelOptQuantConfig):
     def get_min_capability(cls) -> int:
         return ModelOptFp4Config.get_min_capability()
 
+    def can_fuse_shared_expert(self) -> bool:
+        # Same rule ModelOptFp4Config applies: a shared-expert body kept BF16
+        # cannot share the packed FP4 FusedMoE buffers, because fusion loads it
+        # as one more (packed, scale-carrying) expert slot. MIXED_PRECISION
+        # checkpoints state that in ``ignore``/``exclude_modules`` -- e.g.
+        # nvidia/Qwen3.8-Flash-Next-NVFP4 lists
+        # ``model.language_model.layers.N.mlp.shared_expert*`` for all 48 MoE
+        # layers while quantizing only ``*.mlp.experts``. The
+        # ``shared_expert_gate`` is a separate linear and must not veto.
+        # NOTE(fork): the mixed config builds its nvfp4_config child with an
+        # empty exclude_modules list (it only needs the packing parameters), so
+        # delegating there would always answer "fusable"; read this config's own
+        # exclusion list.
+        return not any(
+            "shared_expert" in name and "shared_expert_gate" not in name
+            for name in self.exclude_modules
+        )
+
     @classmethod
     def from_config(cls, config: Dict[str, Any]) -> ModelOptMixedPrecisionConfig:
         kv_cache_quant_algo = None

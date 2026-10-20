@@ -10,6 +10,7 @@ from sglang.srt.layers.quantization.fp4_utils import Fp4GemmRunnerBackend
 from sglang.srt.layers.quantization.modelopt_quant import (
     ModelOptFp4Config,
     ModelOptFp4LinearMethod,
+    ModelOptMixedPrecisionConfig,
 )
 from sglang.srt.model_loader.weight_utils import default_weight_loader
 from sglang.test.ci.ci_register import register_cpu_ci
@@ -163,6 +164,51 @@ class TestModelOptNvfp4(CustomTestCase):
         self.assertFalse(bf16_shared.can_fuse_shared_expert())
         # Only the gate is BF16 (Qwen3-Next NVFP4): the FP4 body still fuses.
         self.assertTrue(gate_only_bf16.can_fuse_shared_expert())
+
+    @staticmethod
+    def _mixed_config(exclude_modules):
+        # Shape of a real MIXED_PRECISION checkpoint: the routed experts are
+        # NVFP4 and everything else, including an opted-out shared-expert body,
+        # is stated in the exclusion list.
+        return ModelOptMixedPrecisionConfig.from_config(
+            {
+                "quant_algo": "MIXED_PRECISION",
+                "kv_cache_quant_algo": None,
+                "group_size": 16,
+                "quantized_layers": {
+                    "model.language_model.layers.0.mlp.experts": {
+                        "quant_algo": "NVFP4",
+                        "group_size": 16,
+                    },
+                },
+                "exclude_modules": exclude_modules,
+            }
+        )
+
+    def test_mixed_precision_applies_the_same_fusion_rule(self):
+        """MIXED_PRECISION must not be more permissive than modelopt_fp4.
+
+        A mixed checkpoint opts its shared expert out through the same
+        ``ignore`` list (nvidia/Qwen3.8-Flash-Next-NVFP4 lists
+        ``...mlp.shared_expert*`` for all 48 MoE layers), and a BF16 body cannot
+        be loaded into a packed FP4 expert slot. Without the veto the loader
+        remaps those weights into a fused slot and the shared expert silently
+        reads FP4 garbage.
+        """
+        bf16_shared = self._mixed_config(
+            ["model.language_model.layers.0.mlp.shared_expert*"]
+        )
+        gate_only_bf16 = self._mixed_config(
+            ["model.language_model.layers.0.mlp.shared_expert_gate"]
+        )
+        quantized_shared = self._mixed_config(
+            ["model.language_model.layers.0.mlp.gate"]
+        )
+
+        self.assertFalse(bf16_shared.can_fuse_shared_expert())
+        # Only the gate is BF16: the FP4 body still fuses.
+        self.assertTrue(gate_only_bf16.can_fuse_shared_expert())
+        self.assertTrue(quantized_shared.can_fuse_shared_expert())
 
 
 if __name__ == "__main__":
