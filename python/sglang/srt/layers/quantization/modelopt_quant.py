@@ -2782,6 +2782,21 @@ class ModelOptNvFp4FusedMoEMethod(FusedMoEMethodBase):
         # nvfp4_online overrides this for serialized FP8 source weights.
         return False
 
+    def _align_fp4_moe_weights_for_flashinfer_trtllm(self, layer) -> None:
+        """Align TRT-LLM weights, allowing model-specific storage layouts."""
+        from sglang.srt.layers.moe.moe_runner.flashinfer_trtllm import (
+            align_fp4_moe_weights_for_flashinfer_trtllm,
+            trtllm_nvfp4_hidden_alignment,
+        )
+
+        align_fp4_moe_weights_for_flashinfer_trtllm(
+            layer,
+            hidden_alignment=trtllm_nvfp4_hidden_alignment(
+                use_per_token_activation=self.quant_config.use_per_token_activation,
+                is_gated=layer.moe_runner_config.is_gated,
+            ),
+        )
+
     def create_weights(
         self,
         layer: torch.nn.Module,
@@ -3170,6 +3185,14 @@ class ModelOptNvFp4FusedMoEMethod(FusedMoEMethodBase):
                 else (runner_config.gemm1_clamp_limit or runner_config.swiglu_limit)
             )
             if gemm1_clamp_limit is not None:
+                # The kernel clamps both raw halves with one limit, which is
+                # exact for both only when their dequantization scales match.
+                if not torch.equal(layer.g1_alphas, layer.g1_alphas_up):
+                    logger.warning_once(
+                        "NVFP4 MoE gate/up global scales differ; the TRT-LLM SwiGLU "
+                        "clamp limit is exact for the gate half only. "
+                        "Accuracy may be affected."
+                    )
                 copy_or_rebind_param(
                     layer,
                     "gemm1_clamp_limit",
@@ -3186,6 +3209,7 @@ class ModelOptNvFp4FusedMoEMethod(FusedMoEMethodBase):
                         dtype=torch.float32,
                     ),
                 )
+                # SwiGLU adds beta to the raw up half before dequantization.
                 gemm1_beta = (
                     torch.full_like(
                         layer.g1_alphas,
@@ -3193,7 +3217,7 @@ class ModelOptNvFp4FusedMoEMethod(FusedMoEMethodBase):
                         dtype=torch.float32,
                     )
                     if is_situ
-                    else (1.0 / layer.g1_alphas).to(torch.float32)
+                    else (1.0 / layer.g1_alphas_up).to(torch.float32)
                 )
                 copy_or_rebind_param(layer, "gemm1_beta", gemm1_beta)
 
@@ -3267,19 +3291,8 @@ class ModelOptNvFp4FusedMoEMethod(FusedMoEMethodBase):
             and reorder_rows_for_gated_act_gemm is not None
             and shuffle_matrix_sf_a is not None
         ):
-            from sglang.srt.layers.moe.moe_runner.flashinfer_trtllm import (
-                align_fp4_moe_weights_for_flashinfer_trtllm,
-                trtllm_nvfp4_hidden_alignment,
-            )
-
             # FlashInfer TRTLLM processing - handles both w13 and w2
-            align_fp4_moe_weights_for_flashinfer_trtllm(
-                layer,
-                hidden_alignment=trtllm_nvfp4_hidden_alignment(
-                    use_per_token_activation=self.quant_config.use_per_token_activation,
-                    is_gated=layer.moe_runner_config.is_gated,
-                ),
-            )
+            self._align_fp4_moe_weights_for_flashinfer_trtllm(layer)
             # TRTLLM doesn't read *_blockscale_swizzled; alias to free the
             # placeholders from create_weights.
             layer.w13_blockscale_swizzled = layer.w13_weight_scale
@@ -3472,10 +3485,15 @@ class ModelOptNvFp4FusedMoEMethod(FusedMoEMethodBase):
 
     @property
     def load_up_proj_weight_first(self) -> bool:
-        # Load W13 as [Up, Gate] for FlashInfer CUTLASS and CuteDSL v2 kernels.
-        # The CuteDSL v1 (deepep) path uses [Gate, Up] -- do NOT flip.
+        # Only weights and block scales follow the kernel's physical row order;
+        # per-tensor global scales always remain [Gate, Up]. MegaMoE and
+        # CuteDSL v1 (deepep) consume canonical [Gate, Up] weights as well.
         return self.moe_runner_config.is_gated and (
-            self.enable_flashinfer_cutlass_moe or self._is_cutedsl_v2_standard
+            # NOTE(fork): getattr default keeps CPU contract tests that build
+            # this method with __new__ working; a real __init__ always sets it.
+            getattr(self, "use_flashinfer_trtllm_weight_layout", False)
+            or self.enable_flashinfer_cutlass_moe
+            or self._is_cutedsl_v2_standard
         )
 
     def create_moe_runner(
