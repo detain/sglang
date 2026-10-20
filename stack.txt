@@ -1,6 +1,6 @@
 # stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
 #
-# STACK: qwennext-stack-229-2026-10-19
+# STACK: qwennext-stack-242-2026-10-20
 #   main+pr36787+pr37275+pr38144+pr38209+pr36644+pr39862+pr39809+pr39893+local_hicache_qsa_fixes
 #   +pr39614+pr39978+pr40002+pr39065+pr40501+pr40175+pr40362+pr39391+pr37061+pr39333+pr33778
 #   +pr38977+pr39977+pr40480+pr39880+pr40235+pr39807+cpu-triage+boot-fix+plan_updates_perf
@@ -10,7 +10,7 @@
 #   +diffusion-batch-2026-10-08(pr27673+pr28690*+pr32513+pr32550*+pr33036*+pr33588*
 #    +pr36399+pr36767+pr37460*+pr38650+pr39212+pr40493+pr40588+pr40755+pr41340*
 #    +pr41944+pr42249+pr42928*+pr43028*+pr43064*)
-#   (entries 1-229; *=squash/ported, see commit messages. 10-10 added
+#   (entries 1-242; *=squash/ported, see commit messages. 10-10 added
 #   entries 157-161: parser batch A (Qwen3-Coder tool-call fixes + sampling
 #   upper bounds), on top of upstream merge #3 (see synced). 10-10b added
 #   entries 162-166: SM120 batch B (#42863 PCIe-IPC vocab gathers, #42566
@@ -134,6 +134,33 @@
 #   record (nothing else applied). All 33 landed CLEAN with ZERO
 #   conflicts; CPU baselines MOVED -- refresh in CAVEATS.
 #   Live only after restart.
+#   10-20 added entries 230-242: THE NVFP4 ARM. 230/231 are FORK PATCHES,
+#   not ports -- 230 makes --moe-runner-backend auto publish the same value
+#   the layer resolves (under `auto` the dispatcher fed rank-LOCAL expert
+#   ids to a global-ids CUTLASS runner: rank 0 right, ranks 1-3 routing
+#   NOTHING, no exception) and adds a dispatcher mismatch warning; 231
+#   gives ModelOpt MIXED_PRECISION the shared-expert-fusion veto that
+#   modelopt_fp4 already had (a BF16 body cannot occupy a packed FP4 expert
+#   slot). 232-240 are the ports: #45151 share draft embed/head before KV
+#   sizing (+6.9% tokens, benefits the FP8 arm too), #45092 flashinfer
+#   graph-wrapper reuse (wrong-output), #45213 persistent track-state
+#   scatter, #42737 K-tile static_assert, #44861 SM12x FP8
+#   batch-invariance + masked-tail zero-fill, #44372 automatic hybrid
+#   spec-state sizing, #44150* (merged-but-missing 9ab74b8517, hand-placed
+#   in qwen4_exp.py), the #44480 update (which REMOVED one of our CUDA
+#   gates), and #45262 b12x for block-FP8-as-MXFP8 (opt-in, inert). 241 is
+#   the CPU-test maintenance batch that takes the FOUR pinned debt classes
+#   to zero failures -- test_qsa 6F -> 0F, fused_kv_prepare 146F -> 0F,
+#   unified_radix_cache_unittest 1300F -> 0F, plus mamba/swa/int8/fp8_utils
+#   -- with one stale contract genuinely FIXED instead of skipped (the
+#   deep_gemm fallback test). 242 is the NVFP4 arm record: 9c.sh rebuilt as
+#   9.sh + exactly two functional deltas, the checkpoint verified
+#   tensor-by-tensor on disk, this sweep's declines with reasons, and one
+#   SM10x-only upstream bug reported rather than guessed at. All 21 commits
+#   arrived on the 3251fbdf6a tip by fast-forward, so the merged tree is
+#   byte-identical to the battery-tested tip. PINNED BASELINES MOVED
+#   MATERIALLY -- new top bullet in CAVEATS. Live only after restart
+#   (user-driven); NOTHING pushed.
 #   10-08 added entries
 #   136-155: 20 diffusion PRs (4 more evaluated-skipped, see NOT INCLUDED).
 #   09-28 added 22 entries: 9 new PR blocks, new head
@@ -141,7 +168,7 @@
 #   make --enable-mixed-chunk safe and fix the QSA verify ring collision.
 #   * = picked with local modifications, see the entries)
 # branch : qwennext-stack
-# tip    : 2b46270c5d   (the stack.txt commit sits above it)
+# tip    : fcc0000e16   (the stack.txt commit sits above it)
 # base   : upstream sgl-project/sglang main @ 7ad55e4386 ([HiCache] TMA-staged
 #          host<->device KV transfer kernel (sm_90+) (#40278), 2026-09-21)
 # synced : upstream main @ f209e67767 (#39643, 2026-09-28) MERGED IN as
@@ -190,11 +217,11 @@
 #          at a time and cost ZERO conflicts. MERGE #5 REMAINS OWED (its
 #          conflict surface is 4-5x a per-PR batch); what the sweep
 #          looked at and did NOT pick is the review record in entry 227.
-#          MERGE #5 STILL OWED (refreshed at the 228/229 docs commit):
-#          origin/main is now 716c9151f2 = +325 commits since
-#          12dc623102 (the 319 above was the count at 417606527d earlier
-#          the same day; the extra 6 are what the FI bump took --
-#          44be30d216/#44591 -- plus churn). ONE explicit non-adoption
+#          MERGE #5 STILL OWED (refreshed at the 228/229 docs commit, and
+#          again at the 230-242 batch): origin/main is now 553836c164 =
+#          +378 commits since 12dc623102. [The 716c9151f2/+325 figure was
+#          the count at the 228/229 commit; the 417606527d/+319 one before
+#          it.] ONE explicit non-adoption
 #          from that window is load-bearing, record it before any future
 #          merge auto-resolves it: #44590 (4cca7fcd3e, sgl-kernel 0.4.9
 #          -> 0.4.10 + a _load_inline_fragment_probes_available() ABI
@@ -204,6 +231,22 @@
 #          revisit that floor AND take the probe in the same step, and
 #          conversely rolling the flashinfer wheel back requires
 #          reverting 2b46270c5d first (see entry 228).
+# updated: 2026-10-20 (entries 230-242): THE NVFP4 ARM prepared without
+#          touching the FP8 arm. Two fork patches (entry 230 makes
+#          --moe-runner-backend auto safe for ModelOpt NVFP4/mixed on
+#          SM110/SM120 -- the silent expert-id misroute that would have
+#          cost ranks 1-3 their entire FFN -- and entry 231 restores the
+#          shared-expert-fusion veto for MIXED_PRECISION), nine ports
+#          (232-240), and the CPU cleanup (241) that zeroes the pinned
+#          device-cuda debt classes. /root/run_sglang_qwenflashnext9c.sh
+#          was REBUILT from the FP8 reference: 9.sh + exactly two
+#          functional deltas (model path, --moe-runner-backend
+#          flashinfer_cutlass), verified by diffing the comment-stripped
+#          command streams; /root/run_sglang_qwenflashnext9.sh was NOT
+#          modified. The nvidia/Qwen3.8-Flash-Next-NVFP4 checkpoint is
+#          downloaded and structurally verified (entry 242), so the first
+#          NVFP4 boot is now a config question, not a download question.
+#          Code tip fcc0000e16, tree clean, NOT pushed.
 # updated: 2026-10-19 (entries 228-229): FLASHINFER 0.7.2 -- the pin, the
 #          wheel and the correction. 2b46270c5d takes upstream
 #          44be30d216/#44591 CLEAN (4 pin strings: both Dockerfiles,
@@ -2499,6 +2542,16 @@ STACK, IN BUILD ORDER (bottom first)
       # restores load-time shape consistency only -- for the NVFP4
       # trial use --moe-runner-backend auto (SM120 auto-resolves to
       # flashinfer_cutlass per create_moe_runner) or flashinfer_cutlass,
+      #   [10-20 CORRECTION -- those two are NOT equivalent, and this
+      #   sentence was the trap that entry 230 exists to close. Under
+      #   `auto` the published global stayed auto while the layer built a
+      #   FLASHINFER_CUTLASS runner, so StandardDispatcher fed rank-LOCAL
+      #   expert ids to a kernel that derives start_expert from a GLOBAL
+      #   id: rank 0 correct, ranks 1-3 routing NOTHING, no exception.
+      #   `auto` additionally put the FP8-block MTP draft on the
+      #   deep_gemm sm120 *_contiguous_1d1d family that faulted Xid 43 on
+      #   this box. Name flashinfer_cutlass (9c.sh does); entry 230 makes
+      #   auto publish the same value anyway.]
       # NOT triton. Port conflict: single 3-way conflict removing the
       # nested def (our tree's wrap-drifted copy) -- dropped in favor of
       # the hoisted helper. Battery CVD=9: modelopt/nvfp4 MoE quant CPU
@@ -3807,6 +3860,505 @@ STACK, IN BUILD ORDER (bottom first)
       # a dependency bump, so a revert of the FI bump does not take a test
       # fix with it.
 
+        230. 2caced5095  FORK PATCH: make --moe-runner-backend auto safe for ModelOpt NVFP4/mixed on SM110/SM120 (silent expert-id misroute) + dispatcher mismatch warning
+      # ONE-LINE: with `auto` published and a layer that resolves to a
+      # GLOBAL-ids runner, the dispatcher still mapped top-k ids to LOCAL
+      # ones -- every EP rank above 0 routed NOTHING, no exception.
+      # Reproduced by EXECUTING the live decision path on this tree, not
+      # inferred: (global=auto, built=flashinfer_cutlass) ->
+      # skip_local_expert_mapping=False. Table of all 10 combinations is in
+      # the commit message.
+      # Why this checkpoint trips it: ModelOptNvFp4FusedMoEMethod.
+      # create_moe_runner resolves auto+SM120 -> FLASHINFER_CUTLASS per
+      # layer (modelopt_quant.py:3186-3195, the in-tree comment names "RTX
+      # PRO 6000"), but overrides.py:1486-1490 published flashinfer_cutlass
+      # ONLY for a DECLARED view.quantization == "modelopt_fp4". A flagless
+      # MIXED_PRECISION checkpoint declares nothing (modelopt_mixed is
+      # derived in ModelConfig), and the qwen4 family override
+      # (model_overrides/qwen3_moe.py:29-91) sits entirely inside
+      # `if get_platform().is_sm100:` -- that is the hole.
+      # StandardDispatcher decides the id space from the PUBLISHED global
+      # (standard.py:141) and entry-206's rescue is one-directional by
+      # design ("the runner only ever turns the mapping on"), so the
+      # opposite case was never examined. FlashInfer's CUTLASS MoE derives
+      # start_expert = num_experts_per_node * ep_rank FROM THE IDS (cutlass_
+      # fused_moe_kernels.cuh:4254-4261), so local ids on rank 2 are all
+      # below start_expert and get masked; the EP sum is downstream
+      # (reduce_results=False) => a silently 3/4-missing FFN that still
+      # prints plausible text.
+      # FIX (a) overrides.py +58: new _checkpoint_quantization_or_none(view)
+      # reads model_config_of(view).quantization behind a fail-safe
+      # try/except; the auto branch now fires for ("modelopt_fp4",
+      # "modelopt_mixed") on is_sm120/is_sm110. Safe by construction --
+      # modelopt_mixed exists only when some layer is NVFP4/W4A16_NVFP4
+      # (configs/model_config.py:1746-1756), so the published value always
+      # matches at least one layer. Shape mirrors what upstream already does
+      # for other families (model_overrides/nemotron_h.py:31-55,79-101;
+      # minimax_m3.py:81 handles auto + modelopt_mixed). The SM100 sibling
+      # in qwen3_moe.py:78-90 picks flashinfer_trtllm -- an arch-keyed table
+      # would unify all three; NOT pre-empted here, flagged for merge #5.
+      # FIX (b) standard.py +48: once-per-(published,built) logger.warning
+      # when the built runner keeps global ids while the published backend
+      # does not and moe_ep_size > 1. A RAISE was deliberately rejected:
+      # --quantization modelopt_fp4 + auto on SM100 legitimately produces
+      # this shape (create_moe_runner -> TRTLLM, also global-keeping) and
+      # that combination space cannot be enumerated or tested on this host.
+      # REJECTED ALTERNATIVE, recorded so nobody re-derives it: making the
+      # dispatcher two-directional (skip = keeps(global) or keeps(built)).
+      # The LoRA expert pool, _MASK_DP_PAD_MOE and
+      # _fuses_routed_scaling_factor_in_topk all key off the GLOBAL
+      # convention (standard.py:152-156, layer.py:105-125); that variant
+      # changes behaviour for every `auto` user and silently disagrees with
+      # the LoRA guard.
+      # TESTS in the EXISTING harnesses (no new files):
+      # test_model_overrides.py::test_moe_runner_quant_constraint_pass
+      # (111P/1S/175sub -> 179sub = +4 loop subtests, 0 regressions) and
+      # test_standard_dispatcher_runner_backend.py (1P -> 12P, incl.
+      # test_published_and_built_runner_agree_for_nvfp4_mixed_on_sm120 and
+      # test_explicit_triton_pin_is_left_alone). Red proven by stashing the
+      # two source files: 4F/8P + hook failure.
+      # FP8 PROD UNAFFECTED, three independent gates: 9.sh pins
+      # --moe-runner-backend triton so the auto branch is never entered;
+      # the branch also requires one of the two NVFP4 names, and a pure-FP8
+      # checkpoint derives "fp8"/"modelopt_fp8" (MIXED_PRECISION yields
+      # modelopt_mixed only with an NVFP4 layer, otherwise w4afp8); and a
+      # subTest loop pins exactly that
+      # (for cfg_quant in ("fp8","modelopt_fp8","w4afp8",None): hook == {}).
+      # KNOWN GAP, documented in the code comment: an explicit
+      # --quantization modelopt on SM120 still has to name the runner.
+      # CORRECTS entry 205's launch advice (annotated in place there):
+      # `auto` and `flashinfer_cutlass` were NOT equivalent before this.
+      # LIVE ONLY AFTER RESTART.
+
+        231. fcc0000e16  FORK PATCH: ModelOpt MIXED_PRECISION refuses shared-expert fusion for a BF16 body (the veto modelopt_fp4 already had)
+      # ModelOptFp4Config.can_fuse_shared_expert (modelopt_quant.py:1533)
+      # exists because "a shared-expert body kept BF16 via exclude_modules
+      # cannot share the packed FP4 FusedMoE buffers" -- fusion loads that
+      # body as one more packed, scale-carrying expert slot. The MIXED_
+      # PRECISION config never grew the method, and qwen2_moe.py:163 reads it
+      # via getattr(..., None) whose own comment says a missing method
+      # "intentionally falls through and remain[s] fusable" -- true for FP8
+      # shapes, wrong for mixed ones, which state the BF16 body in the SAME
+      # ignore list.
+      # Neither other layer catches it: _moe_runner_fusion_disable
+      # (overrides.py:1500-1523) auto-disables for flashinfer_cutedsl /
+      # flashinfer_trtllm / flashinfer_trtllm_routed but NOT
+      # flashinfer_cutlass -- precisely the runner SM120 must use; and the
+      # model-level gate _qwen3_5_shared_experts_fusion_disable_reason
+      # (qwen3_5.py:2930, installed by install_shared_experts_fusion_decision
+      # moe/utils.py:618) returns None on anything but ROCm, so qwen4 asks no
+      # question on CUDA.
+      # Verified against the REAL checkpoint (now on disk, entry 242): its 292
+      # exclude_modules contain
+      # model.language_model.layers.{0..47}.mlp.shared_expert* while
+      # quantized_layers lists only *.mlp.experts -> the block would set
+      # num_fused_shared_experts=1 and the loader would remap BF16 weights
+      # into FP4 buffers. Silent wrong weights, not a crash.
+      # FIX mirrors the Fp4Config predicate onto the mixed config, reading
+      # this config's own exclusion list. NOTE in code: the mixed config
+      # builds its nvfp4_config child with exclude_modules=[], so delegating
+      # there would always answer "fusable". Kept OFF the shared base class
+      # on purpose -- that would also change the answer for modelopt /
+      # modelopt_fp8 checkpoints, a behavior change unvalidatable here.
+      # FP8 arm cannot move: it loads quantization="fp8" (Fp8Config, no such
+      # method) and keeps today's fusion.
+      # TESTS, both proven red at the parent commit (source file stashed:
+      # 2 failed / 58 passed): test_modelopt_nvfp4.py::
+      # test_mixed_precision_applies_the_same_fusion_rule (BF16 body + the
+      # two controls that must STAY fusable: gate-only exclusion, unrelated
+      # exclusion) and test_shared_experts_fusion_gates.py::
+      # TestModelOptMixedBody (the consumption path through
+      # qwen2_moe.can_fuse_shared_expert, the function the block calls).
+      # Boot needle on the NVFP4 arm after this:
+      # "Shared experts fusion optimization is disabled." once per rank.
+      # LIVE ONLY AFTER RESTART.
+
+        232. c6c68b7a4b  PR #45151  share the draft embed/lm_head before the target KV pool is sized (+6.9% KV tokens -- BENEFITS THE FP8 ARM TOO)
+      # EagleWorkerV2.__init__ now calls _share_embed_and_head() (new,
+      # idempotent via _embed_and_head_shared) right after the draft
+      # TpModelWorker is built, instead of waiting for alloc_memory_pool.
+      # The draft builds and loads its own embed_tokens/lm_head during that
+      # worker's model load; only init_lm_head() hands them to the target's
+      # tensors. The scheduler profiles free memory for the TARGET KV pool
+      # before alloc_memory_pool runs, so those two duplicate tensors were
+      # still resident at profiling time => max_total_num_tokens
+      # permanently undersized (author measured +6.9%).
+      # Ordering re-verified by reading the constructor on this tree: the
+      # draft worker is built ~30 lines earlier in the same __init__, and
+      # alloc_memory_pool still calls the idempotent wrapper, so the old
+      # path is unchanged (spec share 2P, DIR_spec 335P/9S/180sub).
+      # cherry-pick -x b071b90d48, ZERO conflicts, eagle_worker_v2.py drift
+      # vs the PR base was exactly zero. New CPU test
+      # unit/spec/test_eagle_share_embed_and_head.py (2P) is inside the 335.
+      # GPU debt this creates: read the actual max_total_num_tokens gain at
+      # the prod TP4/NEXTN boot (expect ~+400k on the 6,111,616 baseline) and
+      # confirm no double-share against our own draft-init path.
+
+        233. 44444320ea  PR #45092  flashinfer: reuse the CUDA-graph wrappers when a batch size is captured twice (wrong-output class)
+      # _prepare_cuda_graph_metadata(bs) unconditionally overwrote
+      # decode_cuda_graph_metadata[bs] / prefill_cuda_graph_metadata[bs]
+      # with FRESH wrappers. Anything that captures the same bs twice (two
+      # graph families -- e.g. target + draft, or our registered
+      # create_attention_graph_variants / create_dsv41_candidate_graph_
+      # variants) left the FIRST family replaying wrappers that nothing
+      # updates any more: stale batch indices / sequence lengths, i.e. wrong
+      # output rather than an error. It now reuses the stored wrappers when
+      # present (flashinfer_backend.py:1329-1352).
+      # ACTIVE on this stack: our graph_variants do capture the same bs
+      # twice. cherry-pick -x c0d77c4080 auto-merged despite +279/-50 drift
+      # on the file (entries 175/176/178/192/208 live there); the hunk is
+      # local to the anchor. RE-READ after landing: the ragged-list route
+      # (prefill_wrappers_ragged) still passes None on graph replays and
+      # falls back to self.prefill_wrapper_ragged with extend_no_prefix as
+      # the 3rd positional -- entry-175 semantics intact, verified.
+      # New test test_flashinfer_graph_variant_wrappers.py 2P; the whole
+      # flashinfer CPU set stayed exact (autotune_gate 9P, autotune_sync
+      # 9P/1S/5sub, kv_loc_plan 14P, full_loc 11P/4sub, phys_write 11P,
+      # dense_fused_draft 9P, nvfp4_spec 6P). GPU debt: re-capture
+      # correctness with register_variant graphs and confirm both families
+      # replay valid indices.
+
+        234. bd611593d7  PR #45213  mamba: copy tracked decode states in ONE persistent launch at HBM bandwidth
+      # track_mamba_state_if_needed_kernel rewritten to a persistent-grid
+      # kernel with in-kernel compaction (one launch over bs x layers x
+      # 32 KB row items instead of a per-layer grid), sharing
+      # _launch_track_mamba_states between the two public entry points.
+      # Runs on EVERY decode step under the mamba radix cache, so this is an
+      # active path for prod, not a corner.
+      # Also useful for entry 211: do_not_specialize on batch_size and
+      # num_layers removes per-bs specialization classes, shrinking the
+      # late-cubin surface the prewarm has to cover
+      # (mamba_state_scatter_triton.py:55).
+      # cherry-pick -x 9369b69e3d (2 files, clean; our +10/-19 drift is in
+      # three OTHER functions -- fused_conv_window_scatter_with_mask numel
+      # guard, _conv_multi_eligible contiguity, scatter_mamba_states_after_
+      # mtp_verify(skip_ssm=) from entry 203 -- all verified untouched).
+      # API re-checked against our call sites (hybrid_linear_attn_backend.py
+      # :1004/:1014/:1166): both public functions keep check_freed_slots.
+      # kernels_namespace STILL 76P (no KernelSpec added); track_state_dtype
+      # 8P/9sub, mixed_mamba_track 7P, mamba_state_scatter 2P/5S; the PR's
+      # own new file test_mamba_track_states_triton.py = 6S here (it ships
+      # its own CUDA gate). GPU debt: bit-exactness vs the old per-layer
+      # kernel incl. the -1 freed-slot skip, and the recompile count.
+
+        235. dea32df769  PR #42737  MoE: static_assert that a K tile never crosses a block-scale boundary + a config scan test
+      # tl.static_assert(group_k % BLOCK_SIZE_K == 0) in the block-scaled
+      # fused-MoE kernel: a BLOCK_SIZE_K that does not divide the group
+      # silently reads the wrong scale, so it must be a compile error. The
+      # PR also ships a CPU test that scans every shipped tuned config.
+      # Ran that scan over ALL 101 block-scaled profiles in the tree:
+      # exactly 4 violations, all four BLOCK_SIZE_K: 256 rows
+      # (tokens 64/128/256/512) in
+      # configs/triton_3_5_1/E=512,N=256,...block_shape=[128, 128].json,
+      # which this PR rewrites to 128. OUR Max-Q mirrors (triton_3_7_1 /
+      # triton_3_8_0, entries 172/27) are CLEAN, so no fork JSON change was
+      # needed and the assert cannot break our boots. RED proof: the test
+      # fails at the parent commit on exactly those rows; 4P after.
+      # Complements entry 163's TP-shard clamp: w2_block_k =
+      # gcd(block_k, shard) always divides block_k, and group sizes and
+      # tuned BLOCK_SIZE_K are powers of two, so fork-refined shapes satisfy
+      # the assert by construction.
+      # Only conflict was the test file (1 UU) -- resolved as the UNION of
+      # our two entry-27/172 tests and the PR's scan test.
+
+        236. 68b6ca60e2 + d0c1d88fac  PR #44861  modelopt SM12x FP8: batch-invariant linear under --enable-deterministic-inference, and zero-fill the masked K tail (two commits)
+      # Split on purpose so each reverts alone.
+      # 5a (68b6ca60e2): apply_fp8_linear_deterministic in fp8_utils.py +
+      # a new branch in ModelOptFp8LinearMethod.apply() BEFORE the
+      # use_sm120_fp8 fast path (modelopt_quant.py:559 sets that attribute
+      # for any capability major 12, i.e. for US), gated on
+      # get_exec().deterministic.enable_deterministic_inference -- OFF by
+      # default, so prod does not change. This is the FP8 arm of the
+      # prefill-vs-cache-hit KL work on this stack. Ported as the NET diff
+      # (git diff 9c7b338a19..5f90880cc2 | git apply -3, 3 files clean);
+      # the head commit alone conflicts and would have dropped the first
+      # commit's test. test_sm120_fp8_linear.py self-gates on cc==12.0 ->
+      # 1 skipped here, 14 CUDA tests owed to the GPU window.
+      # 5b (d0c1d88fac): tl.load(..., other=0.0) in the SHARED
+      # scaled_mm_kernel (kernels/ops/gemm/fp8_kernel.py) -- NOT
+      # deterministic-gated, so it deserved its own commit and a real
+      # audit. VERDICT: prod FP8 behaviour does not change. Masked lanes
+      # exist only when K % BLOCK_SIZE_K != 0; our tuned channelwise block
+      # sizes (64..1024) divide the in-tree K values (4096, 12288) exactly,
+      # the only *fp8_w8a8_channelwise.json shipped are NVIDIA_L40S (so
+      # get_w8a8_channelwise_fp8_config() returns None on RTX PRO 6000 and
+      # the Triton branch is not even taken), and prod pins
+      # --fp8-gemm-backend cutlass. Zero drift, blob-identical file.
+      # Quant CPU set exact: modelopt_nvfp4 8P/5sub (before entry 231's
+      # +1), dispatch 3P/5sub, scales 17P/30sub, selection 3P.
+
+        237. 1a6d6554b6  PR #44372  fit automatic hybrid speculative state caches to memory (new Derived: max_running_requests_is_explicit)
+      # Fixes #44355: when --max-running-requests is NOT given, the hybrid
+      # (attention + mamba) spec state cache was sized from a batch count
+      # that the memory budget had already rejected. Adds a Derived flag for
+      # "the user pinned it" and a memory-based fallback in
+      # kv_cache_configurator.
+      # LATENT ON PROD TODAY: 9.sh/9c.sh pin --max-running-requests 96, so
+      # the explicit path is taken and behaviour is byte-identical. The
+      # value is for NVFP4-arm boots where the pin gets dropped to let the
+      # freed weights buy concurrency -- and for #44372's own test.
+      # cherry-pick -x a480754056 clean (arg_groups/fields/schedule.py was
+      # byte-identical to the PR base; kv_cache_configurator.py carries our
+      # +161/-28 from entries 186/200/205/219 and the hunks landed disjoint,
+      # reusing entry 203's _spec_intermediate_bytes helper -- NOTE(fork)
+      # recorded at the call site). Verified --max-mamba-cache-size /
+      # --mamba-full-memory-ratio / --cuda-graph-max-bs-decode handling is
+      # unchanged by reading both call sites: the new pre-check sits BEFORE
+      # them. hook_registry 10P (the new Derived registers cleanly),
+      # mamba_budget 4P/2sub, pool_configurator 59P/4S/23sub,
+      # hicache_mamba_sizing 30P/17sub, donated 16P/14sub all exact.
+      # GPU debt: boot one UN-PINNED arm and read the auto-fitted state
+      # pool + the freed-KV delta.
+
+        238. aa9a2e8e42  hand-port of MERGED-but-missing 9ab74b8517 (#44150)  Qwen3.8next: stop retaining per-size PLE outputs inside breakable prefill graphs
+      # `git merge-base --is-ancestor 9ab74b8517 HEAD` = FALSE: upstream
+      # merged it but our branch predates it, so it arrives here as its own
+      # cherry-pick rather than silently waiting for merge #5.
+      # _add_ple_embedding now allocates output = torch.empty_like(residual)
+      # OUTSIDE the @eager_on_graph(True) piece and _breakable_ple_forward
+      # fills the caller's buffer (torch.add(..., out=output); the idle
+      # branch is output.copy_(hidden_states)). Previously every captured
+      # batch size retained its own PLE output tensor for the lifetime of
+      # the graph -- same family as the entry-210/211 prefill-OOM work,
+      # one notch smaller.
+      # Placed by HAND in models/qwen4_exp.py, our most-diverged file
+      # (+981/-82 vs the PR base); both pre-images were byte-identical so
+      # the patch applied clean anyway. Entry 207's ple_warned_downcast
+      # (qwen4_exp.py:3271/:3274) and the host-staging
+      # _BreakablePLEBatch/prepare_rows path re-verified intact.
+      # PLE CPU set EXACT: ple_staging 37P, packed_short_conv 2P/1S,
+      # loader_lifetime 3P/4sub, prefill_graph_helpers 22P/14sub, PLE
+      # siblings 44P/11S. GPU debt: the retained-bytes drop, and bit-
+      # equality of packed-vs-padded PLE through a REPLAYED graph (buffer
+      # identity changed -- that is the real risk of this one).
+
+        239. 2d7bdee9a7  PR #44480 UPDATE (entry 206 follow-up)  dispatcher ownership clarification + upstream's own CPU regression test
+      # Net of the PR's 4 later commits onto our already-ported #44480:
+      # layer.py reads quant_method.runner directly (verified safe --
+      # FusedMoEMethodBase.runner is a CLASS attribute defaulting to None at
+      # quantization/base_config.py:98, so the ~20 quant methods that never
+      # assign a runner are fine), standard.py drops a now-redundant
+      # branch, and the CPU test lands.
+      # Consequence worth having: upstream's test is device-agnostic, which
+      # let me DELETE our skipUnless(torch.cuda.is_available()) gate on the
+      # one tensor-level id-mapping node -> the dispatcher file went 6P/1S
+      # (entry-225 state) to 7P with no gate. Debt removed, not added.
+      # DECLINED: upstream's 2-line rewrite of our dispatcher-ownership
+      # comment -- kept our longer in-tree text, folded in only the new
+      # "(ownership: the built runner may only widen it)" parenthetical.
+      # Entry 206's semantics re-verified on the final tree:
+      # _keeps_global_expert_ids :112, skip_local_expert_mapping :147, the
+      # one-directional rescue :154-170, the -1 sentinel, and
+      # _MASK_DP_PAD_MOE applied AFTER the translation. mem_pool_ep 49P/
+      # 4sub, placement+extensions 13P exact.
+
+        240. dd18505aff  PR #45262  FlashInfer b12x for block-fp8-as-MXFP8 linears on SM12x (OPT-IN; inert while prod pins cutlass)
+      # +14 lines in fp8_utils.dispatch_block_fp8_mxfp8_linear: under
+      # --fp8-gemm-backend flashinfer_cutlass, route to
+      # backend="b12x" when the block-FP8-as-MXFP8 weight's K is a multiple
+      # of 128, else stay on cutlass. Gated by
+      # _raw_flashinfer_mm_mxfp8.is_backend_supported("b12x",
+      # get_device_sm()), which this branch PROBED on both installed wheels
+      # (0.6.18 and prod 0.7.2): True on 120/121, False on 100/103. So the
+      # A/B arm is selectable here, unlike entry 225's declined
+      # auto->b12x DEFAULT FLIP for dense FP4 -- that stays declined, and
+      # this PR does not reopen it (different family: mm_mxfp8 vs mm_fp4).
+      # Shape-check question from the brief, RESOLVED: weight.shape[1] does
+      # test K, not N. _prepare_block_fp8_as_mxfp8 unpacks
+      # `n, k = layer.weight.shape` and never rewrites layer.weight;
+      # apply() passes it unchanged; flashinfer_mxfp8_blockscaled_linear
+      # validates k_w = weight.shape[1] against the input width and hands
+      # flashinfer weight.t(). A (K,N) weight would fail every non-square
+      # layer. Ported byte-faithfully, NO NOTE(fork) -- adding one would
+      # assert a defect that does not exist. Reasoning recorded in the
+      # commit body so a future sweep does not re-flag it.
+      # Prod does not execute this path (block-FP8 linears here go through
+      # the cutlass pin), so it is inert by configuration, not by gate.
+      # fp4_b12x 12P, autotune_gate 9P, fp8_blockwise_backends 22S,
+      # mxfp8_amd 4S all exact. GPU debt: b12x-vs-cutlass MXFP8 numerics
+      # and throughput for a [x,32]-ue8m0 checkpoint (dsv41flash family),
+      # and whether pin_tactic=True is right for b12x's small-M tiles.
+
+        241. bb24abf1b6..545c66d5ae (9 commits)  CPU-test maintenance: the four pinned device-cuda debt classes go to ZERO failures with honest skips, plus one stale contract FIXED
+      # Per the standing directive (fix what is really broken; gate only the
+      # genuinely device-bound). Every population was classified from its
+      # traceback BEFORE touching anything. No logic failures found in the
+      # 6-qsa / 146-fused_kv / 1300-URC / 26-swa / 10-mamba sets -- they are
+      # all "the fixture's FIRST statement needs a device".
+      #   bb24abf1b6 test_qsa.py -- the 6F were ONE function,
+      #     test_qsa_draft_metadata_multi_step_graph[0|1-1|3|128], failing at
+      #     :3213 torch.arange(..., device="cuda"); it captures a real
+      #     CUDAGraph. Gated with the two direct neighbours' own in-body
+      #     idiom. 6F/76P/134S -> 0F/76P/140S, 216 nodes unchanged.
+      #   fab2ef4eea test_qsa_fused_kv_prepare.py -- 146F across 7 module
+      #     functions (:33/:134/:177/:259/:329/:364/:474), ZERO stale stubs:
+      #     the _qsa_write_plan 7->8-tuple contract from entries 184/200 is
+      #     exercised by the CPU-PASSING test_fused_pool_eligibility, left
+      #     UNGATED on purpose. Module-level requires_cuda skipif, the
+      #     sibling-suite convention. 146F/12P -> 0F/12P/146S.
+      #   f295b3f605 test_fp8_utils.py -- UE8M0 round-trip needs deep_gemm's
+      #     TMA-aligned layout + the Triton quant kernel: gated with the
+      #     file's own setUpClass SkipTest idiom. 1F/2P/5S -> 0F/2P/6S.
+      #   2fd8b47ac0 test_int8_linear_methods.py -- 6 SUBFAILED in
+      #     _Int8LinearCheck._check:82. Note the trap: the file's existing
+      #     @skipIf(get_device_sm() >= 100) CANNOT cover it because
+      #     get_device_sm() returns 0 device-less, so the comparison is
+      #     False. Gated once in the shared setUpClass. 6F/2P -> 0F/2S.
+      #   e4b48308a6 test_fp8_moe_tp_block_refine.py -- the 1F was raised
+      #     INSIDE setUpClass (torch.set_default_device("cuda")), so
+      #     per-test gating would not have helped; class-level skipUnless.
+      #     Disclosed: test_deep_gemm now skips with the class reason on
+      #     device-less hosts; entry-163's pure-python refinement math stays
+      #     CPU-covered by test_deepgemm_ue8m0_requant (8P). 1F/1S -> 0F/2S.
+      #   693dd9cb08 test_flashinfer_trtllm_fp8_fallback.py -- NOT a CUDA
+      #     case, a STALE CONTRACT, and the only real FIX here. The
+      #     [backend=deep_gemm] subTest asserted a selection that cannot
+      #     exist device-less: ENABLE_JIT_DEEPGEMM is False by construction
+      #     when get_device_sm() == 0 < 90, so fp8_utils.py:1025 raises the
+      #     loud refusal. The test now pins THAT (assertRaisesRegex
+      #     "DeepGEMM") where the backend is not selectable and runs the
+      #     original assertions where it is -- the CPU lane gains a check of
+      #     a production error path. 1F/6P/1sub -> 0F/6P/2sub.
+      #   96c04ac80f test_unified_radix_cache_unittest.py -- 1300F, 100%
+      #     no-device, through ONE choke point (device = get_device() in
+      #     build_fixture():638; 2575 traceback frames). Class-level gates
+      #     were rejected: the 19 generated matrix classes contain 12 CPU
+      #     PASSES, so the skip sits at the fixture and is self-healing.
+      #     1300F/44P/1585S (434 s) -> 0F/44P/2885S/4sub (12.4 s); all 44
+      #     passes preserved, 1585+1300 == 2885 exactly.
+      #   b00a3532e2 test_mamba_unittest.py (10F, 5 get_device() sites ->
+      #     one module-local _fixture_device()) and 545c66d5ae
+      #     test_swa_unittest.py (26 = 13 FAILED + 13 SUBFAILED through only
+      #     two constructors; four "passing" parents are HOLLOW -- every
+      #     subtest fails). SWA first attempt used 13 method decorators and
+      #     was REVERTED: this file guards the stack's SWA-window
+      #     customizations, the device need belongs to the fixture. 10F/2P ->
+      #     0F/2P/10S and 26F/4P/7S -> 0F/4P/33S (7+26 == 33).
+      # ANCHORS HELD: kernels_namespace still 76P (no KernelSpec added or
+      # removed anywhere in the batch) and DIR_spec still 335P/9S/180sub.
+      # HONEST COST, stated plainly: ~3,100 newly-honest skips are
+      # UNEXECUTED coverage, not passing coverage. The QSA 146, the 6
+      # draft-graph nodes, the UE8M0/INT8/refine 8, URC 1300, SWA 26 and
+      # mamba 10 now live in the GPU lanes -- that is where the assertions
+      # went, and it is why the GPU-window debt list keeps growing rather
+      # than shrinking.
+      # THE ONE FAILURE THAT REMAINS IN THIS BATCH, DELIBERATELY UNTOUCHED:
+      # test_shared_experts_fusion_gates.py::
+      # ...test_pixtral_only_asks_for_its_mla_backbone -- ImportError: cannot
+      # import name 'PixtralVisionRotaryEmbedding' from transformers. That
+      # symbol is newer than .venv2's transformers 5.12.1; the repo pins
+      # 5.19.0 (python/pyproject.toml:95) and the PROD venv has exactly
+      # 5.19.0, where the same file runs 49P/11sub/0F. Venv skew in the
+      # older test environment, not a CUDA case and not a logic bug -- so
+      # neither gate nor fix applies. Noted for whoever next aligns .venv2.
+      # Lint: check_registered_tests.py + check_no_bare_pytest_main.py rc=0;
+      # ruff repo ruleset + format clean over all 31 files the batch touches;
+      # import smoke 8/8. LIVE ONLY AFTER RESTART.
+
+        242. no code  the NVFP4 ARM record -- 9c.sh rebuilt from the FP8 reference, the checkpoint verified on disk, and this sweep's declines
+      # /root/run_sglang_qwenflashnext9c.sh is now 9.sh with EXACTLY TWO
+      # functional deltas, machine-verified by diffing the comment-stripped
+      # command streams (49 lines each): --model-path
+      # nvidia/Qwen3.8-Flash-Next-NVFP4 and --moe-runner-backend triton ->
+      # flashinfer_cutlass (plus the log name). Everything the FP8 arm was
+      # measured with carries over, so any behaviour difference is the
+      # quantization. Backups: /tmp/opencode/run_sglang_qwenflashnext9*.bak-
+      # 20261020. 9.sh itself was NOT modified.
+      # MUSTS encoded in it: explicit flashinfer_cutlass (triton ->
+      # NotImplementedError at modelopt_quant.py:3437; auto -> entry 230
+      # before, and the DeepGEMM Xid-43 path for the FP8-block draft either
+      # way); --kv-cache-dtype fp8_e4m3 EXPLICIT (the checkpoint's
+      # kv_cache_quant_algo is present-but-null, so `auto` silently yields
+      # BF16 KV -- and `nvfp4` KV has NO boot gate but dies inside QSA at
+      # the first forward, qsa/sparse_attn.py:41-46/:1519-1531, while still
+      # allocating a full-size FP8 dequant workspace, i.e. no memory win);
+      # NO --fp4-gemm-backend (there is not one dense FP4 linear in this
+      # checkpoint, and the boot autotune fires from the FP8 branch at
+      # flashinfer_autotune.py:148-149 regardless); SGLANG_QSA_CHUNK_PREFILL_
+      # KV_SOURCE=paged kept (that OOM is geometry-driven, not
+      # quantization-driven); HiCache PARKED off for boot #1 with the
+      # store-purge warning (entries 178/186/199/209 changed the formats and
+      # entry 196 does not retro-fix cached states); the mem-fraction ladder
+      # 0.89 -> 0.85 -> 0.80 for a LOAD OOM only; boot checklist (k)-(q).
+      # CHECKPOINT VERIFIED ON DISK (the user downloaded it; this is a
+      # structural check, not a trust-me): ref fc694b54fb01..., 11 shards,
+      # every safetensors header parsed, every tensor's data range inside its
+      # file, 299,545/299,545 indexed tensors found, and the tensor-byte sum
+      # is EXACTLY the index's total_size = 132,639,846,394 (files total
+      # 132.68 GB, the difference being header bytes -- shard 10 is
+      # legitimately 122 MB and model-fp8-mtp-ple.safetensors is 53.7 GB).
+      # hf_quant_config.json IS PRESENT (23,001 B) -- it is LOAD-BEARING:
+      # config.json lacks kv_cache_quant_algo/kv_cache_scheme, so
+      # weight_utils.py:284-298 marks the mixed config incomplete and reads
+      # that file; a mirror that copies only *.safetensors + config.json +
+      # tokenizer dies at boot with "Cannot find the config file for
+      # modelopt_mixed". If you script the copy, include it.
+      # Resolved through our OWN loader on the real JSONs: quantization
+      # modelopt_mixed, min_capability 80, kv_cache_quant_algo None,
+      # layers.*.mlp.experts = NVFP4 group 16, mtp.layers.0.mlp.experts =
+      # FP8_BLOCK_SCALES with weight_block_size [128,128] (the last input
+      # that could not be read before the download -- it is what makes
+      # `auto` reach deep_gemm_sm120.auto_enabled() for the draft), the
+      # PLE ngram table FP8, the shared-expert body None (=> entry 231),
+      # and the yarn/mrope override transferring verbatim (rope_parameters
+      # is byte-identical to the FP8 sibling's).
+      # Size arithmetic for the boot: ~20.3 GB/rank of device weights at
+      # TP4+EP4 vs ~33.5 GB/rank FP8 => ~12.3 GB/GPU freed => expect
+      # max_total_num_tokens to climb from 6,111,616 toward ~8.3-8.5M at the
+      # same --mem-fraction-static 0.89 (using this box's own measured
+      # ~5.7 kB/pool-token). READ THE BOOT DUMP; entry 232 pushes the same
+      # number up from the other side.
+      # UPSTREAM CORROBORATION found while writing it: the DeepSeek-V4.1
+      # cookbook (docs/cookbook/autoregressive/DeepSeek/DeepSeek-V4_1.mdx:
+      # 245) documents the identical SM12x requirement for a
+      # routed-experts-only NVFP4 checkpoint -- explicit
+      # --moe-runner-backend flashinfer_cutlass because "b12x's MoE is
+      # MXFP4-only and trtllm-gen kernels are sm100-only" -- plus
+      # --disable-shared-experts-fusion there for HashTopK. That last flag
+      # is NOT needed here as of entry 231, which makes the checkpoint
+      # refuse fusion by itself.
+      # NOT PORTED from this sweep, with reasons (entry 227's verdicts were
+      # not re-litigated): #45263 RTX PRO 5000 triton_3_8_0 block-FP8 JSONs
+      # -- INERT, keyed to a different device name; COPY THE METHOD for the
+      # Max-Q retune owed since entry 172. #45261 deepseek_v4-only crash
+      # fix. #45264 DSV4 mHC BLOCK_K. #44792 SM121-only (the author measured
+      # an SM120 regression -- do not widen it ourselves). #44974 ep_scatter
+      # single-writer prefixes (inert: no --moe-a2a-backend). #43795 /
+      # #44030 / #45091 (HiCache registration / notify / SWA ragged prefill
+      # -- inert while L3 is parked and with no SWA layers). #41968 mamba2
+      # compact speculative replay (mamba2 != GDN, 6 conflicted files).
+      # #43471 native NVFP4 prefill via kv_cache_sf (~5.3k lines, would
+      # RETIRE entries 178/192/208 -- dedicated window). #44690 (deletes
+      # test_replayssm_ring_fold.py, the guard for entry 168). #44500
+      # nvfp4_online buffer ownership (arrives with merge #5, and we load
+      # serialized ModelOpt anyway). #44760 FLAG stays up: its
+      # _mtp_quant_config returns None for a SERIALIZED nvfp4 draft, so if
+      # nvidia ever ships one the NEXTN draft would go unquantized.
+      # #41288/#41289 compressed-tensors MXFP4 marlin: not our checkpoint,
+      # but they touch marlin_utils_fp4.py where entry 190 lives -- keep the
+      # conflict watch.
+      # PRE-EXISTING UPSTREAM BUG FOUND AND REPORTED, DELIBERATELY NOT
+      # FIXED: fp8.py:1256-1267 adds extra_kwargs["pin_tactic"] whenever
+      # mxfp8_prefill_autotune_min_tokens is set, but that attribute is only
+      # ever set for flashinfer_cutedsl (:553-554), whose dispatched callable
+      # is partial(flashinfer_mxfp8_blockscaled_linear, backend="cute-dsl",
+      # pin_tactic=True) -> duplicate-keyword TypeError at the first
+      # >=4096-token prefill. Unreachable on this stack (cute-dsl is not
+      # supported on cc120 and prod pins cutlass) and unreachable for the
+      # cutlass/b12x callables; guessing at tactic-pinning semantics, which
+      # are batch-invariance-adjacent, would be worse than reporting it.
+      # Needs an SM10x owner.
+      # GPU-WINDOW DEBTS FOR THIS ARM, top of the list: the FIRST real NVFP4
+      # boot (the entry-230 warning must stay SILENT and ranks 1-3 must route
+      # non-degenerately -- that is the decisive test of this whole batch),
+      # flashinfer's SM120 CUTLASS FP4 grouped-MoE JIT (flashinfer-jit-cache
+      # is NOT installed, so boot #1 compiles and needs a working nvcc; the
+      # 12.9 toolkit vs the torch cu130 wheel is worth a look), entry 231's
+      # fusion-disabled needle + accuracy A/B vs the FP8 arm, the ~12.3
+      # GB/rank freed-to-KV measurement, and #45262's b12x arm.
+      # MERGE #5 STILL OWED: origin/main moved to 553836c164 during this
+      # sweep = +378 commits since 12dc623102. Nothing was pushed.
+
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
 ==============================================================================
@@ -4036,6 +4588,53 @@ WATCH LIST (re-evaluate before next sync)
 ==============================================================================
 CAVEATS
 ==============================================================================
+
+  * CPU-BATTERY DIFFS 2026-10-20 (entries 230-242, measured on the tree at
+    fcc0000e16). Method unchanged: PER-FILE runs, CVD=9, PYTHONPATH set for
+    worktrees. Everything NOT listed here was re-confirmed EXACT against
+    the table below. THE HEADLINE: the four long-standing pinned debt
+    classes are now ZERO-FAILURE, and the numbers below are the NEW pins.
+      test_qsa.py  6F/76P/134S -> 0F/76P/140S  (the 6F were ONE function,
+        test_qsa_draft_metadata_multi_step_graph, capturing a real
+        CUDAGraph; 216 nodes unchanged)
+      test_qsa_fused_kv_prepare.py  146F/12P -> 0F/12P/146S  (same 12 CPU
+        passes; the CPU-passing 8-tuple contract test stays UNGATED)
+      test_unified_radix_cache_unittest.py  1300F/44P/1585S/4sub (434 s)
+        -> 0F/44P/2885S/4sub (12.4 s)  (all 44 passes preserved;
+        1585+1300 == 2885 exactly; the skip sits at the single
+        build_fixture get_device() choke point so it is self-healing)
+      test_mamba_unittest.py  10F/2P -> 0F/2P/10S;  test_swa_unittest.py
+        26F/4P/7S -> 0F/4P/33S;  test_fp8_utils.py  1F/2P/5S -> 0F/2P/6S;
+        test_int8_linear_methods.py  6F/2P -> 0F/2S;
+        test_fp8_moe_tp_block_refine.py  1F/1S -> 0F/2S
+      test_flashinfer_trtllm_fp8_fallback.py  1F/6P/1sub -> 0F/6P/2sub --
+        NOT a skip: the [backend=deep_gemm] subTest asserted a selection
+        that cannot exist device-less (ENABLE_JIT_DEEPGEMM is False when
+        get_device_sm()==0), so it now pins the loud refusal instead and
+        the CPU lane GAINED a check of a production error path.
+      HONEST COST: ~3,100 newly-honest skips are UNEXECUTED coverage, not
+        passing coverage. Those assertions now live in the GPU lanes.
+    MOVED because tests were added or a gate could be removed: spec dir
+      333P/9S/180sub -> 335P/9S/180sub (#45151's 2 CPU tests);
+      test_standard_dispatcher_runner_backend.py 1P -> 12P (entry 230's 5
+      new, plus #44480-update shipping a device-agnostic test that let us
+      DELETE our skipUnless gate: 6P/1S -> 7P -> 12P);
+      test_model_overrides.py 111P/1S/175sub -> 111P/1S/179sub;
+      test_modelopt_nvfp4.py 8P/5sub -> 9P/5sub (entry 231);
+      test_shared_experts_fusion_gates.py 49P/11sub -> 51P/11sub IN THE
+      PROD VENV (transformers 5.19.0). In .venv2 that file keeps ONE
+      ImportError failure (PixtralVisionRotaryEmbedding is newer than its
+      transformers 5.12.1) -- venv skew, A/B-identical at the parent
+      commit, deliberately NOT gated and NOT "fixed".
+    NEW pinned baselines: test_mamba_track_states_triton.py 6S,
+      test_kv_cache_configurator_mamba_budget.py 4P/2sub,
+      test_flashinfer_graph_variant_wrappers.py 2P,
+      test_eagle_share_embed_and_head.py 2P (counted inside the 335),
+      test_fused_moe_triton_config.py 4P (was 3P),
+      test_sm120_fp8_linear.py rc=5 (the file self-gates on cc==12.0).
+    UNCHANGED and still the reference set: kernels_namespace 76P (no
+      KernelSpec was added or removed by any of the 21 commits) and cargo
+      sglang-radix-tree 932P/0F (rust untouched by this batch).
 
   * CPU-BATTERY BASELINES REFRESHED 2026-10-19 on 380b87b054 (entries
     215-227). Method unchanged: PER-FILE runs, CUDA_VISIBLE_DEVICES=9,
