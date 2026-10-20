@@ -3987,8 +3987,9 @@ STACK, IN BUILD ORDER (bottom first)
       # exclusion) and test_shared_experts_fusion_gates.py::
       # TestModelOptMixedBody (the consumption path through
       # qwen2_moe.can_fuse_shared_expert, the function the block calls).
-      # Boot needle on the NVFP4 arm after this:
-      # "Shared experts fusion optimization is disabled." once per rank.
+      # The "Shared experts fusion optimization is disabled." needle this
+      # paragraph used to promise is NOT printed for this model on CUDA (see
+      # the 10-20 CORRECTION above) -- do not grep for it.
       # LIVE ONLY AFTER RESTART.
       # MEASURED on the first NVFP4 boot (2026-10-20 04:25, entry 242): the
       # arm runs; no fusion needle appears (expected, per the correction
@@ -4300,7 +4301,7 @@ STACK, IN BUILD ORDER (bottom first)
       # quantization-driven); HiCache PARKED off for boot #1 with the
       # store-purge warning (entries 178/186/199/209 changed the formats and
       # entry 196 does not retro-fix cached states); the mem-fraction ladder
-      # 0.89 -> 0.85 -> 0.80 for a LOAD OOM only; boot checklist (k)-(q).
+      # 0.89 -> 0.85 -> 0.80 for a LOAD OOM only; boot checklist (k)-(r).
       # CHECKPOINT VERIFIED ON DISK (the user downloaded it; this is a
       # structural check, not a trust-me): ref fc694b54fb01..., 11 shards,
       # every safetensors header parsed, every tensor's data range inside its
@@ -4374,9 +4375,10 @@ STACK, IN BUILD ORDER (bottom first)
       # non-degenerately -- that is the decisive test of this whole batch),
       # flashinfer's SM120 CUTLASS FP4 grouped-MoE JIT (flashinfer-jit-cache
       # is NOT installed, so boot #1 compiles and needs a working nvcc; the
-      # 12.9 toolkit vs the torch cu130 wheel is worth a look), entry 231's
-      # fusion-disabled needle + accuracy A/B vs the FP8 arm, the ~12.3
-      # GB/rank freed-to-KV measurement, and #45262's b12x arm.
+      # 12.9 toolkit vs the torch cu130 wheel is worth a look), the accuracy
+      # A/B vs the FP8 arm (GSM8K + needle probes + same-prompt diff, still
+      # OWED), and #45262's b12x arm. The freed-to-KV measurement is DONE:
+      # +1,846,720 tokens (+30.2%) at the same 0.89, see above.
       # MERGE #5 STILL OWED: origin/main moved to 553836c164 during this
       # sweep = +378 commits since 12dc623102. Nothing was pushed.
       # FIRST NVFP4 BOOT ACTUALLY HAPPENED 2026-10-20 04:25 (the arm served at
