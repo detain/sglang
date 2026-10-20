@@ -17,6 +17,7 @@ from unittest.mock import MagicMock, patch
 
 import torch
 import torch.distributed as dist
+from torch._C._distributed_c10d import _SymmetricMemory
 
 from sglang.srt.distributed.device_communicators import (
     triton_symm_mem_ag,
@@ -442,8 +443,16 @@ class TestMultimemAllGathererPcieIpc(CustomTestCase):
         gather=None,
         capturing=False,
         multicast=False,
+        probe=None,
     ):
-        """``gather`` is what make_pcie_ipc_gather returns; ``_REAL`` runs it."""
+        """``gather`` is what make_pcie_ipc_gather returns; ``_REAL`` runs it.
+
+        ``probe`` is what the platform reports for CUDA multicast, which
+        _build_multimem asks before the rendezvous; it defaults to ``multicast``
+        (no probe support means no multicast alias either). Set probe=True with
+        multicast=False to cover a device that claims support but whose
+        rendezvous still yields no multicast alias.
+        """
         gatherer = triton_symm_mem_ag.MultimemAllGatherer(
             128, enabled=False, pcie_ipc=pcie_ipc
         )
@@ -454,7 +463,13 @@ class TestMultimemAllGathererPcieIpc(CustomTestCase):
         multimem.world_size = 4
         multimem.hidden_dim = 4 * x.shape[-1]
         nccl_out = torch.zeros(1)
+        if probe is None:
+            probe = multicast
         with (
+            patch.object(
+                _SymmetricMemory, "has_multicast_support", return_value=probe
+            ) as has_multicast_support,
+            patch.object(torch.cuda, "current_device", return_value=0),
             patch.object(
                 triton_symm_mem_ag,
                 "make_pcie_ipc_gather",
@@ -490,6 +505,7 @@ class TestMultimemAllGathererPcieIpc(CustomTestCase):
             multimem_out=all_gather_inner.return_value,
             make=make,
             create_state=create_state,
+            has_multicast_support=has_multicast_support,
             gatherer=gatherer,
         )
 
@@ -499,8 +515,11 @@ class TestMultimemAllGathererPcieIpc(CustomTestCase):
         r = self._call(x, gather=gather)
         self.assertIs(r.out, gather.return_value)
         self.assertIs(r.gatherer._state, gather)
-        # multimem was tried first and found no multicast
-        r.create_state.assert_called_once()
+        # multimem was tried first and the multicast probe, which runs before
+        # the rendezvous (a rendezvous without multicast can crash the host),
+        # said no.
+        r.has_multicast_support.assert_called_once()
+        r.create_state.assert_not_called()
         # sized for decode (the smaller bound), not the caller's max_tokens
         self.assertEqual(r.make.call_args.kwargs["max_rows"], 96)
         self.assertEqual(r.make.call_args.kwargs["local_width"], WIDTH)
@@ -533,7 +552,9 @@ class TestMultimemAllGathererPcieIpc(CustomTestCase):
     def test_other_users_keep_the_multimem_path(self):
         """e.g. Kimi-K2.5 EAGLE3's fc gather, which does not opt in."""
         x = torch.randn(2, WIDTH, dtype=torch.bfloat16)
-        r = self._call(x, gather=MagicMock(spec=PcieIpcVocabGather), pcie_ipc=False)
+        r = self._call(
+            x, gather=MagicMock(spec=PcieIpcVocabGather), pcie_ipc=False, probe=True
+        )
         self.assertIs(r.out, r.nccl_out)
         r.make.assert_not_called()
         r.create_state.assert_called_once()
