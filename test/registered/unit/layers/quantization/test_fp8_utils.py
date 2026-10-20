@@ -81,6 +81,15 @@ class TestMxfp8MoeScaleLayout(CustomTestCase):
 
 
 class TestInverseTransformScaleUe8m0(CustomTestCase):
+    @classmethod
+    def setUpClass(cls):
+        # The round trip builds its bf16 weight on the device and packs the
+        # scales through deep_gemm's TMA-aligned layout helper (plus the Triton
+        # quant in quant_weight_ue8m0), so there is no CPU form of this test --
+        # same gate as the two apply_fp8_linear classes below.
+        if not torch.cuda.is_available():
+            raise unittest.SkipTest("CUDA is not available")
+
     def test_round_trip(self):
         for _ in range(100):
             weight_bf16 = torch.randn(
