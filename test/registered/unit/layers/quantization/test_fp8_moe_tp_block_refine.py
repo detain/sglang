@@ -86,6 +86,11 @@ def _relative_error(out, ref):
     return ((out - ref).norm() / ref.norm()).item()
 
 
+@unittest.skipUnless(
+    torch.cuda.is_available(),
+    "setUpClass pins the default device to cuda (the refined TP shards are "
+    "checked by running the real MoE runners)",
+)
 class TestFp8MoETpBlockRefine(CustomTestCase):
     @classmethod
     def setUpClass(cls):
