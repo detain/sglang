@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, NamedTuple, Optional, Tuple
 
 import torch
@@ -37,6 +38,11 @@ from sglang.srt.utils.common import (
 
 _is_hip = is_hip()
 _use_aiter = get_bool_env_var("SGLANG_USE_AITER") and _is_hip
+
+logger = logging.getLogger(__name__)
+# Expert-id space mismatches are reported once per (published, built) pair:
+# every MoE layer of an affected model would otherwise log the same line.
+_warned_id_space_mismatch: set[Tuple[str, str]] = set()
 
 from sglang.srt.environ import envs as _envs
 
@@ -162,6 +168,48 @@ class StandardDispatcher(BaseDispatcher):
                     f"'{runner_backend.value}' runner, which needs local ids."
                 )
             self.skip_local_expert_mapping = False
+        # The mirror image of the rescue above, and deliberately a warning rather
+        # than a raise: the layer's runner keeps GLOBAL ids while the published
+        # backend maps to local ones, so every EP rank but the first hands that
+        # runner ids outside its expert range (the cutlass kernels derive
+        # start_expert = num_experts_per_node * ep_rank from the global id) --
+        # wrong output with no exception. Startup resolution is supposed to make
+        # the two agree (arg_groups/overrides.py
+        # _moe_runner_backend_quant_constraints publishes flashinfer_cutlass for
+        # modelopt fp4/mixed on SM110/SM120, where the per-layer runner is built
+        # that way because the trtllm-gen MoE kernels are SM100-only). Reaching
+        # here means some other combination, and the inputs come from per-layer
+        # quant methods this host cannot enumerate, so a hard failure here could
+        # break a config that works; warn once per distinct pair instead. One
+        # known caller that will see the line: --quantization modelopt_fp4 with
+        # `auto` on SM100, where create_moe_runner resolves FLASHINFER_TRTLLM
+        # (also listed as global-keeping) while the global stays `auto` -- which
+        # is exactly the unresolved half of this contract, not a false alarm.
+        if (
+            self.moe_ep_size > 1
+            and runner_backend is not None
+            and not self.skip_local_expert_mapping
+            and _keeps_global_expert_ids(runner_backend)
+        ):
+            pair = (
+                str(getattr(backend, "value", backend)),
+                str(getattr(runner_backend, "value", runner_backend)),
+            )
+            if pair not in _warned_id_space_mismatch:
+                _warned_id_space_mismatch.add(pair)
+                logger.warning(
+                    "MoE expert-id space mismatch: --moe-runner-backend %s makes "
+                    "the dispatcher remap expert ids to the local range, but this "
+                    "layer builds the %s runner, which _keeps_global_expert_ids() "
+                    "classifies as consuming GLOBAL ids. Under EP > 1 that "
+                    "combination is a correctness hazard unless the runner "
+                    "re-derives global ids itself: the cutlass kernels, for one, "
+                    "compute start_expert from the id (num_experts_per_node * "
+                    "ep_rank), so every rank but the first would misroute. Pass a "
+                    "matching backend explicitly, e.g. --moe-runner-backend %s.",
+                    *pair,
+                    pair[1],
+                )
         self.num_experts = moe_runner_config.num_experts
         self.num_local_experts = moe_runner_config.num_local_experts
         self.num_local_shared_experts = moe_runner_config.num_fused_shared_experts

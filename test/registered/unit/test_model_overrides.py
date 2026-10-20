@@ -3143,6 +3143,66 @@ class TestGoldenModelOverrides(_IsolatedPublish):
                 ),
                 {"moe_runner_backend": "flashinfer_cutlass"},
             )
+            # The nvidia NVFP4 exports carry this name (ModelConfig derives it
+            # from quant_method when --quantization is omitted), and their MoE
+            # layers build the flashinfer_cutlass runner per layer on these
+            # parts, so the published global has to match or the dispatcher
+            # hands that runner local expert ids.
+            self.assertEqual(
+                _moe_runner_backend_quant_constraints(
+                    _view(quantization="modelopt_mixed")
+                ),
+                {"moe_runner_backend": "flashinfer_cutlass"},
+            )
+            # Flagless checkpoint: the answer is in the config, not the CLI.
+            with patch(
+                "sglang.srt.arg_groups.overrides.model_config_of",
+                return_value=SimpleNamespace(quantization="modelopt_mixed"),
+            ):
+                self.assertEqual(
+                    _moe_runner_backend_quant_constraints(_view()),
+                    {"moe_runner_backend": "flashinfer_cutlass"},
+                )
+                # A declared value still wins over the config.
+                self.assertEqual(
+                    _moe_runner_backend_quant_constraints(
+                        _view(quantization="modelopt_fp8")
+                    ),
+                    {},
+                )
+                # An explicit runner pin is never rewritten, whatever the config
+                # says: the fp8 prod arm boots --moe-runner-backend triton.
+                self.assertEqual(
+                    _moe_runner_backend_quant_constraints(
+                        _view(moe_runner_backend="triton")
+                    ),
+                    {},
+                )
+            # A pure-FP8 checkpoint must stay out of this branch.
+            for declared in ("fp8", "modelopt_fp8", "w4afp8", None):
+                with self.subTest(quantization=declared):
+                    with patch(
+                        "sglang.srt.arg_groups.overrides.model_config_of",
+                        return_value=SimpleNamespace(quantization=declared),
+                    ):
+                        self.assertEqual(
+                            _moe_runner_backend_quant_constraints(_view()), {}
+                        )
+            # Fail-safe: an unreadable config behaves exactly as before, i.e.
+            # `auto` is left for create_moe_runner and nothing is published.
+            with patch(
+                "sglang.srt.arg_groups.overrides.model_config_of",
+                side_effect=RuntimeError("no config here"),
+            ):
+                self.assertEqual(_moe_runner_backend_quant_constraints(_view()), {})
+        with override_platform(is_sm100=True):
+            # SM100 keeps the trtllm-gen kernels, so `auto` must not be
+            # republished as cutlass there.
+            with patch(
+                "sglang.srt.arg_groups.overrides.model_config_of",
+                return_value=SimpleNamespace(quantization="modelopt_mixed"),
+            ):
+                self.assertEqual(_moe_runner_backend_quant_constraints(_view()), {})
         self.assertEqual(_moe_runner_backend_quant_constraints(_view()), {})
 
     def test_gguf_quantization_pass(self):

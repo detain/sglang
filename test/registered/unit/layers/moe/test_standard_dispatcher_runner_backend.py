@@ -143,6 +143,133 @@ def test_fp8_triton_fallback_reaches_the_dispatcher(cutlass_pin):
     assert not dispatcher.skip_local_expert_mapping
 
 
+def test_published_and_built_runner_agree_for_nvfp4_mixed_on_sm120(cutlass_pin):
+    # Item 10 invariant, end to end: a modelopt_mixed checkpoint (the nvidia
+    # Qwen3.8-Flash-Next-NVFP4 exports resolve to that name) left on `auto` on
+    # SM120 comes out of the startup hook publishing flashinfer_cutlass, which
+    # is the runner ModelOptNvFp4FusedMoEMethod builds per layer there. So the
+    # dispatcher keeps global expert ids, exactly what that runner consumes.
+    from sglang.srt.arg_groups.overrides import (
+        ResolvedView,
+        _moe_runner_backend_quant_constraints,
+    )
+    from sglang.srt.layers.moe.utils import resolve_moe_runner_backend
+    from sglang.srt.runtime_context import override_platform
+
+    with override_platform(is_sm120=True, is_sm110=False):
+        declared = _moe_runner_backend_quant_constraints(
+            ResolvedView(
+                SimpleNamespace(
+                    moe_runner_backend="auto",
+                    quantization="modelopt_mixed",
+                    moe_a2a_backend="none",
+                )
+            )
+        )
+    published = resolve_moe_runner_backend(
+        declared.get("moe_runner_backend", "auto"),
+    )
+    assert published.is_flashinfer_cutlass()
+    assert standard._keeps_global_expert_ids(published)
+
+    cutlass_pin.runner_backend = published
+    dispatcher = standard.StandardDispatcher(
+        _config(), runner_backend=MoeRunnerBackend.FLASHINFER_CUTLASS
+    )
+    assert dispatcher.skip_local_expert_mapping
+    # Global ids survive dispatch untouched (expert 5 stays 5, not 5-4).
+    topk_ids = torch.tensor([[0, 5], [3, 7]], dtype=torch.int32, device="cpu")
+    assert _dispatch_ids(dispatcher, topk_ids).tolist() == [[0, 5], [3, 7]]
+
+
+def test_explicit_triton_pin_is_left_alone(cutlass_pin):
+    # The prod fp8 arm names triton; the hook must not republish it even for a
+    # mixed NVFP4 config, and a triton layer stays on local ids.
+    from sglang.srt.arg_groups.overrides import (
+        ResolvedView,
+        _moe_runner_backend_quant_constraints,
+    )
+    from sglang.srt.runtime_context import override_platform
+
+    with override_platform(is_sm120=True, is_sm110=False):
+        assert (
+            _moe_runner_backend_quant_constraints(
+                ResolvedView(
+                    SimpleNamespace(
+                        moe_runner_backend="triton",
+                        quantization="modelopt_mixed",
+                        moe_a2a_backend="none",
+                    )
+                )
+            )
+            == {}
+        )
+    cutlass_pin.runner_backend = MoeRunnerBackend.TRITON
+    dispatcher = standard.StandardDispatcher(
+        _config(), runner_backend=MoeRunnerBackend.TRITON
+    )
+    assert not dispatcher.skip_local_expert_mapping
+
+
+def test_runner_keeping_global_ids_under_a_local_backend_warns(ep2_rank0, caplog):
+    # The silent-misroute combination, made loud: published backend maps to
+    # local ids, built runner consumes global ones.
+    import logging
+
+    ep2_rank0.runner_backend = MoeRunnerBackend.AUTO
+    standard._warned_id_space_mismatch.clear()
+    with caplog.at_level(logging.WARNING, logger=standard.logger.name):
+        dispatcher = standard.StandardDispatcher(
+            _config(), runner_backend=MoeRunnerBackend.FLASHINFER_CUTLASS
+        )
+    assert not dispatcher.skip_local_expert_mapping
+    messages = [r.message for r in caplog.records if "mismatch" in r.message]
+    assert len(messages) == 1, messages
+    # ... and it names the backend that would fix it.
+    assert "--moe-runner-backend flashinfer_cutlass" in messages[0]
+    # One line per pair, not one per MoE layer.
+    with caplog.at_level(logging.WARNING, logger=standard.logger.name):
+        standard.StandardDispatcher(_config(), MoeRunnerBackend.FLASHINFER_CUTLASS)
+    assert len([r for r in caplog.records if "mismatch" in r.message]) == 1
+
+
+def test_no_warning_when_the_id_spaces_agree(ep2_rank0, cutlass_pin, caplog):
+    import logging
+
+    # published cutlass, built cutlass -> global ids both sides
+    standard._warned_id_space_mismatch.clear()
+    with caplog.at_level(logging.WARNING, logger=standard.logger.name):
+        standard.StandardDispatcher(_config(), MoeRunnerBackend.FLASHINFER_CUTLASS)
+    assert [r.message for r in caplog.records if "mismatch" in r.message] == []
+
+    # published triton, built triton -> local ids both sides
+    ep2_rank0.runner_backend = MoeRunnerBackend.TRITON
+    standard._warned_id_space_mismatch.clear()
+    with caplog.at_level(logging.WARNING, logger=standard.logger.name):
+        standard.StandardDispatcher(_config(), MoeRunnerBackend.TRITON)
+    assert [r.message for r in caplog.records if "mismatch" in r.message] == []
+
+
+def test_no_warning_without_expert_parallelism(ep2_rank0, caplog, monkeypatch):
+    # EP == 1 means the local range is the global range, so the combination the
+    # warning is about cannot misroute anything: stay quiet.
+    import logging
+
+    ep2_rank0.runner_backend = MoeRunnerBackend.AUTO
+    monkeypatch.setattr(
+        standard,
+        "get_parallel",
+        lambda: SimpleNamespace(moe_ep_size=1, moe_ep_rank=0),
+    )
+    standard._warned_id_space_mismatch.clear()
+    with caplog.at_level(logging.WARNING, logger=standard.logger.name):
+        dispatcher = standard.StandardDispatcher(
+            _config(), runner_backend=MoeRunnerBackend.FLASHINFER_CUTLASS
+        )
+    assert [r.message for r in caplog.records if "mismatch" in r.message] == []
+    assert not dispatcher.skip_local_expert_mapping
+
+
 if __name__ == "__main__":
     import sys
 
