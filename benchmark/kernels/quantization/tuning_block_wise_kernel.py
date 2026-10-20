@@ -176,7 +176,7 @@ def get_configs_compute_bound():
     else:
         for num_stages in [2, 3, 4, 5]:
             for block_m in [16, 32, 64, 128, 256]:
-                for block_k in [64, 128]:
+                for block_k in [32, 64, 128]:
                     for block_n in [32, 64, 128, 256]:
                         for num_warps in [4, 8]:
                             for group_size in [1, 16, 32, 64]:
