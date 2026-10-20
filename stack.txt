@@ -246,7 +246,9 @@
 #          modified. The nvidia/Qwen3.8-Flash-Next-NVFP4 checkpoint is
 #          downloaded and structurally verified (entry 242), so the first
 #          NVFP4 boot is now a config question, not a download question.
-#          Code tip fcc0000e16, tree clean, NOT pushed.
+#          Code tip fcc0000e16, tree clean, NOT pushed. The first NVFP4 boot
+#          happened at 04:25 the same day and passed the entry-230/242
+#          checklist; its measured numbers are in entry 242.
 # updated: 2026-10-19 (entries 228-229): FLASHINFER 0.7.2 -- the pin, the
 #          wheel and the correction. 2b46270c5d takes upstream
 #          44be30d216/#44591 CLEAN (4 pin strings: both Dockerfiles,
@@ -3951,9 +3953,25 @@ STACK, IN BUILD ORDER (bottom first)
       # Verified against the REAL checkpoint (now on disk, entry 242): its 292
       # exclude_modules contain
       # model.language_model.layers.{0..47}.mlp.shared_expert* while
-      # quantized_layers lists only *.mlp.experts -> the block would set
-      # num_fused_shared_experts=1 and the loader would remap BF16 weights
-      # into FP4 buffers. Silent wrong weights, not a crash.
+      # quantized_layers lists only *.mlp.experts, so a fused shared expert
+      # would mean num_fused_shared_experts=1 and BF16 weights remapped into
+      # FP4 buffers. Silent wrong weights, not a crash.
+      #   [10-20 CORRECTION, after the first NVFP4 boot -- for qwen4 ON CUDA
+      #   that scenario is NOT reachable, so this patch did not rescue the
+      #   04:25 boot. Qwen2MoeSparseMoeBlock's
+      #   enable_cuda_shared_expert_fusion defaults to False (qwen2_moe.py:265)
+      #   and qwen3_5.py:1141/:1347 -- the blocks qwen4 inherits -- never opt
+      #   in (only qwen3_next.py:531/:688 pass True), so can_fuse_shared_expert
+      #   is not even consulted for this model and CUDA fusion was already off
+      #   by that default. What the patch fixes is the ANSWER the mixed config
+      #   gives wherever the question IS asked: the opt-in families
+      #   (qwen3_next), the ROCm loader gate, and any future qwen4 opt-in. It
+      #   closes a latent trap, and it makes modelopt_mixed answer like
+      #   modelopt_fp4 instead of like a missing method. Consequence for
+      #   operators: this boot prints NO "Shared experts fusion optimization is
+      #   disabled." line -- that needle comes only from
+      #   install_shared_experts_fusion_decision (moe/utils.py:641), which for
+      #   this family returns None on CUDA. Do not chase it.]
       # FIX mirrors the Fp4Config predicate onto the mixed config, reading
       # this config's own exclusion list. NOTE in code: the mixed config
       # builds its nvfp4_config child with exclude_modules=[], so delegating
@@ -3972,6 +3990,9 @@ STACK, IN BUILD ORDER (bottom first)
       # Boot needle on the NVFP4 arm after this:
       # "Shared experts fusion optimization is disabled." once per rank.
       # LIVE ONLY AFTER RESTART.
+      # MEASURED on the first NVFP4 boot (2026-10-20 04:25, entry 242): the
+      # arm runs; no fusion needle appears (expected, per the correction
+      # above); the fused-shared slot count stays 128/rank at EP4.
 
         232. c6c68b7a4b  PR #45151  share the draft embed/lm_head before the target KV pool is sized (+6.9% KV tokens -- BENEFITS THE FP8 ARM TOO)
       # EagleWorkerV2.__init__ now calls _share_embed_and_head() (new,
@@ -4358,6 +4379,24 @@ STACK, IN BUILD ORDER (bottom first)
       # GB/rank freed-to-KV measurement, and #45262's b12x arm.
       # MERGE #5 STILL OWED: origin/main moved to 553836c164 during this
       # sweep = +378 commits since 12dc623102. Nothing was pushed.
+      # FIRST NVFP4 BOOT ACTUALLY HAPPENED 2026-10-20 04:25 (the arm served at
+      # 04:30). Checklist result, all from /root/sglang/sglang/sglang_next9c.log:
+      # moe_runner_backend AND speculative_moe_runner_backend both
+      # 'flashinfer_cutlass'; 4x "Fp8MoEMethod has no FLASHINFER_CUTLASS path"
+      # (one per rank: the FP8-block draft really did get the Triton downgrade);
+      # ZERO deep_gemm/DeepGEMM mentions in the whole log, so the Xid-43 kernel
+      # family never loaded; no entry-230 "MoE expert-id space mismatch"
+      # warning; no "SM120 NVFP4 small-row MoE" lines (correct at EP4); 4x
+      # "using the paged chunked-prefill KV source"; "Triton prewarm: loaded 0
+      # cubins (153 already resident ...)"; zero "device-loaded after serving
+      # started"; zero OutOfMemory/Traceback/ERROR.
+      # MEMORY TRADE, measured: max_total_num_tokens 6,111,616 (FP8 arm) ->
+      # 7,958,336 = +1,846,720 tokens (+30.2%) at the SAME
+      # --mem-fraction-static 0.89, with available_gpu_mem 7.53 -> 5.42 GB. My
+      # +2.3M projection was ~20% optimistic (the FP4 repack keeps more live
+      # buffers than the pure byte ratio suggests). Still serving bs2 at
+      # 300-430 tok/s with accept length 2.10-3.04. NOT yet an accuracy verdict:
+      # GSM8K + needle probes + the fp8-vs-nvfp4 same-prompt diff are still owed.
 
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
