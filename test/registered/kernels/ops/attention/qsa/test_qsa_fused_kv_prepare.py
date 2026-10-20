@@ -14,6 +14,12 @@ from sglang.test.ci.ci_register import register_cuda_ci
 register_cuda_ci(est_time=60, stage="base-b-kernel-unit", runner_config="1-gpu-large")
 
 
+# Every test below except test_fused_pool_eligibility builds device tensors and
+# launches the fused Triton kernels, so it needs a visible CUDA device (same
+# module-level marker idiom as the other kernels/ops suites).
+requires_cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA only")
+
+
 def _unsharded_runtime():
     """The construction contract every pool publishes, even a __new__ stub."""
     from sglang.srt.layers.attention.qsa.cache_sharding import (
@@ -23,6 +29,7 @@ def _unsharded_runtime():
     return QSACacheShardingRuntime(size=1, rank=0, group=None)
 
 
+@requires_cuda
 @pytest.mark.parametrize("requests", [1, 3, 8, 128])
 @pytest.mark.parametrize("width", [1, 4])
 @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float8_e4m3fn])
@@ -113,6 +120,7 @@ def test_fused_kv_prepare(requests, width, dtype, padding):
     verify()
 
 
+@requires_cuda
 @pytest.mark.parametrize("width", [1, 4])
 def test_qsa_pool_routes_to_fused_prepare(monkeypatch, width):
     from types import SimpleNamespace
@@ -164,6 +172,7 @@ def test_qsa_pool_routes_to_fused_prepare(monkeypatch, width):
     assert captured["new_kv"][3] == width
 
 
+@requires_cuda
 @pytest.mark.parametrize("requests", [1, 9, 128])
 @pytest.mark.parametrize("width", [1, 2, 3, 4])
 @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float8_e4m3fn])
@@ -246,6 +255,7 @@ def test_fused_block_expansion(requests, width, dtype, padding, chain_positions)
         torch.testing.assert_close(actual.float(), ref.float(), rtol=0, atol=0)
 
 
+@requires_cuda
 @pytest.mark.parametrize("width", [1, 4])
 def test_fused_block_expansion_writes_only_visible_pages(width):
     """With visible_page_size, a row's packed K/V matches the full write up to its
@@ -317,6 +327,7 @@ def test_fused_block_expansion_writes_only_visible_pages(width):
             assert torch.isnan(actual[row, visible:]).all()
 
 
+@requires_cuda
 def test_block_indices_expand_on_attention_fallback(monkeypatch):
     from types import SimpleNamespace
 
@@ -356,6 +367,7 @@ def test_block_indices_expand_on_attention_fallback(monkeypatch):
     )
 
 
+@requires_cuda
 def test_nonconsecutive_writes_keep_slot_matching():
     from sglang.srt.layers.attention.qsa.kernel import expand_qsa_block_indices
 
@@ -441,6 +453,7 @@ def test_fused_pool_eligibility(dtype, quantized, wrapped):
 @pytest.mark.parametrize(
     "mode_name", ["DECODE", "TARGET_VERIFY", "DRAFT_EXTEND_V2", "EXTEND"]
 )
+@requires_cuda
 @pytest.mark.parametrize("ratio,budget", [(4, 2048), (2, 1024), (4, 8192)])
 def test_defer_expansion_metadata(mode_name, ratio, budget, monkeypatch):
     from types import SimpleNamespace
