@@ -8,7 +8,6 @@ hold (an illegal memory access on the draft extend of
 nvidia/Qwen3.8-Flash-Next-NVFP4 at --tp 2 --ep 2).
 """
 
-import unittest
 from types import SimpleNamespace
 
 import pytest
@@ -19,7 +18,6 @@ from sglang.srt.layers.moe.token_dispatcher import standard
 from sglang.srt.layers.moe.topk import StandardTopKOutput
 from sglang.srt.layers.moe.utils import MoeA2ABackend, MoeRunnerBackend
 from sglang.srt.runtime_context import get_flags
-from sglang.srt.utils.common import get_device
 from sglang.test.ci.ci_register import register_cpu_ci
 
 register_cpu_ci(est_time=8, suite="stage-b-test-cpu-intel")
@@ -33,6 +31,7 @@ def ep2_rank0(monkeypatch):
     moe = get_flags().moe
     saved = (moe.runner_backend, moe.a2a_backend)
     moe.a2a_backend = MoeA2ABackend.NONE
+    monkeypatch.setattr(standard, "get_device", lambda: "cpu")
     monkeypatch.setattr(
         standard,
         "get_parallel",
@@ -80,16 +79,13 @@ def test_global_backend_still_decides_without_a_runner(cutlass_pin):
     assert dispatcher.skip_local_expert_mapping
 
 
-@unittest.skipUnless(
-    torch.cuda.is_available(), "dispatch with real tensors needs a visible CUDA device"
-)
 def test_triton_runner_gets_local_ids_under_cutlass_pin(cutlass_pin):
     dispatcher = standard.StandardDispatcher(
         _config(), runner_backend=MoeRunnerBackend.TRITON
     )
     assert not dispatcher.skip_local_expert_mapping
 
-    topk_ids = torch.tensor([[0, 5], [3, 7]], dtype=torch.int32, device=get_device())
+    topk_ids = torch.tensor([[0, 5], [3, 7]], dtype=torch.int32, device="cpu")
     local_ids = _dispatch_ids(dispatcher, topk_ids)
     # Rank 0 holds global experts 0-3; experts on the other rank become the
     # -1 drop sentinel instead of indexing past the local weights.
@@ -145,3 +141,9 @@ def test_fp8_triton_fallback_reaches_the_dispatcher(cutlass_pin):
 
     dispatcher = create_moe_dispatcher(_config(), method)
     assert not dispatcher.skip_local_expert_mapping
+
+
+if __name__ == "__main__":
+    import sys
+
+    sys.exit(pytest.main([__file__, "-v"]))

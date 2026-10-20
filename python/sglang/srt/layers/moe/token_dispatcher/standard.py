@@ -92,6 +92,17 @@ class StandardCombineInput(NamedTuple):
 assert isinstance(StandardCombineInput, CombineInput)
 
 
+def _map_topk_ids_to_local_experts(
+    topk_ids: torch.Tensor, local_expert_mapping: torch.Tensor
+) -> torch.Tensor:
+    """Map global expert ids while preserving the ``-1`` drop sentinel."""
+    return torch.where(
+        topk_ids < 0,
+        -1,
+        local_expert_mapping[topk_ids.clamp_min(0)],
+    )
+
+
 def _keeps_global_expert_ids(backend: MoeRunnerBackendLike) -> bool:
     # These runners handle EP with global expert IDs:
     # - cutlass / cutedsl / trtllm_routed handle EP internally
@@ -107,17 +118,6 @@ def _keeps_global_expert_ids(backend: MoeRunnerBackendLike) -> bool:
         or backend.is_hpc_ops()
         or backend.is_flashinfer_megamoe()
         or backend.is_flashinfer_mxfp4()
-    )
-
-
-def _map_topk_ids_to_local_experts(
-    topk_ids: torch.Tensor, local_expert_mapping: torch.Tensor
-) -> torch.Tensor:
-    """Map global expert ids while preserving the ``-1`` drop sentinel."""
-    return torch.where(
-        topk_ids < 0,
-        -1,
-        local_expert_mapping[topk_ids.clamp_min(0)],
     )
 
 
@@ -143,7 +143,8 @@ class StandardDispatcher(BaseDispatcher):
         # while --moe-runner-backend keeps global ones (Fp8MoEMethod runs fp8
         # experts on triton under a flashinfer_cutlass pin). Without local ids,
         # EP ranks index experts they do not hold. The runner only ever turns
-        # the mapping on; every other flag follows the global backend.
+        # the mapping on (ownership: the built runner may only widen it); every
+        # other flag above follows the requested global backend.
         if (
             self.skip_local_expert_mapping
             and runner_backend is not None
