@@ -298,6 +298,20 @@ def _log_smallm_decision(message: str) -> None:
     logger.info("SM120 NVFP4 small-row MoE: %s", message)
 
 
+def _warn_smallm_unexpected(message: str) -> None:
+    """Report an internal small-row MoE fault once per distinct text.
+
+    Choosing between the small-row kernel and CUTLASS is an optimisation, so a
+    raise inside it must never fail a forward -- but it is also a bug, so it
+    earns a warning rather than silence. Shares the decision log's dedupe set:
+    this runs per layer per forward, and one report is enough.
+    """
+    if message in _logged_smallm_decisions:
+        return
+    _logged_smallm_decisions.add(message)
+    logger.warning("SM120 NVFP4 small-row MoE: %s", message)
+
+
 def _smallm_ineligibility_reason(
     *,
     quant_info: FlashInferCutlassMoeQuantInfo,
@@ -313,6 +327,13 @@ def _smallm_ineligibility_reason(
     enable_alltoall: bool,
     capturing: Optional[bool] = None,
 ) -> Optional[str]:
+    """Why the small-row kernel cannot serve this call, or None if it can.
+
+    The MoE placement is read from ``runner_config`` -- a view of the layer's
+    own ``moe_{tp,ep}_{size,rank}`` -- not from ``quant_info``: upstream #42348
+    moved every placement consumer there, and the quant info carries weights
+    plus the global/local expert topology only.
+    """
     if quant_info.quant_type != "fp4":
         return "quantization is not NVFP4"
     if workspace is None:
@@ -378,7 +399,7 @@ def _smallm_ineligibility_reason(
         return "the output dtype is unsupported"
     if quant_scales is None or len(quant_scales) != 6:
         return "the NVFP4 scale set is incomplete"
-    if quant_info.moe_tp_size < 1 or quant_info.moe_ep_size < 1:
+    if runner_config.moe_tp_size < 1 or runner_config.moe_ep_size < 1:
         return "the MoE parallel topology is invalid"
 
     global_routed = quant_info.smallm_global_routed_experts
@@ -391,9 +412,9 @@ def _smallm_ineligibility_reason(
         or global_routed <= 0
         or local_routed <= 0
         or local_start < 0
-        or not 0 <= quant_info.moe_ep_rank < quant_info.moe_ep_size
-        or global_routed != local_routed * quant_info.moe_ep_size
-        or local_start != quant_info.moe_ep_rank * local_routed
+        or not 0 <= runner_config.moe_ep_rank < runner_config.moe_ep_size
+        or global_routed != local_routed * runner_config.moe_ep_size
+        or local_start != runner_config.moe_ep_rank * local_routed
         or local_routed > quant_info.w13_weight.shape[0]
     ):
         return "the expert topology is not a uniform contiguous EP shard"
@@ -427,20 +448,32 @@ def _run_flashinfer_cutlass(
         )
     smallm_reason = None
     if workspace is not None:
-        smallm_reason = _smallm_ineligibility_reason(
-            quant_info=quant_info,
-            workspace=workspace,
-            x=x,
-            x_sf=x_sf,
-            topk_ids=topk_ids,
-            topk_weights=topk_weights,
-            output_dtype=output_dtype,
-            quant_scales=quant_scales,
-            runner_config=runner_config,
-            output_supplied=output is not None,
-            enable_alltoall=enable_alltoall,
-            capturing=capturing,
-        )
+        try:
+            smallm_reason = _smallm_ineligibility_reason(
+                quant_info=quant_info,
+                workspace=workspace,
+                x=x,
+                x_sf=x_sf,
+                topk_ids=topk_ids,
+                topk_weights=topk_weights,
+                output_dtype=output_dtype,
+                quant_scales=quant_scales,
+                runner_config=runner_config,
+                output_supplied=output is not None,
+                enable_alltoall=enable_alltoall,
+                capturing=capturing,
+            )
+        except Exception as error:
+            # Which kernel may run is an optimisation decision, so a raise here
+            # must degrade to CUTLASS rather than escape a fused func and take
+            # down a scheduler. It is still a bug: report it once at warning
+            # level instead of folding it silently into the fallback reason.
+            detail = str(error).strip().splitlines()
+            _warn_smallm_unexpected(
+                "using CUTLASS because the eligibility check raised "
+                f"{type(error).__name__}: {detail[0] if detail else 'no detail'}"
+            )
+            smallm_reason = "the eligibility check raised (see its warning)"
     use_smallm = workspace is not None and smallm_reason is None
     if not use_smallm and workspace is not None and quant_info.quant_type == "fp4":
         _log_smallm_decision(f"using CUTLASS because {smallm_reason}")

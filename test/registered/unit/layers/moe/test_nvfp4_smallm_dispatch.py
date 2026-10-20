@@ -1,5 +1,6 @@
 """CPU-reachable coverage for the NVFP4 small-row dispatch gates."""
 
+import dataclasses
 import unittest
 from contextlib import nullcontext
 from types import SimpleNamespace
@@ -8,7 +9,9 @@ from unittest import mock
 import torch
 
 from sglang.srt.layers.moe.moe_runner import flashinfer_cutlass
+from sglang.srt.layers.moe.moe_runner.base import MoeRunnerConfig
 from sglang.srt.layers.moe.moe_runner.flashinfer_cutlass import (
+    FlashInferCutlassMoeQuantInfo,
     _run_flashinfer_cutlass,
     _smallm_ineligibility_reason,
 )
@@ -28,16 +31,17 @@ def _runtime_call(**overrides):
         hidden_size=8,
         top_k=2,
     )
-    quant_info = SimpleNamespace(
+    # A real quant info, so a read of a placement attribute that upstream
+    # #42348 (10edb05e72) deleted from it fails here instead of being
+    # satisfied by an over-filled stub.
+    quant_info = FlashInferCutlassMoeQuantInfo(
         quant_type="fp4",
+        w13_weight=torch.zeros(4, 16, 8, dtype=torch.uint8),
+        w2_weight=torch.zeros(4, 16, 8, dtype=torch.uint8),
         g1_alpha_up=object(),
         smallm_global_routed_experts=8,
         smallm_local_routed_experts=4,
         smallm_local_expert_start=0,
-        moe_tp_size=1,
-        moe_ep_size=2,
-        moe_ep_rank=0,
-        w13_weight=torch.zeros(4, 16, 8, dtype=torch.uint8),
     )
     runner_config = SimpleNamespace(
         is_gated=True,
@@ -46,6 +50,12 @@ def _runtime_call(**overrides):
         gemm1_beta=None,
         gemm1_clamp_limit=None,
         swiglu_limit=None,
+        # The layer's MoE placement, which MoeRunnerConfig exposes as
+        # properties in production and every fused func reads from here.
+        moe_tp_size=1,
+        moe_tp_rank=0,
+        moe_ep_size=2,
+        moe_ep_rank=0,
     )
     kwargs = dict(
         quant_info=quant_info,
@@ -282,8 +292,8 @@ class TestSmallmIneligibilityReason(unittest.TestCase):
 
     def test_parallel_topology_bounds_are_refused(self):
         for override in (
-            {"quant_info__moe_tp_size": 0},
-            {"quant_info__moe_ep_size": 0},
+            {"runner_config__moe_tp_size": 0},
+            {"runner_config__moe_ep_size": 0},
         ):
             with self.subTest(override=next(iter(override))):
                 self.assertEqual(
@@ -295,8 +305,8 @@ class TestSmallmIneligibilityReason(unittest.TestCase):
             {"quant_info__smallm_global_routed_experts": 0},
             {"quant_info__smallm_local_routed_experts": 0},
             {"quant_info__smallm_local_expert_start": -1},
-            {"quant_info__moe_ep_rank": -1},
-            {"quant_info__moe_ep_rank": 2},
+            {"runner_config__moe_ep_rank": -1},
+            {"runner_config__moe_ep_rank": 2},
             {"quant_info__smallm_global_routed_experts": 7},
             {"quant_info__smallm_local_expert_start": 1},
             {"quant_info__smallm_local_routed_experts": 5},
@@ -310,7 +320,15 @@ class TestSmallmIneligibilityReason(unittest.TestCase):
 
 
 class TestSmallmRuntimeFallback(unittest.TestCase):
-    def _run(self, kernel_effect, *, capturing=False, capture_failure=None):
+    def _run(
+        self,
+        kernel_effect,
+        *,
+        capturing=False,
+        capture_failure=None,
+        eligibility_error=None,
+        warnings_sink=None,
+    ):
         x = torch.zeros(1, 8, dtype=torch.bfloat16)
         ids = torch.zeros(1, 2, dtype=torch.int32)
         weights = torch.zeros(1, 2, dtype=torch.float32)
@@ -321,16 +339,12 @@ class TestSmallmRuntimeFallback(unittest.TestCase):
             hidden_size=8,
             top_k=2,
         )
-        quant_info = SimpleNamespace(
+        quant_info = FlashInferCutlassMoeQuantInfo(
             quant_type="fp4",
             g1_alpha_up=torch.ones(4),
             smallm_global_routed_experts=8,
             smallm_local_routed_experts=4,
             smallm_local_expert_start=0,
-            moe_tp_size=1,
-            moe_tp_rank=0,
-            moe_ep_size=2,
-            moe_ep_rank=0,
             apply_routed_scaling_factor=False,
             swiglu_alpha=None,
             swiglu_beta=None,
@@ -357,11 +371,9 @@ class TestSmallmRuntimeFallback(unittest.TestCase):
             swiglu_limit=None,
             routed_scaling_factor=None,
             apply_router_weight_on_input=False,
-            # Upstream #42348 (10edb05e72) moved the CUTLASS launch's
-            # placement reads from quant_info onto MoeRunnerConfig, whose
-            # moe_{tp,ep}_{size,rank} are properties over the layer
-            # placement.  The small-M gate still validates the copies on
-            # quant_info, so both carry the same topology.
+            # Upstream #42348 (10edb05e72) moved the placement reads that both
+            # the small-M gate and the CUTLASS launch need onto MoeRunnerConfig,
+            # where moe_{tp,ep}_{size,rank} are properties over the layer.
             moe_tp_size=1,
             moe_tp_rank=0,
             moe_ep_size=2,
@@ -378,6 +390,13 @@ class TestSmallmRuntimeFallback(unittest.TestCase):
         else:
             custom_kernel = mock.Mock(return_value=False)
         stream = object()
+        real_eligibility = flashinfer_cutlass._smallm_ineligibility_reason
+
+        def eligibility(**kwargs):
+            if eligibility_error is not None:
+                raise eligibility_error
+            return real_eligibility(**kwargs)
+
         with (
             mock.patch(
                 "sglang.srt.layers.moe.moe_runner.flashinfer_cutlass."
@@ -401,6 +420,12 @@ class TestSmallmRuntimeFallback(unittest.TestCase):
                 "sglang.srt.layers.moe.moe_runner.flashinfer_cutlass.get_kernel",
                 return_value=custom_kernel,
             ),
+            mock.patch.object(
+                flashinfer_cutlass, "_smallm_ineligibility_reason", new=eligibility
+            ),
+            mock.patch.object(
+                flashinfer_cutlass, "_warn_smallm_unexpected"
+            ) as warn_unexpected,
             mock.patch(
                 "sglang.srt.layers.moe.moe_runner.flashinfer_cutlass."
                 "_log_smallm_decision"
@@ -445,6 +470,10 @@ class TestSmallmRuntimeFallback(unittest.TestCase):
         self.assertEqual(actual.data_ptr(), output.data_ptr())
         cutlass.assert_called_once()
         log_decision.assert_called_once()
+        if warnings_sink is not None:
+            warnings_sink.extend(
+                call.args[0] for call in warn_unexpected.call_args_list
+            )
         return log_decision.call_args.args[0]
 
     def test_jit_or_launch_exception_falls_back_once(self):
@@ -470,6 +499,69 @@ class TestSmallmRuntimeFallback(unittest.TestCase):
             capturing=True,
             capture_failure="failed during CUDA graph capture",
         )
+
+    def test_eligibility_check_error_degrades_to_cutlass(self):
+        # Choosing the small-row kernel touches layer state, and it is only an
+        # optimisation: a raise in that decision must fall back to CUTLASS and
+        # say so, never escape a fused func into the scheduler.
+        warnings_seen = []
+        message = self._run(
+            AssertionError("the small-row kernel must not be launched"),
+            eligibility_error=AttributeError("moe_ep_size ... has no layer"),
+            warnings_sink=warnings_seen,
+        )
+        self.assertIn("using CUTLASS", message)
+        self.assertIn("eligibility check raised", message)
+        self.assertEqual(len(warnings_seen), 1)
+        self.assertIn("AttributeError: moe_ep_size", warnings_seen[0])
+
+
+class TestSmallmPlacementSource(unittest.TestCase):
+    """The gate reads the MoE placement from the runner config.
+
+    Upstream #42348 (10edb05e72) deleted ``moe_{tp,ep}_{size,rank}`` from the
+    NVFP4 quant info and rewired its own consumers; these pins hold because the
+    small-row gate builds a real quant info, so a dangling read raises here
+    instead of being satisfied by a stub that carries the dead attributes.
+    """
+
+    def test_the_quant_info_carries_no_placement(self):
+        names = {
+            field.name for field in dataclasses.fields(FlashInferCutlassMoeQuantInfo)
+        }
+        for name in ("moe_tp_size", "moe_tp_rank", "moe_ep_size", "moe_ep_rank"):
+            with self.subTest(name=name):
+                self.assertNotIn(name, names)
+
+    def test_a_real_quant_info_is_declared_eligible(self):
+        # Pre-fix this raised AttributeError: the helper still asked the quant
+        # info for the topology, and a real one has none.
+        self.assertIsNone(_runtime_call())
+
+    def test_a_real_runner_config_drives_the_shard_verdict(self):
+        for ep_rank, expected in (
+            (0, None),
+            (
+                1,
+                "the expert topology is not a uniform contiguous EP shard",
+            ),
+        ):
+            with self.subTest(ep_rank=ep_rank):
+                self.assertEqual(
+                    _runtime_call(
+                        runner_config=MoeRunnerConfig(
+                            activation="silu",
+                            is_gated=True,
+                            layer=SimpleNamespace(
+                                moe_tp_size=1,
+                                moe_tp_rank=0,
+                                moe_ep_size=2,
+                                moe_ep_rank=ep_rank,
+                            ),
+                        )
+                    ),
+                    expected,
+                )
 
 
 class TestSm121Refusal(unittest.TestCase):
