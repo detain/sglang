@@ -1,6 +1,6 @@
 # stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
 #
-# STACK: qwennext-stack-242-2026-10-20
+# STACK: qwennext-stack-243-2026-10-20
 #   main+pr36787+pr37275+pr38144+pr38209+pr36644+pr39862+pr39809+pr39893+local_hicache_qsa_fixes
 #   +pr39614+pr39978+pr40002+pr39065+pr40501+pr40175+pr40362+pr39391+pr37061+pr39333+pr33778
 #   +pr38977+pr39977+pr40480+pr39880+pr40235+pr39807+cpu-triage+boot-fix+plan_updates_perf
@@ -10,7 +10,7 @@
 #   +diffusion-batch-2026-10-08(pr27673+pr28690*+pr32513+pr32550*+pr33036*+pr33588*
 #    +pr36399+pr36767+pr37460*+pr38650+pr39212+pr40493+pr40588+pr40755+pr41340*
 #    +pr41944+pr42249+pr42928*+pr43028*+pr43064*)
-#   (entries 1-242; *=squash/ported, see commit messages. 10-10 added
+#   (entries 1-243; *=squash/ported, see commit messages. 10-10 added
 #   entries 157-161: parser batch A (Qwen3-Coder tool-call fixes + sampling
 #   upper bounds), on top of upstream merge #3 (see synced). 10-10b added
 #   entries 162-166: SM120 batch B (#42863 PCIe-IPC vocab gathers, #42566
@@ -156,9 +156,12 @@
 #   deep_gemm fallback test). 242 is the NVFP4 arm record: 9c.sh rebuilt as
 #   9.sh + exactly two functional deltas, the checkpoint verified
 #   tensor-by-tensor on disk, this sweep's declines with reasons, and one
-#   SM10x-only upstream bug reported rather than guessed at. All 21 commits
-#   arrived on the 3251fbdf6a tip by fast-forward, so the merged tree is
-#   byte-identical to the battery-tested tip. PINNED BASELINES MOVED
+#   SM10x-only upstream bug reported rather than guessed at. 243 is the
+#   MEASURED FP8-vs-NVFP4 adjudication (+4.3% per-request, +28.5% same-code
+#   KV, the byte-ceiling math, the do-not-touch list) and it CORRECTS 242's
+#   conflated +30.2% capacity figure. All 21 commits arrived on the
+#   3251fbdf6a tip by fast-forward, so the merged tree is byte-identical to
+#   the battery-tested tip. PINNED BASELINES MOVED
 #   MATERIALLY -- new top bullet in CAVEATS. Live only after restart
 #   (user-driven); NOTHING pushed.
 #   10-08 added entries
@@ -4378,7 +4381,9 @@ STACK, IN BUILD ORDER (bottom first)
       # 12.9 toolkit vs the torch cu130 wheel is worth a look), the accuracy
       # A/B vs the FP8 arm (GSM8K + needle probes + same-prompt diff, still
       # OWED), and #45262's b12x arm. The freed-to-KV measurement is DONE:
-      # +1,846,720 tokens (+30.2%) at the same 0.89, see above.
+      # +1,846,720 tokens (+30.2%) at the same 0.89, see above. [10-20
+      # CORRECTION: +28.5% is the same-code figure -- that comparison base
+      # predates entry 232; see the MEMORY TRADE correction below and entry 243.]
       # MERGE #5 STILL OWED: origin/main moved to 553836c164 during this
       # sweep = +378 commits since 12dc623102. Nothing was pushed.
       # FIRST NVFP4 BOOT ACTUALLY HAPPENED 2026-10-20 04:25 (the arm served at
@@ -4394,11 +4399,119 @@ STACK, IN BUILD ORDER (bottom first)
       # started"; zero OutOfMemory/Traceback/ERROR.
       # MEMORY TRADE, measured: max_total_num_tokens 6,111,616 (FP8 arm) ->
       # 7,958,336 = +1,846,720 tokens (+30.2%) at the SAME
-      # --mem-fraction-static 0.89, with available_gpu_mem 7.53 -> 5.42 GB. My
-      # +2.3M projection was ~20% optimistic (the FP4 repack keeps more live
+      # --mem-fraction-static 0.89, with available_gpu_mem 7.53 -> 5.42 GB.
+      #   [10-20 CORRECTION -- the +1,846,720/+30.2% above is WRONG: it compares
+      #   an FP8 boot on the PRE-entry-232 code (6,111,616 at 03:23) against the
+      #   NVFP4 boot (7,958,336 at 04:25), and #45151 adds tokens by itself.
+      #   Three boot dumps: FP8 old code 6,111,616 / 7.53 GB available; FP8
+      #   CURRENT code 6,192,832 / 6.99 GB (13:36 boot, pid 2658592); NVFP4
+      #   7,958,336 / 5.42 GB. Same-code NVFP4 capacity effect = +1,765,504 =
+      #   +28.5%, and #45151's real effect on this box = +81,216 = +1.33%, not
+      #   the PR's +6.9%. Why +6.9% does not transfer: the mechanism frees
+      #   2 x vocab(248,320) x hidden(2,560) x bf16 sharded over TP4 =
+      #   0.592 GiB/rank, divided by the measured 6,656 B/token/rank pool cell =
+      #   +1.56% predicted, so ~85% realized; the PR's number is a TP1-scale
+      #   figure (2.368 GiB unsharded against a 13,312 B/token cell = +6.17%) --
+      #   the win is divided by vocab-TP sharding. Full adjudication, including
+      #   the perf verdict, in entry 243.]
+      # My +2.3M projection was ~20% optimistic (the FP4 repack keeps more live
       # buffers than the pure byte ratio suggests). Still serving bs2 at
       # 300-430 tok/s with accept length 2.10-3.04. NOT yet an accuracy verdict:
       # GSM8K + needle probes + the fp8-vs-nvfp4 same-prompt diff are still owed.
+
+        243. no code  MEASURED VERDICT  FP8 vs NVFP4 on this box: +4.3% per-request, +28.5% KV, and why the win is capped
+      # METHOD (read-only; artifacts /tmp/opencode/nvfp4-vs-fp8/): context+batch-
+      # standardized medians over the common (bs x ctx) bucket cells, n>=20 both
+      # sides. NVFP4 = sglang_next9c.log, ONE boot 04:25:36->13:34:24 (36,897
+      # decode / 18,247 prefill lines) vs a SAVED COPY of the FP8 window
+      # 03:23:34-04:25:08 (4,574 decode lines) + the controlled corpus
+      # /root/ab_results/20261001T221030Z (24 arms; controls 00_control_base x5).
+      # VERDICT: NVFP4 is genuinely FASTER, modestly. Implied decode step -3.7%
+      # (n-weighted ratio 0.9634, per-cell 0.900-1.005); per-request generated
+      # tok/s +4.3% (bs1 +4.3, bs2-3 +3.6, bs4-8 +2.2, best cell bs1/128-256k
+      # +10.6); prefill equal-or-faster (8-16k cold +2.4, cache-hit +13.2).
+      # ACCEPT NOT DEGRADED: pooled 2.729 (FP8) vs 2.695 (FP4) is a context-mix
+      # Simpson artifact -- at matched bs1 context NVFP4 is HIGHER (2.744/2.613).
+      # WHY CAPPED: the tensor scan shows ONLY the 48 target expert sets differ
+      # (299,545 vs 152,089 records; mtp experts byte-identical FP8-block in both;
+      # attention/GDN/router/shared-expert/hyper-connection/embed/lm_head BF16 in
+      # both). Experts 49.5% -> 35.6% of per-GPU decode bytes => byte ceiling step
+      # x0.783 at bs1 / x0.634 at bs8, but only ~10-20% of it is realized: implied
+      # achieved BW ~348 GB/s of ~1.8 TB/s -- the step is NCCL/launch/occupancy-
+      # bound, not weight-bound. Advantage GROWS with bs as predicted (38.8
+      # distinct experts at bs1 -> 500 at bs48).
+      # REFUTED, with line evidence. (a) --ep 1/--ep 2 does NOT unlock the SM120
+      # small-row kernel: the gate reads hidden/intermediate from the PER-RANK SHARD
+      # (modelopt_quant.py:3165-3166, intermediate//moe_tp_size per
+      # fused_moe_triton/layer.py:420), so EP1/TP4 gives 160 and the
+      # `intermediate_size % 64` clause (:2422) fails -> workspace None;
+      # unreachable at every ep in {1,2,4} on TP4. (b) EP1 ALSO drops the FP8-block
+      # MTP draft to BLOCK_SIZE_K=32 (fp8.py:1374-1416, gcd(128,160)=32). (c) EP1's
+      # allreduce cost is a WASH -- fused_moe_triton/layer.py:1607 already issues
+      # one TP all-reduce per MoE layer when ep>1, and per-rank weight bytes are
+      # constant. (d) CUTLASS autotune DOES cover decode: this arm's own
+      # /root/.cache/sglang/flashinfer/autotune/0.7.2/sm120/*/rank_tp0_pp0_dp0.json
+      # has gemm1|gemm2 x 21 buckets M=1..8192, no tactic=-1. (e) the FP4 act-quant
+      # tax is real (~48 extra quantize launches per forward; flashinfer refuses
+      # fused GEMM1 quant unless MXFP8, fused_moe/runners.py:3841, block_m=16
+      # padding) but is NOT a net penalty, and the triton FP8 arm pays its own.
+      # (f) --mem-fraction-static has no per-step effect while
+      # SGLANG_QSA_CHUNK_PREFILL_KV_SOURCE=paged (the pack budget it feeds
+      # short-circuits, qwen_sparse_attn_backend.py:2755-2759); occupancy peaked at
+      # 27% with zero evictions/retracts and queue 0 on every decode line in both
+      # arms, so capacity levers are dead weight right now.
+      # THE GATE ITSELF (parallel code study): at EP4 the ONLY blocker is
+      # `moe_ep_size == 1` (modelopt_quant.py:2426; the other 14 clauses pass,
+      # machine-checked). The kernel is ALREADY rank-offset-aware
+      # (kernels/jit/csrc/moe/nvfp4_moe_sm120.cuh:104, `global_expert -
+      # local_expert_start`) and the runtime gate already requires local_start ==
+      # moe_ep_rank * local_routed (moe_runner/flashinfer_cutlass.py:378-395), with
+      # CUDA tests at a nonzero offset and one at ep=2. Relaxing it is thus SMALL
+      # (drop the clause behind a default-1 SGLANG_NVFP4_MOE_SM120_MAX_EP + re-pin
+      # test_nvfp4_smallm_dispatch.py:118) but NOT worth a restart as a perf lever:
+      # MAX_TOKENS=16 (kernels/ops/moe/nvfp4_moe_sm120.py:17) + --enable-mixed-
+      # chunk + NEXTN verify rows = bs*4 confine entry to bs<=4 prefill-free
+      # forwards, and below the grouped-path threshold (tokens >= 8) an EP4 rank
+      # wastes ~75% of launched FC1 tiles. Neither kernel file has origin/main
+      # history -- ours to own and to upstream.
+      # DO NOT TOUCH: --ep anything; --fp8-gemm-backend; SGLANG_MOE_NVFP4_DISPATCH,
+      # SGLANG_FLASHINFER_NVFP4_PER_TOKEN_ACTIVATION, SGLANG_OPT_MOE_QUANT_ONCE
+      # (inert or harmful here); --qsa-cache-sharding-size 4 (capacity lever, zero
+      # pressure); --cuda-graph-max-bs-decode below 48 (151 NVFP4 decode lines at
+      # bs17-48, bs p50 35 -- they would fall to eager); raising
+      # --mem-fraction-static on the NVFP4 arm (5.42 GB available, 72 late Triton
+      # cubin device-loads seen at 0.44-0.90 GiB free -- re-arms the entry 210/211
+      # crash class); removing --kv-cache-dtype fp8_e4m3 or the paged KV source;
+      # #38170's auto->b12x flip.
+      # NEXT LEVERS, ranked. (1) export SGLANG_ENABLE_PCIE_IPC_ALLREDUCE=1 on BOTH
+      # arms -- entries 162-164 in-tree, flashinfer>=0.7 met by 0.7.2, NEVER enabled
+      # (environ.py:1450, default False), and it attacks the term that binds
+      # (09-30 audit: 96 allreduces + 4 vocab gathers = 25-45% of a bs1 step);
+      # harness arms 33/34/35 already encode this A/B with the FORBID-NCCL-fallback
+      # needle. (2) pin --speculative-moe-runner-backend triton explicitly in 9c.sh
+      # -- it inherits flashinfer_cutlass and the runtime downgrades it with 4 log
+      # lines, so the arms are not literally one flag apart in the dumps.
+      # (3) HIGH RISK, needs approval: upstream 7098ec387c (#44036) NVFP4 W4A16 --
+      # 0.7.2 ships SM12xNvfp4Bf16Runner (fused_moe/runners.py:7894) whose support
+      # check passes on this box, but it advertises
+      # supports_expert_parallelism=False and our path calls the legacy
+      # cutlass_fused_moe.
+      # MEASUREMENT TRAPS: `tee sglang_next9.log` in BOTH run scripts truncates on
+      # every restart -- that is how the 03:02-04:25 FP8 window was lost for good;
+      # timestamp log filenames for real A/Bs. `est. read BW GB` / `est. decode
+      # TFLOPS` are quantization-blind (scheduler_components/metrics_reporter.py:
+      # 540/546/551-558, zero expert term, 12-layer count), so they cannot test any
+      # expert-quant hypothesis. sglang_next9c.log carries tool-parser lines whose
+      # payload is arbitrary model-generated text that greps like errors -- filter
+      # before censusing.
+      # OPEN DOUBT: NO same-window FP8 control exists at bs>=9 (that arm never
+      # exceeded bs 8) and the harness's high-bs cells are deep_queue with ctx/req
+      # ~300-600 vs the NVFP4 production cell's 54,870 (~127x), so the apparent
+      # NVFP4 regression at bs17-48 is INDETERMINATE. Two same-build back-to-back
+      # boots close it. Accuracy A/B (GSM8K, needle probes, same-prompt diff) still
+      # OWED. STATUS: prod is FP8 again (pid 2658592, ready 13:36:32, 6,192,832
+      # tokens); the NVFP4 arm is dead, its log closed at 13:34:24. No code change
+      # here: LIVE ONLY AFTER RESTART (user-driven); NOTHING pushed.
 
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
