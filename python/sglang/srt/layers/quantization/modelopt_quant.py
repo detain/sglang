@@ -2409,6 +2409,7 @@ def _nvfp4_smallm_load_eligible(
     expert_storage_rank: int,
     num_global_routed_experts: int,
     top_k: Optional[int],
+    max_ep: int = 1,
 ) -> bool:
     local_routed_experts = num_local_experts - num_fused_shared_experts
     return (
@@ -2423,7 +2424,7 @@ def _nvfp4_smallm_load_eligible(
         and num_local_experts <= 512
         and local_routed_experts > 0
         and 0 <= moe_ep_rank < moe_ep_size
-        and moe_ep_size == 1
+        and moe_ep_size <= max_ep
         and expert_storage_rank == moe_ep_rank
         and num_global_routed_experts == local_routed_experts * moe_ep_size
         and top_k is not None
@@ -3187,6 +3188,11 @@ class ModelOptNvFp4FusedMoEMethod(FusedMoEMethodBase):
             ),
             num_global_routed_experts=layer.num_global_routed_experts,
             top_k=top_k,
+            # The kernel maps global expert ids onto this rank's contiguous
+            # shard (nvfp4_moe_sm120.cuh:map_expert), so EP is not a correctness
+            # boundary; the operator decides how far to trust it. Clamped to 1
+            # so 0 or unset keeps the historical EP1-only behavior.
+            max_ep=max(1, envs.SGLANG_NVFP4_MOE_SM120_MAX_EP.get()),
         )
         if use_smallm:
             assert top_k is not None

@@ -1099,6 +1099,13 @@ class Envs:
     # Use the fused small-row NVFP4 MoE kernel on SM120 when its shape and
     # execution constraints are satisfied.
     SGLANG_NVFP4_MOE_SM120 = EnvBool(True)
+    # Experimental ceiling for that kernel under expert parallelism: 0 or 1
+    # (default) keeps it off whenever moe_ep_size > 1, N admits
+    # moe_ep_size <= N. The kernel maps global expert ids to this rank's
+    # contiguous shard itself, but the combination is unvalidated beyond EP1,
+    # so it is opt-in. Only meaningful on SM120 (not SM121) with
+    # --moe-runner-backend flashinfer_cutlass.
+    SGLANG_NVFP4_MOE_SM120_MAX_EP = EnvInt(1)
     SGLANG_NVFP4_CKPT_FP8_GEMM_IN_ATTN = EnvBool(False)
     SGLANG_NVFP4_CKPT_FP8_NEXTN_MOE = EnvBool(False)
     # GLM NextN (MTP): cast the draft layer's bf16 fused MoE to per-channel FP8

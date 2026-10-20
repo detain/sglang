@@ -795,6 +795,11 @@ SGLang supports various environment variables that can be used to configure its 
       <td style={{padding: "9px 12px", backgroundColor: "rgba(255,255,255,0.05)"}}>Use the fused small-row NVFP4 MoE kernel on SM120 when its shape and execution constraints are satisfied; disabling it restores the FlashInfer CUTLASS path everywhere.</td>
       <td style={{padding: "9px 12px", backgroundColor: "rgba(255,255,255,0.02)"}}><code>true</code></td>
     </tr>
+    <tr>
+      <td style={{padding: "9px 12px", fontWeight: 500, backgroundColor: "rgba(255,255,255,0.02)"}}>`SGLANG_NVFP4_MOE_SM120_MAX_EP`</td>
+      <td style={{padding: "9px 12px", backgroundColor: "rgba(255,255,255,0.05)"}}>Experimental ceiling for the kernel above under expert parallelism: <code>0</code> or <code>1</code> (default) keeps it off whenever <code>moe_ep_size &gt; 1</code>; <code>N</code> admits <code>moe_ep_size &lt;= N</code>. The kernel maps global expert ids onto each rank's contiguous shard itself, but only EP1 is validated. Meaningful only on SM120 (not SM121) with <code>--moe-runner-backend flashinfer_cutlass</code>.</td>
+      <td style={{padding: "9px 12px", backgroundColor: "rgba(255,255,255,0.02)"}}><code>1</code></td>
+    </tr>
   </tbody>
 </table>
 

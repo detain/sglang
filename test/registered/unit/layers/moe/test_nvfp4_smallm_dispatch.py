@@ -1,6 +1,7 @@
 """CPU-reachable coverage for the NVFP4 small-row dispatch gates."""
 
 import dataclasses
+import inspect
 import unittest
 from contextlib import nullcontext
 from types import SimpleNamespace
@@ -8,6 +9,7 @@ from unittest import mock
 
 import torch
 
+from sglang.srt.environ import envs
 from sglang.srt.layers.moe.moe_runner import flashinfer_cutlass
 from sglang.srt.layers.moe.moe_runner.base import MoeRunnerConfig
 from sglang.srt.layers.moe.moe_runner.flashinfer_cutlass import (
@@ -15,6 +17,7 @@ from sglang.srt.layers.moe.moe_runner.flashinfer_cutlass import (
     _run_flashinfer_cutlass,
     _smallm_ineligibility_reason,
 )
+from sglang.srt.layers.quantization import modelopt_quant
 from sglang.srt.layers.quantization.modelopt_quant import (
     _nvfp4_smallm_load_eligible,
     _prepare_nvfp4_smallm_workspace,
@@ -102,6 +105,7 @@ def _load_call(**overrides):
         expert_storage_rank=0,
         num_global_routed_experts=8,
         top_k=4,
+        max_ep=1,
     )
     kwargs.update(overrides)
     return _nvfp4_smallm_load_eligible(**kwargs)
@@ -133,6 +137,68 @@ class TestSmallmLoadGate(unittest.TestCase):
         for name, case_overrides in cases.items():
             with self.subTest(name=name):
                 self.assertFalse(_load_call(**case_overrides))
+
+    def test_ep_is_admitted_only_up_to_the_ceiling(self):
+        """``parallel_ep`` above is the default ceiling; these are the rest.
+
+        The kernel maps global expert ids onto this rank's contiguous shard
+        itself (nvfp4_moe_sm120.cuh:map_expert) and the neighbouring clauses
+        prove the shard is uniform, so EP is a trust decision the operator
+        makes, not a correctness boundary.
+        """
+        # Refused while max_ep == 1 (asserted above), admitted at the match.
+        self.assertTrue(
+            _load_call(moe_ep_size=2, num_global_routed_experts=16, max_ep=2)
+        )
+        # A ceiling below the deployment's own EP still refuses, including a
+        # nonsensical zero (the call site clamps; the predicate does not).
+        self.assertFalse(
+            _load_call(moe_ep_size=2, num_global_routed_experts=16, max_ep=0)
+        )
+
+    def test_ep4_qwen3_8_flash_next_geometry(self):
+        """The deployment this kernel exists for: 512 routed experts, so 128 per
+        rank at EP4, hidden 2560, intermediate 640 per shard, top_k 10."""
+        prod = dict(
+            hidden_size=2560,
+            intermediate_size=640,
+            num_local_experts=128,
+            num_global_routed_experts=512,
+            moe_ep_size=4,
+            top_k=10,
+        )
+        with self.subTest(ceiling="default"):
+            self.assertFalse(_load_call(**prod))
+        for moe_ep_rank in range(4):
+            with self.subTest(ep_rank=moe_ep_rank):
+                self.assertTrue(
+                    _load_call(
+                        **prod,
+                        moe_ep_rank=moe_ep_rank,
+                        expert_storage_rank=moe_ep_rank,
+                        max_ep=4,
+                    )
+                )
+        # Admitting EP4 does not relax the other EP clauses.
+        for name, case_overrides in (
+            ("ep_rank_out_of_range", dict(moe_ep_rank=4)),
+            ("nonuniform_shard", dict(num_global_routed_experts=504)),
+            ("ceiling_below_deployment", dict(max_ep=2)),
+            ("storage_rank_diverges", dict(expert_storage_rank=1)),
+        ):
+            with self.subTest(name=name):
+                case = dict(prod, moe_ep_rank=0, expert_storage_rank=0, max_ep=4)
+                case.update(case_overrides)
+                self.assertFalse(_load_call(**case))
+
+    def test_the_call_site_threads_the_operator_ceiling(self):
+        """The gate is pure; the env var reaches it through one call site."""
+        self.assertEqual(envs.SGLANG_NVFP4_MOE_SM120_MAX_EP.get(), 1)
+        source = inspect.getsource(modelopt_quant)
+        marker = "use_smallm = _nvfp4_smallm_load_eligible("
+        call = source[source.index(marker) :]
+        call = call[: call.index("\n        )\n")]
+        self.assertIn("SGLANG_NVFP4_MOE_SM120_MAX_EP", call)
 
     def test_jit_prepare_failure_disables_workspace(self):
         layer = SimpleNamespace(nvfp4_smallm_workspace=object())
