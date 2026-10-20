@@ -61,3 +61,45 @@
 # [9] 0dbd8c56d9  #43008  keep WO-A FP8 copy out of weight checks + test dispatch
 #       opt-out: SGLANG_DSV41_WO_A_FP8_COPY=0 (environ.py, added here). LIVE ONLY AFTER RESTART.
 # DROPPED A: #43401 (conflicts DeepSelect already in base; overlaps open #40860) #44350 (draft, needs unreleased sgl-deep-gemm wheel).
+#
+# ── CORE BATCH: long-ctx / extra-KV / page-split / dispatch (P0/P1) — merged 802fce6..2d9686cd8b ──
+# [10] 8d73d08740  #43376  Bound prefill indexer score tiles by free memory + their scratch
+#        - dsv41 long-ctx dense-prefill indexer OOM (exact 4xPRO6000 TP4/0.85/~485K repro). UNION-merged on top of
+#          Group A's backend.py+v41_indexer changes; new test_dsv41_prefill_score_tiles.py 14/14. Keeps OUR
+#          fp4_indexer_quant import path. Knob SGLANG_DSA_MQA_LOGITS_FREE_MEM_FRACTION=0.2 default.
+# [11] 205816df3b  #42368  Read FlashInfer 0.7's DSV4 decode dispatch through membership
+#        - fixes the "topk>=192" decode graph-capture TypeError on the FlashInfer-0.7 SM120 path (1688-shape cap).
+# [12] dc123beaa4  (port of #39914) extra-KV 64-token page split + candidate dense fallback
+#        - our hard-fail topk_extra=512 extra_page_block_size=128 fixed: split candidate KV 128->64 at BOTH
+#          prefill(~260) and flashinfer(~679) sites (buf_key_suffix=":extra"). candidate_indexer.py/candidate_torch.py
+#          hunks DROPPED (moved to v41_indexer by #41125). Dense fallback already in base via #42371. Costs ~4.8GB/
+#          card scratch -> consider MEMFRAC 0.88. test_flashinfer_sparse_mla 8/8.
+# [13] 3bae558f46  #42714  Keep FlashMLA page-split buffers fixed for captured CUDA graphs
+#        - prevents captured graphs writing into freed scratch. Combined buffer key flash_mla_sm120_split:{dev}:{num_dst_pages}{buf_key_suffix}.
+# [14] 507c55b585  #32464  Keep sparse-prefill tests aligned with the SM120 dense fallback (test-kit).
+# [15] 2d9686cd8b  #34027  Fix int32 offset overflow in SM120 page-split kernel (1-line int64 program_id)
+#        - dst byte-offset wrapped ~114K dst pages (~3.7M tok) -> IMA or SILENT stray write into weights/KV at long ctx.
+#        ALL LIVE ONLY AFTER RESTART. Group D verdict: #33407/#34717 SKIP (0.7.2 already dispatches runtime topk);
+#        #38646 superseded by NVFP4-KV family; #44359/#38321 deferred.
+#
+# ── GROUP C: DSpark/bounded-replay correctness — merged cec5e8c..6637c22 (8 of 9 PRs) ──
+# [16] cec5e8c519  #42717  Resolve the same relayed confidence on every TP rank (TP4+overlap hang/wrong verify)
+# [17] a3e46144a0  #43225  Keep committed CPU seq_lens in compact verify (no double-add)
+# [18] e0c32f8ce6  #43374  Skip top-p renorm on compact-verify padding rows (dspark_verify.py 2nd-order conflict
+#          w/ #43225 resolved UNION: kept greedy_draft one-hot branch AND padding_verify_lens threading)
+#      SKIPPED     #42710  fold draft sampling FP32 — SUPERSEDED: sampler rewritten upstream (#43668/#43790, in base);
+#          V4 step_logits_dtype() returns float32 structurally; PR's corrected_out/_base_logits_dtype no longer exist.
+# [19] 7ea6750eb2+5643e8fdb7+0d8150a066  #42718  compact-verify token->request mapping (engram/dsv41_sparse); clean
+# [20] 8099a3a908+8323e62e8c  #42713  forced-uniform capture tier metadata; conflict in decode_cuda_graph_runner
+#          resolved UNION w/ our _captured_ragged_layouts cache (early-return dropped per PR intent)
+# [21] 59061ae124+c6d397475e+9e1a774ffc  #45301  padded query buffer alive for tail-graph lifetimes; auto-merged,
+#          zero overlap w/ #43376 (lives in v41_indexer/), budget logic intact
+# [22] 15e54b34e6  #44141  guard breakable-prefill-graph bounded replay off-CUDA / prefill-CP; hook conflict resolved
+#          by grafting graph_tail + 2 guards into our restructured incompatible-tuple (CUDA megamoe DP entry KEPT);
+#          models conflict = PR redef of tail_in_graph already in HEAD -> kept PR's assert only
+# [23] 6637c2241a  #45185  FP8 QDQ of attention out before wo_a for V4.1-Flash-1017. LANDED CLEANLY (no conflict).
+#          Env SGLANG_DSV4_O_FP8_QDQ_BLOCK=0 default OFF; set 32 for -1017. Hunk sits at top of the BF16-wo_a
+#          else-branch = our SM120 path (target was right all along); draft (v4_dspark) path also gated.
+#          Kernel self-test bit-exact vs torch ref on this box's SM120 (native e4m3). SGLANG_DSV4_O_FP8_QDQ_EMULATE exists.
+#          All 24 touched .py py_compile OK; repo conflict-marker count 0.
+#        ALL LIVE ONLY AFTER RESTART.
