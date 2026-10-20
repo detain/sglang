@@ -3200,6 +3200,10 @@ def test_qsa_graph_layout_covers_speculative_rows_and_padded_tail(seq_offset):
 @pytest.mark.parametrize("bs", [1, 3, 128])
 @pytest.mark.parametrize("padding", [0, 1])
 def test_qsa_draft_metadata_multi_step_graph(bs, padding):
+    """The captured draft-graph replay must keep matching the host-launched
+    per-step metadata (seq_offset 1..3) across replays."""
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA required")
     from types import SimpleNamespace
 
     from sglang.srt.layers.attention.qsa.graph_metadata import (
