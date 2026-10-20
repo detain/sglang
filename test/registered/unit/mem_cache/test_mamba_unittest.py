@@ -29,6 +29,18 @@ register_amd_ci(est_time=9, suite="stage-b-test-1-gpu-small-amd")
 register_xpu_ci(est_time=20, suite="stage-b-test-1-gpu-xpu")
 
 
+def _fixture_device() -> str:
+    """Device the pool fixtures are built on. MambaPool / HybridReqToTokenPool
+    allocate real device state, so a runner without an accelerator has nothing to
+    check: raise SkipTest (CustomTestCase's retry wrapper re-raises it untouched)
+    instead of failing inside get_device(). Pure host-side math tests in this file
+    never call it and keep running."""
+    try:
+        return get_device()
+    except RuntimeError as e:
+        raise unittest.SkipTest(f"pool fixtures need CUDA: {e}") from None
+
+
 class TestMamba(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -45,7 +57,7 @@ class TestMamba(unittest.TestCase):
         num_layers = 48
         global_interval = 4
         dtype = torch.bfloat16
-        device = get_device()
+        device = _fixture_device()
         full_attention_layer_ids = [
             i for i in range(global_interval - 1, num_layers, global_interval)
         ]
@@ -92,7 +104,7 @@ class TestMamba(unittest.TestCase):
         max_num_reqs = 10
         mamba_cache_size = 20
         max_context_len = 128
-        device = get_device()
+        device = _fixture_device()
         global_interval = 4
         num_layers = 48
         full_attention_layer_ids = [
@@ -182,7 +194,7 @@ class TestMamba(unittest.TestCase):
 
         pool = object.__new__(WindowFirstMambaPool)
         # Bypasses __init__, so set the device the allocator reads directly.
-        pool.device = get_device()
+        pool.device = _fixture_device()
         physical, view = pool._allocate_deduplicated_conv_window(
             conv_shape=(window_size, conv_dim),
             num_mamba_layers=num_mamba_layers,
@@ -244,7 +256,7 @@ class TestMamba(unittest.TestCase):
         max_num_reqs = 10
         mamba_cache_size = 20
         max_context_len = 128
-        device = get_device()
+        device = _fixture_device()
         full_attention_layer_ids = [
             i for i in range(global_interval - 1, num_layers, global_interval)
         ]
@@ -335,7 +347,7 @@ class TestMamba(unittest.TestCase):
             mamba_size=20,
             mamba_spec_state_size=10,
             max_context_len=128,
-            device=get_device(),
+            device=_fixture_device(),
             enable_memory_saver=False,
             cache_params=cache_params,
             mamba_layer_ids=[0],
