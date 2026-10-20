@@ -6,6 +6,7 @@ import unittest
 from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import torch
@@ -34,6 +35,16 @@ LOCAL_EXPERTS = 8
 GLOBAL_EXPERTS = 16
 TOP_K = 4
 MAX_TOKENS = NVFP4_MOE_SM120_MAX_TOKENS
+
+
+def _placement(ep_rank: int = 0) -> SimpleNamespace:
+    """The layer these dispatch tests stand for: 16 routed experts sharded 8+8
+    over EP2, TP1. Upstream #42348 (10edb05e72) moved the placement every fused
+    func reads onto ``MoeRunnerConfig``, which exposes it as properties over the
+    layer, so a config that reaches the kernel has to state one."""
+    return SimpleNamespace(
+        moe_tp_size=1, moe_tp_rank=0, moe_ep_size=2, moe_ep_rank=ep_rank
+    )
 
 
 def _quantize_weight(weight: torch.Tensor):
@@ -529,7 +540,6 @@ class TestNvfp4MoeSm120(CustomTestCase):
             ],
             apply_routed_scaling_factor=False,
             g1_alpha_up=self.fixture.g1_alpha,
-            moe_ep_size=2,
             smallm_workspace=self.fixture.workspace,
             smallm_global_routed_experts=GLOBAL_EXPERTS,
             smallm_local_routed_experts=LOCAL_EXPERTS,
@@ -543,6 +553,7 @@ class TestNvfp4MoeSm120(CustomTestCase):
             top_k=TOP_K,
             activation="silu",
             is_gated=True,
+            layer=_placement(),
         )
         cutlass = mock.Mock(side_effect=AssertionError("unexpected cutlass fallback"))
         with (
@@ -604,7 +615,6 @@ class TestNvfp4MoeSm120(CustomTestCase):
             ],
             apply_routed_scaling_factor=False,
             g1_alpha_up=self.fixture.g1_alpha,
-            moe_ep_size=2,
             smallm_workspace=self.fixture.workspace,
             smallm_global_routed_experts=GLOBAL_EXPERTS,
             smallm_local_routed_experts=LOCAL_EXPERTS,
@@ -618,6 +628,7 @@ class TestNvfp4MoeSm120(CustomTestCase):
             top_k=TOP_K,
             activation="silu",
             is_gated=True,
+            layer=_placement(),
         )
         cutlass_output = torch.empty_like(x)
         cutlass = mock.Mock(return_value=(cutlass_output,))
@@ -682,7 +693,6 @@ class TestNvfp4MoeSm120(CustomTestCase):
             ],
             apply_routed_scaling_factor=False,
             g1_alpha_up=self.fixture.g1_alpha,
-            moe_ep_size=2,
             smallm_workspace=self.fixture.workspace,
             smallm_global_routed_experts=GLOBAL_EXPERTS,
             smallm_local_routed_experts=LOCAL_EXPERTS,
@@ -701,6 +711,7 @@ class TestNvfp4MoeSm120(CustomTestCase):
                     activation="silu",
                     is_gated=True,
                     swiglu_limit=1.0,
+                    layer=_placement(),
                 ),
                 0,
                 False,
@@ -714,6 +725,7 @@ class TestNvfp4MoeSm120(CustomTestCase):
                     top_k=TOP_K,
                     activation="silu",
                     is_gated=True,
+                    layer=_placement(),
                 ),
                 1,
                 False,
@@ -727,6 +739,7 @@ class TestNvfp4MoeSm120(CustomTestCase):
                     top_k=TOP_K,
                     activation="silu",
                     is_gated=True,
+                    layer=_placement(),
                 ),
                 0,
                 True,
