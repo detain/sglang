@@ -171,7 +171,17 @@
 #   re-green after [44]. ~19 kernel/GPU/server suites NOT run here (all 4 cards busy with prod qwenflashnext9) ->
 #   re-validate on a free/8-GPU runner. Library code needed NO change; every failure was a stale union-collision test.
 #
-# tip: 9d01801eae (pushed to origin/detain). Stack healthy & restart-ready.
-# NEXT: boot smoke needs $HF_TOKEN + ~557GB download (model not in cache). For the -1017 revision set
-#   SGLANG_DSV4_O_FP8_QDQ_BLOCK=32 (or REV=1017). A/B SGLANG_ENABLE_PCIE_IPC_ALLREDUCE=1 now that #42863 all-gather
-#   + #41888 multicast guard landed. Defer list (NCCL-EP-LL stack, MegaMoE, NVFP4-KV family) sits in stack_want.txt.
+# [45] 768cb63024  [Fix] engram: memfd_create syscall fallback when os.memfd_create is unavailable
+#        - THIS BOX'S CPython 3.12 lacks the os.memfd_create binding (kernel has the syscall). The shared-layout
+#          DeepSeek-V4.1 Engram host table (engram.py:_open_shared_fd, rank0 creates fd, other ranks reopen via
+#          /proc/<pid>/fd) crashed at model load. Added _memfd_create(): os.memfd_create -> raw memfd_create(2)
+#          syscall via ctypes (319 x86_64 / 279 aarch64) -> unlinked /dev/shm last (tmpfs is only 126G here, so
+#          the syscall path is the real fix). Mirrors existing mmap_allocator.py idiom; upstreamable. Verified:
+#          MAP_SHARED mmap + /proc reopen works. Test added to test_engram_history.py (CPU-registered) 3 passed.
+#        - found by the user's first real boot (MODEL_PATH=deepseek-ai/DeepSeek-V4.1-Flash-1017); got PAST all
+#          attention-backend/indexer init (Groups A/core landed) -> failure was purely this env gap.
+#
+# tip: 768cb63024 (pushed to origin/detain). Stack healthy & restart-ready.
+# NEXT: boot smoke needs $HF_TOKEN. Before the Engram host-table load, free host RAM for the ~189GiB pin:
+#   sync; echo 3 > /proc/sys/vm/drop_caches; echo 1 > /proc/sys/vm/compact_memory   (box: 251G total, ~169G avail).
+#   Smaller first-smoke: REV=1017 CTX=262144 ... . -1017 QDQ auto-on via MODEL_PATH containing '1017'.
