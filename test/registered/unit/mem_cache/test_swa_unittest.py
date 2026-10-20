@@ -29,6 +29,18 @@ register_cuda_ci(est_time=9, stage="base-b", runner_config="1-gpu-large")
 register_amd_ci(est_time=10, suite="stage-b-test-1-gpu-small-amd")
 
 
+def _fixture_device() -> str:
+    """Device the pool/allocator fixtures are built on. Every allocator here owns
+    real device tensors, so a runner without an accelerator has nothing to check:
+    raise SkipTest (CustomTestCase's retry wrapper re-raises it untouched, and
+    unittest records a skip inside a subTest without aborting the method) rather
+    than failing inside get_device()."""
+    try:
+        return get_device()
+    except RuntimeError as e:
+        raise unittest.SkipTest(f"paged allocation kernels need CUDA: {e}") from None
+
+
 def _build_swa_allocator(
     page_size: int = 1,
     req_size: int = 8,
@@ -42,7 +54,7 @@ def _build_swa_allocator(
     num_layers = 24
     global_interval = 4
     dtype = torch.bfloat16
-    device = get_device()
+    device = _fixture_device()
     full_attention_layer_ids = [i for i in range(0, num_layers, global_interval)]
     full_attention_layer_ids_set = set(full_attention_layer_ids)
     swa_attention_layer_ids = [
@@ -95,7 +107,7 @@ def _sync_error(fn):
 
 
 def _build_pure_swa_allocator(size_swa: int = 16):
-    device = get_device()
+    device = _fixture_device()
     kv_pool = SWAKVPool(
         size=0,
         size_swa=size_swa,
