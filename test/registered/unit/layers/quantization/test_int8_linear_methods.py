@@ -70,6 +70,13 @@ def _quantize_int8_block(w: torch.Tensor, block: int = 128):
 class _Int8LinearCheck(CustomTestCase):
     @classmethod
     def setUpClass(cls):
+        # Every case builds device activations and runs an sgl-kernel INT8 GEMM,
+        # so there is no CPU form of this suite. Note the SM100+ gate on the
+        # subclasses cannot stand in for this one: get_device_sm() reports 0 on
+        # a device-less runner, so it stays open and each subTest then dies on
+        # `torch.randn(..., device="cuda")`.
+        if not torch.cuda.is_available():
+            raise unittest.SkipTest("CUDA is not available")
         init_single_process_dist()
 
     def _check(self, shapes, build_layer):
