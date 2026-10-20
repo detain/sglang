@@ -1,6 +1,7 @@
 # stack_want.txt — DeepSeek-V4.1-Flash on 4x RTX PRO 6000 Blackwell Max-Q (SM120, PCIe-only)
-# >>> EXECUTION STATUS (this pass): ALL decided PRs MERGED + PUSHED to deepseek-41-flash-1017-stack (tip 5dd6ec7096,
-#     ~57 PRs across 43 stack entries). See stack.txt for the per-entry record incl. the full SKIPPED/DEFERRED/AVOID
+# >>> EXECUTION STATUS (this pass): ALL decided PRs MERGED + PUSHED to deepseek-41-flash-1017-stack (tip 9d01801eae,
+#     ~57 PRs across 44 stack entries). VALIDATED: 40/40 CPU imports, 0 new ruff findings, 0 conflict markers, CPU test
+#     suites green after the entry-[44] union-collision test repairs. See stack.txt for the per-entry record incl. the full SKIPPED/DEFERRED/AVOID
 #     list with reasons. venv /root/sglang/.venv-dsv41f3 + ~/run_sglang_dsv41flash3.sh done. Deferred items (NCCL-EP-LL
 #     stack, MegaMoE, NVFP4-KV family, broad-autotune/VRAM levers) are gated on a real boot demand — revisit list below.
 #     Everything is LIVE ONLY AFTER RESTART.

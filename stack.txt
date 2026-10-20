@@ -156,5 +156,22 @@
 #    #42805/#35617/#33259 (conditional).
 #  AVOID (no-P2P): CustomAllReduce v2 family, DCP/CP symm, #42416 (forces NVSHMEM), #39605/#32479.
 #
-# tip: 5dd6ec7096 (pushed to origin). NEXT: boot smoke (HF_TOKEN + ~557GB download, not in cache); set
-#   SGLANG_DSV4_O_FP8_QDQ_BLOCK=32 for -1017; A/B SGLANG_ENABLE_PCIE_IPC_ALLREDUCE=1 (#42863 landed).
+# [44] 9d01801eae  [Test] repair 3 tests broken by cross-PR union (validation sweep follow-up)
+#        - #44448 VMM test: import sglang.kernels.ops.communication.mp -> sglang.srt.distributed.comm_cleanup
+#          (+ module-level CUDA skipif so its 9 torchrun-only cases skip clean on CPU).
+#        - #43712 DeepGEMM warmup test: 4-tuple key -> 5-tuple (…, None) matching compile_utils.py:163
+#          (query_key=(kernel_type,n,k,num_groups,recipe); blockwise f8f8bf16 path passes recipe=None).
+#        - #39807 MoE runner test: wrap _run_flashinfer_cutlass in override_server_args so the 'disagg'
+#          config bag is published (flashinfer_cutlass fp4 path now calls get_disagg()). 13 passed/9 skipped/0 fail.
+#
+# ── VALIDATION (combined tree @ 5129f15249) ──
+#   CPU import sweep 40/40 PASS (CUDA hidden, prod GPUs untouched). Ruff --select F,E9 over 120 touched .py:
+#   0 NEW findings (all 10 = byte-identical pre-existing base incl the known logits_processor F811 dup). 0 conflict
+#   markers. All 48 CPU test files collect; isolated CPU suite 343P/4F(=the 3 files fixed in [44])/269 subtests, then
+#   re-green after [44]. ~19 kernel/GPU/server suites NOT run here (all 4 cards busy with prod qwenflashnext9) ->
+#   re-validate on a free/8-GPU runner. Library code needed NO change; every failure was a stale union-collision test.
+#
+# tip: 9d01801eae (pushed to origin/detain). Stack healthy & restart-ready.
+# NEXT: boot smoke needs $HF_TOKEN + ~557GB download (model not in cache). For the -1017 revision set
+#   SGLANG_DSV4_O_FP8_QDQ_BLOCK=32 (or REV=1017). A/B SGLANG_ENABLE_PCIE_IPC_ALLREDUCE=1 now that #42863 all-gather
+#   + #41888 multicast guard landed. Defer list (NCCL-EP-LL stack, MegaMoE, NVFP4-KV family) sits in stack_want.txt.
