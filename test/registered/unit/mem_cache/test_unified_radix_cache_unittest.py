@@ -635,7 +635,16 @@ def build_fixture(
         else mamba_cache_chunk_size
     )
     set_global_server_args_for_scheduler(server_args)
-    device = get_device()
+    try:
+        device = get_device()
+    except RuntimeError as e:
+        # Every fixture here owns a real token-to-KV pool, so with no accelerator
+        # there is nothing to build: skip (CustomTestCase._callTestMethod's retry
+        # wrapper re-raises SkipTest untouched) instead of failing on the device
+        # lookup. Tests that only exercise host-side logic never reach this.
+        raise unittest.SkipTest(
+            f"cache fixtures need an accelerator device: {e}"
+        ) from None
 
     mamba2_cache_params = None
     if cfg.has_mamba:
