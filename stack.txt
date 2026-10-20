@@ -142,8 +142,10 @@
 #   gives ModelOpt MIXED_PRECISION the shared-expert-fusion veto that
 #   modelopt_fp4 already had (a BF16 body cannot occupy a packed FP4 expert
 #   slot). 232-240 are the ports: #45151 share draft embed/head before KV
-#   sizing (+6.9% tokens, benefits the FP8 arm too), #45092 flashinfer
-#   graph-wrapper reuse (wrong-output), #45213 persistent track-state
+#   sizing (+6.9% tokens, benefits the FP8 arm too), [10-20 MEASURED on this
+#   box: +81,216 tokens = +1.33%, not +6.9% -- the PR figure is TP1-scale and
+#   vocab-TP sharding divides it away; arithmetic in entry 243.] #45092
+#   flashinfer graph-wrapper reuse (wrong-output), #45213 persistent track-state
 #   scatter, #42737 K-tile static_assert, #44861 SM12x FP8
 #   batch-invariance + masked-tail zero-fill, #44372 automatic hybrid
 #   spec-state sizing, #44150* (merged-but-missing 9ab74b8517, hand-placed
@@ -3999,6 +4001,10 @@ STACK, IN BUILD ORDER (bottom first)
       # above); the fused-shared slot count stays 128/rank at EP4.
 
         232. c6c68b7a4b  PR #45151  share the draft embed/lm_head before the target KV pool is sized (+6.9% KV tokens -- BENEFITS THE FP8 ARM TOO)
+      # [10-20 MEASURED on this box: +81,216 tokens = +1.33%, not the +6.9% in
+      # the title -- the PR figure is TP1-scale and vocab-TP sharding divides it
+      # away (0.592 GiB/rank freed / 6,656 B per pool token = +1.56% predicted,
+      # ~85% realized). Full arithmetic in entry 243.]
       # EagleWorkerV2.__init__ now calls _share_embed_and_head() (new,
       # idempotent via _embed_and_head_shared) right after the draft
       # TpModelWorker is built, instead of waiting for alloc_memory_pool.
@@ -4008,6 +4014,10 @@ STACK, IN BUILD ORDER (bottom first)
       # before alloc_memory_pool runs, so those two duplicate tensors were
       # still resident at profiling time => max_total_num_tokens
       # permanently undersized (author measured +6.9%).
+      #   [10-20 MEASURED: +81,216 tokens = +1.33% at TP4, not +6.9% -- the
+      #   author's figure is TP1-scale, and vocab-TP sharding divides the freed
+      #   embed/lm_head bytes by the parallel degree before they reach the pool.
+      #   See entry 243.]
       # Ordering re-verified by reading the constructor on this tree: the
       # draft worker is built ~30 lines earlier in the same __init__, and
       # alloc_memory_pool still calls the idempotent wrapper, so the old
@@ -4018,6 +4028,10 @@ STACK, IN BUILD ORDER (bottom first)
       # GPU debt this creates: read the actual max_total_num_tokens gain at
       # the prod TP4/NEXTN boot (expect ~+400k on the 6,111,616 baseline) and
       # confirm no double-share against our own draft-init path.
+      #   [10-20 RESOLVED WITHOUT a GPU window (boot dump only), so this is no
+      #   longer owed: the 13:36 FP8 boot on post-232 code measured 6,192,832 vs
+      #   6,111,616 pre-232 = +81,216 (+1.33%), not ~+400k. The double-share half
+      #   was settled by the constructor re-read above. Entry 243.]
 
         233. 44444320ea  PR #45092  flashinfer: reuse the CUDA-graph wrappers when a batch size is captured twice (wrong-output class)
       # _prepare_cuda_graph_metadata(bs) unconditionally overwrote
