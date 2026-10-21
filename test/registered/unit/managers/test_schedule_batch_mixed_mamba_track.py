@@ -408,12 +408,13 @@ class TestMixedChunkMambaTracking(CustomTestCase):
             self.assertEqual(lc.ssm_states[slot].flatten()[0], STALE)
             self.assertEqual(lc.conv_states[slot][0, 0], STALE)
 
-    def test_running_batch_without_track_indices_gets_its_slots_from_reqs(self):
+    def test_running_batch_without_track_indices_pads_tails_untracked(self):
         """Spec decode prepares the running rows' track indices inside the
-        forward, so the running batch reaches the mix without them. The mixed
-        batch still needs a real slot id per decode row (index translation
-        and graph track buffers read every row): the slot the decode step
-        would target, masked off."""
+        forward, so the running batch reaches the mix without them. Upstream
+        #45435 (superseding the entry-119 rebuild-from-reqs): the mixed batch
+        pads every decode tail as an untracked row (-1 index, mask False), so
+        the mixed forward writes no decode checkpoint; the extend rows keep
+        their tracking."""
         self._publish("extra_buffer")
         lc = _Lifecycle(extra_buffer=True)
         decoding, running = self._running_decode_batch(
@@ -431,18 +432,23 @@ class TestMixedChunkMambaTracking(CustomTestCase):
         self.assertEqual(mixed.mamba_track_seqlens_cpu, [8, -1])
         self.assertEqual(
             mixed.mamba_track_indices.tolist(),
-            [
-                slot_at(extend, extend.kv.mamba_last_track_idx),
-                slot_at(decoding, decoding.kv.mamba_next_track_idx),
-            ],
+            [slot_at(extend, extend.kv.mamba_last_track_idx), -1],
         )
+        # Non-lazy: nothing to undo, the decode req's own bookkeeping is
+        # untouched by the mixed step.
+        self.assertNotEqual(slot_at(decoding, 0), -1)
+        self.assertIsNone(decoding.kv.mamba_untracked_decode_batch_idx)
 
     def test_lazy_strategy_mixes_with_a_preallocated_boundary_slot(self):
         """extra_buffer_lazy holds one slot per request and allocates the
         second only when a decode step lands on the track grid, before the
-        mix. That freshly allocated slot must ride the mixed batch masked off
-        (the decode tail takes no checkpoint here) and the extend row must
-        still checkpoint into its single slot and donate it."""
+        mix. Upstream #45435: a decode batch whose boundary step rides a
+        MIXED forward gets that freshly allocated slot BACK
+        (mamba_lazy_undo_prealloc_at_boundary) -- the mixed forward writes no
+        decode checkpoint and the result path never frees it, so carrying it
+        would leak the slot. The mixed batch pads the tail untracked (-1);
+        the extend row still checkpoints into its single slot and donates
+        it."""
         self._publish("extra_buffer_lazy")
         lc = _Lifecycle(extra_buffer=True, lazy=True)
         decoding, running = self._running_decode_batch(
@@ -454,7 +460,8 @@ class TestMixedChunkMambaTracking(CustomTestCase):
         boundary_slot = slot_at(decoding, 1)
         self.assertNotEqual(boundary_slot, -1)
         self.assertEqual(running.mamba_track_indices.tolist(), [boundary_slot])
-        # Spec decode leaves the running indices unset; rebuild them under lazy.
+        # Spec decode leaves the running indices unset; the mix undoes the
+        # boundary prealloc from req state even so.
         running.mamba_track_indices = None
 
         extend = lc.new_req("A", list(range(10, 20)), max_new_tokens=8)
@@ -468,8 +475,14 @@ class TestMixedChunkMambaTracking(CustomTestCase):
         self.assertEqual(mixed.mamba_track_seqlens.tolist(), [10, -1])
         self.assertEqual(mixed.mamba_prefill_track_mask_cpu, [True, False])
         self.assertEqual(mixed.mamba_track_seqlens_cpu, [10, -1])
+        self.assertEqual(mixed.mamba_track_indices.tolist(), [extend_slot, -1])
+        # The boundary slot is given back and next_idx points at the empty
+        # entry again; the batch is recorded as untracked for the finish path.
+        self.assertEqual(slot_at(decoding, 1), -1)
+        self.assertNotEqual(slot_at(decoding, 0), -1)
+        self.assertEqual(decoding.kv.mamba_next_track_idx, 0)
         self.assertEqual(
-            mixed.mamba_track_indices.tolist(), [extend_slot, boundary_slot]
+            decoding.kv.mamba_untracked_decode_batch_idx, decoding.decode_batch_idx
         )
 
         lc.run_extend_forward(mixed, tag=1)
@@ -478,11 +491,12 @@ class TestMixedChunkMambaTracking(CustomTestCase):
             lc.restored_state(list(range(10, 18)) + [90]),
             (8, h_state(1, 2), [5.0, 6.0, 7.0]),
         )
-        for idx in range(2):
-            self.assertEqual(lc.ssm_states[slot_at(decoding, idx)].flatten()[0], STALE)
+        # The mixed forward wrote no decode checkpoint: the handed-back slot
+        # still holds nothing the forward produced.
+        self.assertEqual(lc.ssm_states[boundary_slot].flatten()[0], STALE)
         self.assertEqual(
             (decoding.kv.mamba_next_track_idx, decoding.kv.mamba_last_track_idx),
-            (1, 0),
+            (0, 0),
         )
 
     def test_mix_without_extra_buffer_carries_no_tracking(self):
