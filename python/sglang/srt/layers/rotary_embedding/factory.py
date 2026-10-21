@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import functools
 import logging
+import math
 from typing import Any, Dict, Optional, Tuple
 
 import torch
@@ -90,6 +91,223 @@ def _aiter_rope_unsupported_arch() -> bool:
 _ROPE_DICT: Dict[Tuple, RotaryEmbedding] = {}
 
 
+# ---------------------------------------------------------------------------
+# The memo key.
+#
+# A cached module here is process-wide and is attached as a submodule of every
+# model that asks for it, so the key must describe the object that gets built,
+# not the call that asked for it.  `max_position` is a caller-side context
+# length and three branches never hand it to the constructor: `yarn` (with and
+# without mrope_section) and `deepseek_yarn` pass
+# rope_scaling["original_max_position_embeddings"] instead, and those classes
+# derive both the cache length and the correction range from that value alone.
+# Keying on the raw argument therefore duplicates a bit-identical cos/sin cache
+# per model in the process -- which is exactly what a draft worker hits, because
+# ModelConfig._derive_context_length raises the *draft's*
+# max_position_embeddings to the target's context length while the target keeps
+# the checkpoint value.  On the live Qwen3.8-Flash-Next YaRN geometry (262144
+# original x factor 4.0, rotary_dim 64, fp32) that is 1048576*64*4 = 256 MiB
+# allocated twice per rank.
+#
+# So the key carries the construction identity the classes actually consume
+# (_rope_geometry) plus the device the buffers materialise on, and keeps the
+# caller's max_position wherever a class really does read it.  A branch that
+# _rope_geometry cannot analyse falls back to the caller's max_position, i.e.
+# the pre-existing strictness.
+# ---------------------------------------------------------------------------
+
+
+def _arange_rows(length: float) -> int:
+    """Rows that ``torch.arange(length)`` materialises for a float length."""
+    return max(0, math.ceil(length))
+
+
+def _ambient_device_tag() -> str:
+    """The device a constructor materialises buffers on right now.
+
+    ``with torch.device("meta")`` (the presharding signature pass, quark's
+    dummy init) and a real build used to collide in one key: the meta entry is
+    only recoverable because _get_live_rope_cache_entry happens to notice that
+    dead storage looks like meta storage.  A build under ``cuda:0`` that a later
+    model on another device reuses is not caught at all -- its buffers are
+    alive -- so the ambient device is part of what identifies the object.
+    """
+    try:
+        return str(torch.get_default_device())
+    except Exception:  # pragma: no cover - defensive, torch always answers
+        return "unknown"
+
+
+def _canonical_scaling_args(config: Optional[Dict[str, Any]]) -> Optional[Tuple]:
+    """Hashable, order-independent form of a config dict for use in the key.
+
+    sorted() so the key depends on the dict's content rather than its insertion
+    order: target and draft reach the same rope_parameters through different
+    config-merge paths.
+    """
+    if config is None:
+        return None
+    return tuple(
+        sorted((k, tuple(v) if isinstance(v, list) else v) for k, v in config.items())
+    )
+
+
+def _resolve_rope_geometry(
+    rotary_dim: int,
+    max_position: int,
+    rope_scaling: Optional[Dict[str, Any]],
+    dual_chunk_attention_config: Optional[Dict[str, Any]],
+) -> Tuple[str, int, Optional[int]]:
+    """Return (class the factory will build, max_position_embeddings it is
+    handed, cache rows it materialises or None when that is not one number).
+
+    Mirrors get_rope's dispatch branch for branch.  The defaults replicate
+    _get_rope_param's, but silently: this runs on every call and a missing key
+    must warn once from the dispatch, not twice.
+    """
+    if dual_chunk_attention_config is not None:
+        # Five separate buffers, and the constructor reads
+        # torch.cuda.current_device(); the caller's max_position is its k-cache
+        # length, so nothing is lost by keeping it.
+        return ("DualChunkRotaryEmbedding", max_position, None)
+    if rope_scaling is None:
+        return ("RotaryEmbedding", max_position, max_position)
+
+    if "rope_type" in rope_scaling:
+        scaling_type = rope_scaling["rope_type"]
+    elif "type" in rope_scaling:
+        scaling_type = rope_scaling["type"]
+    else:
+        # get_rope raises for this config; stay as strict as it used to be.
+        return ("", max_position, None)
+
+    scaling_factor = rope_scaling.get("factor", 1.0)
+    original_max_position = rope_scaling.get("original_max_position_embeddings", None)
+    # _get_rope_param's fallback, spelled out: a YaRN/DeepSeek config without an
+    # explicit original keeps the caller's max_position, and that is the case
+    # where these branches are no more shareable than a plain rope.
+    if original_max_position is None:
+        original_max_position = max_position
+
+    if scaling_type == "llama3":
+        return ("Llama3RotaryEmbedding", max_position, max_position)
+    if scaling_type == "default":
+        if "mrope_section" in rope_scaling and rope_scaling.get("video_rope", False):
+            # Bailing folds the caller's max_position into position_start and
+            # into the cache length itself, so it is not a shareable branch.
+            # (Its own length is a truncating int(), unlike the YaRN branches.)
+            return (
+                "BailingMRotaryEmbedding",
+                max_position,
+                max_position + int(original_max_position * scaling_factor),
+            )
+        if "mrope_section" in rope_scaling:
+            return ("MRotaryEmbedding", max_position, max_position)
+        if rope_scaling.get("use_fope", False):
+            return ("FourierRotaryEmbedding", max_position, max_position)
+        return ("RotaryEmbedding", max_position, max_position)
+    if scaling_type == "linear":
+        return (
+            "LinearScalingRotaryEmbedding",
+            max_position,
+            _arange_rows(max_position * scaling_factor),
+        )
+    if scaling_type == "dynamic":
+        if "alpha" in rope_scaling:
+            return ("DynamicNTKAlphaRotaryEmbedding", max_position, max_position)
+        return (
+            "DynamicNTKScalingRotaryEmbedding",
+            max_position,
+            _arange_rows(max_position * scaling_factor),
+        )
+    if scaling_type == "yarn":
+        if "mrope_section" in rope_scaling and rope_scaling.get("video_rope", False):
+            return (
+                "BailingMRotaryEmbedding",
+                max_position,
+                max_position + int(original_max_position * scaling_factor),
+            )
+        if "mrope_section" in rope_scaling:
+            return (
+                "YaRNScalingMRotaryEmbedding",
+                original_max_position,
+                _arange_rows(original_max_position * scaling_factor),
+            )
+        return (
+            "YaRNScalingRotaryEmbedding",
+            original_max_position,
+            _arange_rows(original_max_position * scaling_factor),
+        )
+    if scaling_type == "deepseek_yarn":
+        return (
+            "DeepseekScalingRotaryEmbedding",
+            original_max_position,
+            _arange_rows(original_max_position * scaling_factor),
+        )
+    if scaling_type == "longrope":
+        # short(orig) + long(max_position) buffers; max_position is one of them.
+        return ("Phi3LongRoPEScaledRotaryEmbedding", max_position, None)
+    if scaling_type == "proportional":
+        return ("Gemma4RotaryEmbedding", max_position, max_position)
+    # Unknown type: get_rope raises below.
+    return ("", max_position, None)
+
+
+def _rope_geometry(
+    rotary_dim: int,
+    max_position: int,
+    rope_scaling: Optional[Dict[str, Any]],
+    dual_chunk_attention_config: Optional[Dict[str, Any]],
+) -> Tuple[str, int, Optional[int]]:
+    """_resolve_rope_geometry, de-fanged.
+
+    A memo helper must not be able to break a build on its own: if it ever
+    disagrees with the dispatch about what is valid, the worst case here is the
+    pre-existing per-model duplication rather than a crash.
+    """
+    try:
+        return _resolve_rope_geometry(
+            rotary_dim, max_position, rope_scaling, dual_chunk_attention_config
+        )
+    except Exception:
+        return ("", max_position, None)
+
+
+def _rope_cache_key(
+    head_size: int,
+    rotary_dim: int,
+    max_position: int,
+    base: int,
+    is_neox_style: bool,
+    rope_scaling_args: Optional[Tuple],
+    dual_chunk_attention_args: Optional[Tuple],
+    dtype: torch.dtype,
+    geometry: Tuple[str, int, Optional[int]],
+    device_tag: str,
+    for_cpu: bool,
+) -> Tuple:
+    """The memo key. ``max_position`` is deliberately absent: geometry carries
+    the positional the constructor receives (which is the caller's value for
+    every branch that reads it) plus the class and the resolved cache length.
+
+    ``for_cpu`` keeps get_rope_cpu's entries in a disjoint key space -- it
+    reaches the same class with an explicit device argument, so the two are not
+    interchangeable objects even under an identical config.
+    """
+    return (
+        head_size,
+        rotary_dim,
+        base,
+        is_neox_style,
+        rope_scaling_args,
+        dual_chunk_attention_args,
+        dtype,
+        device_tag,
+        geometry,
+        for_cpu,
+    )
+
+
 def _get_live_rope_cache_entry(key: Tuple) -> Optional[RotaryEmbedding]:
     """Return the cached module for ``key``, dropping it if its buffers are dead.
 
@@ -135,27 +353,25 @@ def get_rope(
 ) -> RotaryEmbedding:
     if dtype is None:
         dtype = torch.get_default_dtype()
-    if rope_scaling is not None:
-        rope_scaling_tuple = {
-            k: tuple(v) if isinstance(v, list) else v for k, v in rope_scaling.items()
-        }
-        rope_scaling_args = tuple(rope_scaling_tuple.items())
-    else:
-        rope_scaling_args = None
+    rope_scaling_args = _canonical_scaling_args(rope_scaling)
 
     if dual_chunk_attention_config is not None:
-        dual_chunk_attention_tuple = {
-            k: tuple(v) if isinstance(v, list) else v
-            for k, v in dual_chunk_attention_config.items()
-            if k != "sparse_attention_config"
-        }
-        dual_chunk_attention_args = tuple(dual_chunk_attention_tuple.items())
+        dual_chunk_attention_args = _canonical_scaling_args(
+            {
+                k: v
+                for k, v in dual_chunk_attention_config.items()
+                if k != "sparse_attention_config"
+            }
+        )
     else:
         dual_chunk_attention_args = None
 
     if partial_rotary_factor < 1.0:
         rotary_dim = int(rotary_dim * partial_rotary_factor)
-    key = (
+    geometry = _rope_geometry(
+        rotary_dim, max_position, rope_scaling, dual_chunk_attention_config
+    )
+    key = _rope_cache_key(
         head_size,
         rotary_dim,
         max_position,
@@ -164,6 +380,9 @@ def get_rope(
         rope_scaling_args,
         dual_chunk_attention_args,
         dtype,
+        geometry,
+        _ambient_device_tag(),
+        False,
     )
     cached = _get_live_rope_cache_entry(key)
     if cached is not None:
@@ -453,23 +672,22 @@ def get_rope_cpu(
 ) -> RotaryEmbedding:
     if dtype is None:
         dtype = torch.get_default_dtype()
-    if rope_scaling is not None:
-        rope_scaling_tuple = {
-            k: tuple(v) if isinstance(v, list) else v for k, v in rope_scaling.items()
-        }
-        rope_scaling_args = tuple(rope_scaling_tuple.items())
-    else:
-        rope_scaling_args = None
+    rope_scaling_args = _canonical_scaling_args(rope_scaling)
     if partial_rotary_factor < 1.0:
         rotary_dim = int(rotary_dim * partial_rotary_factor)
-    key = (
+    geometry = _rope_geometry(rotary_dim, max_position, rope_scaling, None)
+    key = _rope_cache_key(
         head_size,
         rotary_dim,
         max_position,
         base,
         is_neox_style,
         rope_scaling_args,
+        None,
         dtype,
+        geometry,
+        str(device) if device is not None else _ambient_device_tag(),
+        True,
     )
     cached = _get_live_rope_cache_entry(key)
     if cached is not None:
