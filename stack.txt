@@ -1,6 +1,6 @@
 # stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
 #
-# STACK: qwennext-stack-246-2026-10-20
+# STACK: qwennext-stack-247-2026-10-20
 #   main+pr36787+pr37275+pr38144+pr38209+pr36644+pr39862+pr39809+pr39893+local_hicache_qsa_fixes
 #   +pr39614+pr39978+pr40002+pr39065+pr40501+pr40175+pr40362+pr39391+pr37061+pr39333+pr33778
 #   +pr38977+pr39977+pr40480+pr39880+pr40235+pr39807+cpu-triage+boot-fix+plan_updates_perf
@@ -10,7 +10,7 @@
 #   +diffusion-batch-2026-10-08(pr27673+pr28690*+pr32513+pr32550*+pr33036*+pr33588*
 #    +pr36399+pr36767+pr37460*+pr38650+pr39212+pr40493+pr40588+pr40755+pr41340*
 #    +pr41944+pr42249+pr42928*+pr43028*+pr43064*)
-#   (entries 1-246; *=squash/ported, see commit messages. 10-10 added
+#   (entries 1-247; *=squash/ported, see commit messages. 10-10 added
 #   entries 157-161: parser batch A (Qwen3-Coder tool-call fixes + sampling
 #   upper bounds), on top of upstream merge #3 (see synced). 10-10b added
 #   entries 162-166: SM120 batch B (#42863 PCIe-IPC vocab gathers, #42566
@@ -189,6 +189,25 @@
 #   found asserting on log strings that DO NOT EXIST (21/22/36/38) plus base/
 #   being stale vs the parked-L3 script. Live only after restart (user-driven);
 #   NOTHING pushed.
+#   10-20c added entry 247: the SM120 b12x W4A16 MoE ROUTE, hand-ported from
+#   OPEN upstream PR #45298 as a new OPT-IN --moe-runner-backend
+#   flashinfer_b12x_w4a16 (489c4ae446, 12 files +886/-5, plus a 67-test CPU
+#   contract suite 4c91151ed0). Semantics taken from three of that PR's 33
+#   files; ~30 files of DSA-kpool/capture-owner/scheduler/LoRA baggage plus
+#   glm5_next.py deliberately dropped. THREE DEFECTS #45298 HAS AGAINST OUR
+#   TREE, all corrected here and all re-importable by a future merge: a
+#   source_format spelling that does not exist in flashinfer 0.7.2, an alpha
+#   fold that would silently misscale OUR checkpoint 534x/415x, and a
+#   hardcoded w13_layout that would silently swap gate/up inside SwiGLU.
+#   DEFAULT OFF and proven so at the resolver. HONEST EXPECTATION, recorded
+#   before measurement: NOT a bs1 win (EP4 always passes an expert_map, which
+#   disqualifies flashinfer's two fastest small-M paths); the credible wins
+#   are acceptance-length recovery and bs>=8. Also recorded: the planned
+#   needle "b12x W4A16 weights prepared" DOES NOT EXIST in the tree -- the
+#   entry lists the strings that actually print. All 18 CPU targets reproduce
+#   EXACTLY on main (prod venv, per-file, CVD=9), the first time this port
+#   coexists with 244-246. Live only after restart (user-driven); NOTHING
+#   pushed.
 #   10-08 added entries
 #   136-155: 20 diffusion PRs (4 more evaluated-skipped, see NOT INCLUDED).
 #   09-28 added 22 entries: 9 new PR blocks, new head
@@ -196,7 +215,7 @@
 #   make --enable-mixed-chunk safe and fix the QSA verify ring collision.
 #   * = picked with local modifications, see the entries)
 # branch : qwennext-stack
-# tip    : c1323ca20b   (the stack.txt commit sits above it)
+# tip    : 4c91151ed0   (the stack.txt commit sits above it)
 # base   : upstream sgl-project/sglang main @ 7ad55e4386 ([HiCache] TMA-staged
 #          host<->device KV transfer kernel (sm_90+) (#40278), 2026-09-21)
 # synced : upstream main @ f209e67767 (#39643, 2026-09-28) MERGED IN as
@@ -4909,6 +4928,298 @@ STACK, IN BUILD ORDER (bottom first)
       # scope a co-resident run, and a contaminated energy number is marked
       # instead of being silently averaged in.
 
+        247. 489c4ae446* 4c91151ed0  OPEN PR #45298 hand-port  SM120 b12x W4A16 MoE ROUTE -- a new OPT-IN --moe-runner-backend flashinfer_b12x_w4a16 (FP4 weights, BF16 activations, EP-capable), with the THREE defects that PR carries on OUR tree corrected, and an honest expectation written down before the first measurement: THIS IS NOT A bs1 WIN
+      # WHAT LANDED. Two commits, 13 files, +2064/-5 (12 code/doc files
+      # +886/-5 in 489c4ae446, then 1178 new test lines in 4c91151ed0). It adds
+      # a real SELECTABLE MoE runner backend, not an env flip:
+      #   MoeRunnerBackend.FLASHINFER_B12X_W4A16 ("flashinfer_b12x_w4a16",
+      #   layers/moe/utils.py) + the CLI choice (arg_groups/choices.py, whose
+      #   help text is what docs/.../server_arguments.mdx regenerates from, so
+      #   the .mdx line moved with it) + arg validation
+      #   (arg_groups/moe_hook.py:_validate_flashinfer_b12x_w4a16) + resolution
+      #   (arg_groups/overrides.py: shared-expert fusion force-off, and `auto`
+      #   deliberately NOT extended) + the route itself
+      #   (moe_runner/flashinfer_cutlass.py, +488 lines: gate, weight prep,
+      #   fused func, prewarm ladder) + the in-place W4A16 preparation
+      #   (quantization/modelopt_quant.py, +291) + MoeRunner dispatch
+      #   (moe_runner/runner.py) + the global-vs-local expert-id convention
+      #   (token_dispatcher/standard.py:_keeps_global_expert_ids) + the NEXTN
+      #   draft fallback (quantization/fp8.py) + the model hook
+      #   (models/qwen4_exp.py) + environ.SGLANG_B12X_W4A16_PREWARM_PREFILL_TOKENS
+      #   = EnvInt(0) (environ.py:1109-1113, directly below entry 244's
+      #   SGLANG_NVFP4_MOE_SM120_MAX_EP).
+      # DEFAULT OFF, PROVEN THREE WAYS, NOT ASSERTED: (1) the CPU test
+      # TestArgumentValidation.test_auto_never_resolves_to_b12x patches
+      # overrides.get_platform to an SM120 box with quantization=modelopt_fp4
+      # and asserts _moe_runner_backend_quant_constraints(view) ==
+      # {"moe_runner_backend": "flashinfer_cutlass"} -- i.e. the FP4 production
+      # arm's resolution is UNCHANGED; (2) the same test asserts an EXPLICIT
+      # "flashinfer_b12x_w4a16" request returns {} (nothing rewrites it, the
+      # gate is what decides); (3) test_prewarm_is_inert_when_the_route_was_not_
+      # selected proves the qwen4_exp hook does no device work and does not even
+      # import flashinfer for every other backend, and the prewarm env reads 0
+      # by default. Verified live on main in the prod venv under CVD=9: the
+      # patched-platform resolution returns flashinfer_cutlass, the enum member
+      # and the CLI choice exist, PREWARM_PREFILL_TOKENS == 0.
+      # PROVENANCE -- READ THIS BEFORE ANY REBASE ONTO origin/main. Upstream PR
+      # #45298 (adubkov, "[Feat] moe: B12x W4A16 E4M3 K/32 route with EP support
+      # for ModelOpt mixed checkpoints", head a3dde82553, STATE OPEN, 33 files
+      # +1769/-71). It is NOT merged, so this can never be a cherry-pick, and it
+      # is a hand-port of the semantics of THREE of its files:
+      #   1. layers/moe/moe_runner/flashinfer_cutlass.py -- the route, the gate,
+      #      the launch payload, the warm helpers.
+      #   2. layers/quantization/modelopt_quant.py -- in-place W4A16 weight
+      #      preparation, the swizzle defer, the alpha handling, the apply branch.
+      #   3. models/glm5_next.py -- the FILE WAS NOT TAKEN (we do not serve GLM);
+      #      its precompile_kernels_after_loading HOOK PATTERN is what our 13-line
+      #      qwen4_exp.py hook re-expresses, because that is the only place in a
+      #      model that runs after weight preparation and before the KV pools and
+      #      CUDA graphs.
+      # THE OTHER ~30 FILES ARE DELIBERATELY DROPPED, and a future merge that
+      # takes the PR wholesale will drag all of them in: all DSA kpool /
+      # capture-owner / scheduler / scheduler_components / model_runner /
+      # runner_backend / pool / multiplexing / LoRA-backend changes and the four
+      # new dsa tests; environ.py's SGLANG_DSA_GRAPH_BUFFER_LIFETIME; the
+      # qwen3_next.py empty_cache guard; the deepseek_v2/glm4_moe model hooks;
+      # ModelOptMixedPrecisionConfig.linear_fp8_config, its nvfp4 group_size
+      # agreement check and the is_w4a16 publish on the outer config (that trio
+      # exists for a GLM W4A16_NVFP4 checkpoint our A4 export does not need); and
+      # most consequentially the PR's OWN SELECTION GATE _use_flashinfer_b12x_w4a16
+      # -- it keys on (moe runner == flashinfer_cutlass AND is_w4a16 AND
+      # group_size == 32), which our checkpoint can never satisfy (modelopt NVFP4
+      # A4, group_size 16). Keying on the explicit backend instead is what keeps
+      # the default path byte-identical.
+      # THE THREE DEFECTS #45298 HAS AGAINST OUR TREE -- each one is a SILENT
+      # WRONG-RESULT bug or a hard TypeError, and each is re-imported by a merge.
+      # (1) source_format="modelopt_e4m3_k32" DOES NOT EXIST in the installed
+      #     flashinfer 0.7.2. _SOURCE_FORMATS
+      #     (fused_moe/cute_dsl/blackwell_sm12x/moe_w4a16_prepare.py:23-30)
+      #     accepts modelopt | modelopt_nvfp4 | fp4_e8m0_k32 | compressed_tensors
+      #     and _normalize_source_format (:210-216) raises on anything else. The
+      #     k32 spelling arrives with flashinfer #6824, still unreleased. Our
+      #     export IS the K/16 E4M3 grid in swizzled storage -- per-expert
+      #     weight_scale float8_e4m3fn [N, K/16], read from the safetensors
+      #     headers: gate_proj (640,160) for K=2560, down_proj (2560,40) for
+      #     K=640 -- which is exactly what prepare_w4a16_modelopt_nvfp4_weights
+      #     documents (:711-716) and returns as scale_format="e4m3_k16" (:695), so
+      #     B12X_W4A16_SOURCE_FORMAT = "modelopt". (fp4_e8m0_k32 would demand an
+      #     E8M0 [E,N,ceil(K/32)] grid, _validate_e8m0_k32_scales:235-250;
+      #     compressed_tensors INVERTS the global scale, _source_global_scale
+      #     :226-233.) Pinned both ways by
+      #     test_upstream_pr_spelling_is_rejected_by_this_wheel and
+      #     test_source_format_is_a_real_wheel_key -- the first one is a test
+      #     against THE UPSTREAM PR's OWN STRING, so it fails the day someone
+      #     merges #45298 blind.
+      # (2) THE ALPHA FOLD -- the worst of the three, 534x / 415x, and completely
+      #     invisible in a throughput log. The PR passes layer.g1_alphas =
+      #     w13_input_scale * w13_weight_scale_2 into a W4A16 kernel that IGNORES
+      #     activation scales (moe_w4a16_prepare.py:711-716 "activation input
+      #     scales are not folded into W4A16 weight preparation"; b12x_moe.py
+      #     documents input_global_scale/fc2_input_scale as ignored for
+      #     quant_mode=w4a16), and _process_nvfp4_packed_global_scale (:185-198)
+      #     multiplies whatever we pass straight into the per-block scale fold at
+      #     prep time -- so an activation scale inside that value is applied on
+      #     top of the activation quantisation the kernel does not do. OUR
+      #     checkpoint carries REAL calibrated input scales (measured from the
+      #     tensors: gate/up 0.00187174, down_proj 0.00240653), so the product is
+      #     wrong by 1/0.00187174 = 534x on gate/up and 1/0.00240653 = 415x on
+      #     down. THE FIX IS NOT AT THE CALL SITE: b12x is folded into this file's
+      #     EXISTING activation-neutralization site (modelopt_quant.py, next to
+      #     the CuTe-DSL W4A16 precedent at :2885 and the marlin one), so
+      #     g1_alphas/g2_alphas are STRUCTURALLY weight-only (= w13_weight_scale_2
+      #     / w2_weight_scale_2, already EP-sliced by entry 205's _slice_scale)
+      #     while every reader keeps seeing one "alpha" convention. A call-site
+      #     patch would have left the folded product alive for the next consumer.
+      #     Pinned by test_b12x_w4a16_alphas_are_weight_only (g1_alpha ==
+      #     weight_scale_2 AND g1_alpha == product / input_scale) plus
+      #     test_w4a16_never_folds_the_activation_scale and
+      #     test_cutlass_route_never_prepares_and_keeps_the_folded_alpha. A
+      #     related guard: a checkpoint whose gate and up GLOBAL scales differ is
+      #     REFUSED (test_distinct_gate_up_global_scales_are_rejected), because
+      #     one alpha cannot carry two.
+      # (3) w13_layout IS NOT A CONSTANT. The PR hardcodes "w13", which is right
+      #     FOR ITS OWN GATE -- that gate requires flashinfer_cutlass, where
+      #     load_up_proj_weight_first is true and storage is [Up, Gate]. This
+      #     route is a DIFFERENT backend, storage stays [Gate, Up], and the correct
+      #     wheel value is "w31". Getting it wrong is not an error and not a
+      #     slowdown: it silently swaps gate and up INSIDE SwiGLU. So the string is
+      #     DERIVED FROM THE SAME PREDICATE THE LOADER USES --
+      #     b12x_w4a16_w13_layout(up_first) with B12X_W4A16_W13_LAYOUT="w31" and
+      #     B12X_W4A16_W13_LAYOUT_UP_FIRST="w13" -- and pinned in both directions
+      #     (test_layout_strings_are_the_w31_w13_pair,
+      #     test_layout_strings_mean_what_this_route_needs,
+      #     test_up_proj_order_is_not_flipped_for_b12x).
+      # THE OPT-IN CONTRACT (all of it enforced at ARG-RESOLUTION time, so a wrong
+      # boot stops before the first forward instead of inside a kernel):
+      #   * --moe-runner-backend flashinfer_b12x_w4a16 (named explicitly; `auto`
+      #     never picks it), quantization modelopt_fp4 or modelopt_mixed;
+      #   * --moe-a2a-backend none REQUIRED -- the route takes global expert ids
+      #     plus its own expert map and has no dispatch/combine kernels. That is
+      #     already production, and it is why this is a low-friction arm;
+      #   * ep_size in {1, tp_size}, and expert data parallelism rejected outright
+      #     (moe_dp_size not in (None, 0, 1) raises);
+      #   * LoRA REJECTED -- the route repacks expert weights IN PLACE, so a
+      #     merged/adapter weight would be repacked underneath it. The message
+      #     sends you to flashinfer_cutlass. This is an arg-time refusal, NOT a
+      #     tested live invalidation path (see UNTESTED);
+      #   * --disable-shared-experts-fusion is set AUTOMATICALLY with a WARNING
+      #     (overrides.py:_moe_runner_fusion_disable) -- the packed FP4 buffers
+      #     cannot carry a BF16 shared expert and a fused expert breaks the
+      #     ep_size * num_local == num_experts map arithmetic;
+      #   * flashinfer MoE autotune is WARNED-ABOUT, not rejected: the CUTLASS
+      #     autotune cache does not cover this route, so any tuned numbers you
+      #     collected for flashinfer_cutlass are simply inert here;
+      #   * CUDA_HOME=/usr/local/cuda-13.0 REQUIRED ON THIS BOX, for a reason worth
+      #     remembering about flashinfer generally: the gate calls
+      #     flashinfer.jit.cpp_ext.get_cuda_version(), which SHELLS OUT TO
+      #     $CUDA_HOME/bin/nvcc (12.9 behind the default /usr/local/cuda symlink),
+      #     NOT to the CUDA torch links (2.14.1+cu130). So a cu130 torch with a
+      #     12.9 toolkit prefix still fails, and flashinfer_b12x_w4a16_unavailable_
+      #     reason (flashinfer_cutlass.py:156-194) exists to say exactly that and
+      #     name the fix. It also refuses any capability != (12,0) -- SM120 only,
+      #     SM121 included NOT (the message says "this device is smXY").
+      # THE REPIN IS THE EXPENSIVE PART, WHICH IS WHY THIS STAYS OFF UNTIL A GPU
+      # WINDOW (9c.sh lines 496-521 carries the full measurement-free reasoning):
+      # the flashinfer JIT cache DIRECTORY key (…/flashinfer/0.7.2/120f, 116
+      # objects / 103 MiB today) does NOT contain the toolkit version, but
+      # CUDA_HOME is baked into the ninja RULE (cached_ops/*/build.ninja line 3),
+      # so repinning the variable changes every compile command and forces a
+      # ONE-TIME full re-JIT -- fused_moe_120 alone is ~4-5 minutes. TRAP:
+      # repointing the /usr/local/cuda symlink instead leaves every hash
+      # IDENTICAL while swapping the compiler underneath (stale 12.9 objects under
+      # a 13.0 nvcc). Set the variable; never move the symlink. It also changes
+      # which libcudart sgl-kernel preloads, PROCESS-GLOBAL, so once adopted it
+      # must be pinned in BOTH run scripts permanently or the re-JIT recurs on
+      # every flip between arms. And any flashinfer autotune cache captured under
+      # the old prefix should be treated as suspect.
+      # BOOT NEEDLES -- AND ONE FABRICATION CAUGHT, which is exactly the failure
+      # class entry 246 catalogued for the harness arms. The planned needle
+      # "b12x W4A16 weights prepared" DOES NOT EXIST ANYWHERE IN THE TREE
+      # (grep-verified over python/ and test/ at 4c91151ed0). The strings that
+      # ACTUALLY print, each read from the source that emits it:
+      #   "FlashInfer b12x W4A16 weight preparation took %.2f s for the first MoE
+      #     layer (%d local experts, hidden %d, intermediate %d); the route is CUDA
+      #     13 gated and repacks weights in place."  -- modelopt_quant.py, INFO,
+      #     ONCE PER PROCESS by _B12X_W4A16_PREP_LOGGED. The preparer loops per
+      #     expert in Python, so this line is the per-layer repack ESTIMATE for the
+      #     other 47 layers; expect one per scheduler rank.
+      #   "Precompiled b12x W4A16 MoE routes for Qwen4-Exp"  -- qwen4_exp.py:3567,
+      #     INFO, once per rank, printed only if the prewarm warmed >=1 capacity.
+      #   "b12x W4A16 prewarm: warmed %d token capacities (hidden %d, top_k %d, %d
+      #     local experts, ep_size %d) on %s"  -- flashinfer_cutlass.py, INFO.
+      #   "FlashInfer b12x W4A16 MoE is enabled. --disable-shared-experts-fusion is
+      #     automatically set."  -- overrides.py, WARNING, at resolution.
+      # A GREEN BOOT IS: the fusion WARNING, the preparation line, the warmed line,
+      # and "Precompiled ..." x1 per rank, with ZERO "prewarm stopped" lines.
+      # TWO FAILURE SIGNATURES, and note which side of the wheel each comes from:
+      #   * "<something> is not initialized for CUDA graph capture; ..." --
+      #     flashinfer's own text (experimental/b12x/moe/_shared/kernels/w4a16/
+      #     route_pack.py:113, kernel.py:12570/:12874). It means THE PREWARM MISSED
+      #     A SHAPE: the workspace cache refuses to allocate during a capture. In a
+      #     server log it surfaces INSIDE our warning line "b12x W4A16 prewarm
+      #     stopped at %d tokens (%s: %s)" (that is the ladder giving up at that
+      #     capacity, so a graph captured above it dies at replay), and a
+      #     "prewarm stopped" WARNING with no following "warmed" INFO means nothing
+      #     at all was prewarmed and the boot is unsafe.
+      #   * "requires CUDA 13 or later" -- matches BOTH our arg-time refusal
+      #     ("requires CUDA 13 or later, but flashinfer's JIT gate sees CUDA
+      #     {major}. … Fix: export CUDA_HOME …") and flashinfer's own
+      #     ValueError at fused_moe/runners.py:7933 ("SM12x NVFP4 x BF16 requires
+      #     CUDA 13 or later.", siblings :7481 FP8, :7724 MXFP8xMXFP4, :8141 SM12x
+      #     NVFP4, :8300 b12x unified). If the startup dies naming the backend,
+      #     $CUDA_HOME is missing or wrong, and the fix is the env, not the tree.
+      # HOW THE GRAPH CONSTRAINT IS HANDLED (the design, because it will look
+      # redundant later): the packed route table specializes on
+      # route_pack_token_capacity(tokens) = the next power of two, and the W4A16
+      # workspace raises if it must allocate inside a capture
+      # (b12x moe_dispatch.py:2952-2958). So qwen4_exp.precompile_kernels_after_
+      # loading drives the REAL fused func down a power-of-two ladder built by
+      # b12x_w4a16_token_capacities() up to the largest captured decode/verify
+      # batch -- descending, so the biggest allocation happens first and the cache
+      # keeps the largest capacity per geometry key, one buffer covering every
+      # tier. Prefill is NOT capture-constrained and its intermediates scale as
+      # tokens * top_k * intermediate_size and are never released, so prefill
+      # shapes cost hundreds of MB permanently and are behind
+      # SGLANG_B12X_W4A16_PREWARM_PREFILL_TOKENS (0 = decode tiers only).
+      # A PREWARM FAILURE NEVER FAILS THE BOOT -- deliberate, and it caught a real
+      # bug during development: an earlier revision raised inside its own
+      # try/except and would have silently warmed nothing.
+      # EP PLUMBING (the part that decides whether this is correct at all):
+      # expert_map is int32[num_experts] holding this rank's contiguous chunk and
+      # -1 elsewhere. The PR's use of
+      # flashinfer.experimental.b12x.moe.ep_moe.prepare_ep_expert_map is NOT
+      # copied -- that belongs to the sibling b12x.* package launch_sm120_moe does
+      # not consume -- but the divisibility and value-range checks it performs ARE
+      # (test_indivisible_split_is_asserted). B12x is added to
+      # _keeps_global_expert_ids because it consumes GLOBAL ids. The FP8 NEXTN
+      # draft falls back to triton under the new pin exactly as it does under
+      # flashinfer_cutlass (fp8.py), so 9c.sh checklist (l) -- assert the resolved
+      # PAIR, target flashinfer_cutlass/triton pin, draft triton -- needs the same
+      # reading here with target = flashinfer_b12x_w4a16. Entry 244's
+      # _smallm_ineligibility_reason runner_config wiring survives untouched and
+      # is unreachable for this backend (its enable_flashinfer_cutlass_moe input
+      # is false), which test_predicates_do_not_leak_into_the_cutlass_route pins.
+      # HONEST EXPECTATION -- write this down BEFORE the first A/B so nobody has
+      # to discover it in a result table: THIS IS NOT A bs1 WIN. flashinfer's two
+      # fastest small-M paths, direct_topk_routes (m <= 6) and tc_decode (m <= 4),
+      # BOTH require expert_map is None, and EP4 ALWAYS passes a map. Our decode
+      # traffic concentrates at bs p50 5-6, i.e. exactly the regime that drops to
+      # packed-route execution. The credible wins are (a) ACCEPTANCE-LENGTH
+      # RECOVERY -- BF16 activations, no FP4 activation quant, addressing the
+      # measured bs1 128-256k regression 2.830 (FP8) -> 2.710 (NVFP4) that ate most
+      # of the FP4 step-time win (entry 243), and (b) bs >= 8 (p90 ~16). Capacity
+      # is UNCHANGED: same FP4 weights, and reuse_input_storage=True means the
+      # repack does NOT take a second copy (asserted at prep time:
+      # "FlashInfer W13 preparation did not reuse source storage"). Anyone quoting
+      # a KV-token or GB-freed gain from this port is quoting entry 232/243 again.
+      # VERIFICATION ON MAIN (first time this port coexists with today's
+      # 244/245/246 commits). Prod venv, PER-FILE, CUDA_VISIBLE_DEVICES=9,
+      # PYTHONPATH=/root/sglang/sglang/python, at 4c91151ed0. 18 targets, ALL rc=0
+      # and ALL EXACT vs the branch (log /tmp/opencode/integ-s-20261020/
+      # battery.log): b12x route 67P/46sub; smallm 28P/66sub (entry 244's pin
+      # intact -- the b12x route did NOT re-break the path its stub used to mask);
+      # nvfp4_moe_sm120 3P/15S; kernels_namespace 76P (no KernelSpec added -- the
+      # route reaches flashinfer, nothing of ours enters the registry);
+      # deferred_scales 5P/4sub; modelopt_nvfp4 9P/5sub; standard_dispatcher 12P;
+      # fp4_gemm_backend_sm120 12P; nvfp4_moe_backend_selection 3P;
+      # modelopt_nvfp4_moe_dispatch 3P/5sub; spec dir 335P/9S/180sub; test_qsa
+      # 0F/76P/140S; test_qsa_fused_kv_prepare 0F/12P/146S; the guardrail set a new
+      # backend choice can trip -- test_server_args+docs 307P/128sub, whole
+      # server_args/ dir 430P/225sub, resolution_hook_registry 10P, docs_coverage
+      # 4P, exportable_env_vars 4P; check_registered_tests.py and
+      # check_no_bare_pytest_main.py both rc=0; ruff
+      # --select=F401,F821,F823,UP037 and ruff format --check clean on the 12 .py
+      # files (the 13th is the .mdx); 7-module import smoke OK. Equivalence to the
+      # tested branch: `git diff apply-s-20261020 HEAD` EMPTY, range-diff both
+      # patches `=`.
+      # UNTESTED -- THE GPU WINDOW OWES ALL OF THIS (nothing below has ever been
+      # EXECUTED; 67 passing tests are CONTRACT tests that mock the wheel, so not
+      # one number here is a measurement): every NUMERIC property (route output
+      # vs the CUTLASS route, the w31 layout actually matching SwiGLU semantics on
+      # hardware, the weight-only alpha actually being right end-to-end);
+      # CAPTURE-SAFETY of the kernel at 188-SM Max-Q, including whether the
+      # descending ladder really covers every tier NEXTN captures; the prewarm's
+      # REAL boot cost and workspace BYTES (the ~3.7 MB/layer order-of-magnitude
+      # reasoning for the sibling small-row kernel is NOT this route's number);
+      # moe_tp_size == 1 AT TP4/EP4 -- INFERRED from moe_dp 1 plus the standard
+      # dispatcher, never exercised; the int32 expert-map id equivalence under
+      # real dispatch; reuse_input_storage buffer sharing at RUNTIME (only the
+      # data_ptr assertions run on CPU); and weight-update / LoRA invalidation,
+      # which is REFUSED AT ARG TIME and therefore has no live test that an
+      # update_weights_from_disk call cannot corrupt a prepared layer.
+      # FOLLOW-UPS: (1) a harness arm b12x_w4a16_on using the TRUE needles above
+      # (and the two failure signatures as FORBIDs) -- do NOT write the
+      # fabricated one; (2) the KL / GSM8K / accept-length A/B against the CUTLASS
+      # FP4 route, which is a TWO-RESTART experiment by construction (the CUDA_HOME
+      # repin is per-process and the first boot pays the re-JIT); (3) per-layer
+      # repack timing, read off the once-per-process preparation line; (4) SEND
+      # THE THREE DEFECTS UPSTREAM -- (1) and (3) are silent-wrong on any
+      # gate-first or K/16 checkpoint, (2) is silent-wrong on any checkpoint with
+      # calibrated input scales, which is every real ModelOpt export.
+      # STATUS: on main, NOT pushed (detain is behind). LIVE ONLY AFTER RESTART
+      # (user-driven), and even then INERT until someone names the backend AND
+      # repins CUDA_HOME.
+
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
 ==============================================================================
@@ -5139,6 +5450,41 @@ WATCH LIST (re-evaluate before next sync)
 CAVEATS
 ==============================================================================
 
+
+  * CPU-BATTERY DIFFS 2026-10-20c (entry 247, measured on main at 4c91151ed0 IN
+    THE PROD VENV /root/sglang/.venv, per-file, CVD=9 -- the same method and the
+    same venv as 2026-10-20b above, so the numbers are directly comparable).
+      test_b12x_w4a16_route.py  NEW, 67P/46sub, 8.18 s. PIN IT. It is a CONTRACT
+        suite: it consults the installed flashinfer wheel for the real parameter
+        names (test_kwargs_are_real_wheel_parameters) and the real
+        _SOURCE_FORMATS keys, and it MOCKS every launch. Zero device work, so
+        green here means "the plumbing agrees with the wheel", never "the kernel
+        is right". A tree WITHOUT this file is a tree without entry 247.
+      test_nvfp4_smallm_dispatch.py  28P/66sub UNCHANGED from entry 244 -- worth
+        stating because a new MoE backend touching flashinfer_cutlass.py could
+        have re-broken the path that file's REAL-quant-info fixture protects.
+      test_kernels_namespace.py  76P UNCHANGED (no KernelSpec registered: the
+        route calls into flashinfer, it does not add a kernel of ours).
+      test/registered/unit/server_args/  WHOLE DIRECTORY PINNED NOW 430P/225sub
+        (the two-file combo test_server_args.py + test_server_args_docs_coverage.py
+        stays 307P/128sub). The directory figure moved because entry 247 adds a
+        --moe-runner-backend CHOICE, which is what that guardrail set exists to
+        catch; the docs .mdx line and the argparse help are generated from the same
+        string, so a drift there fails HERE, not in a docs build.
+      EVERYTHING ELSE IN THE 2026-10-20b TABLE IS UNMOVED: nvfp4_moe_sm120 3P/15S,
+        deferred_scales 5P/4sub, modelopt_nvfp4 9P/5sub, standard_dispatcher 12P,
+        fp4_gemm_backend_sm120 12P, nvfp4_moe_backend_selection 3P,
+        modelopt_nvfp4_moe_dispatch 3P/5sub, spec dir 335P/9S/180sub, test_qsa
+        0F/76P/140S, fused_kv_prepare 0F/12P/146S, resolution_hook_registry 10P,
+        docs_coverage 4P, exportable_env_vars 4P, both lint scripts rc=0, cargo
+        sglang-radix-tree NOT RE-RUN (rust untouched).
+    THE GENERALIZATION WORTH KEEPING: a DEFAULT-OFF claim is a claim about
+      RESOLUTION, so it must be tested at the resolver, not asserted in prose. The
+      one test that earns the sentence here patches the platform to SM120 and
+      compares the resolved dict to flashinfer_cutlass; re-running it is cheaper
+      than reading the code, and it is the test a future `auto`-flip PR must pass
+      or deliberately break.
+
   * CPU-BATTERY DIFFS 2026-10-20b (entries 244-246, measured on the tree at
     c1323ca20b IN THE PROD VENV /root/sglang/.venv -- not .venv2 -- because the
     two files that moved are exactly the ones whose behavior depends on the
@@ -5330,6 +5676,19 @@ CAVEATS
     DEFAULT", was NOT taken -- our SGLANG_ENABLE_HICACHE_BATCHED_BACKUP
     stays EnvBool(False) (entry 199's opt-in A/B lever for the 2400:1
     L3 write-amp; still not measured on prod).
+
+  * BEHAVIOR WATCH -- NEXT RESTART (entry 247): A NEW MoE BACKEND IS SELECTABLE
+    AND IT IS NOT IN USE. `--moe-runner-backend flashinfer_b12x_w4a16` exists in
+    the CLI choices, `auto` still resolves to flashinfer_cutlass on SM120 (pinned
+    by test_auto_never_resolves_to_b12x), and NEITHER run script names the new
+    backend. Nothing to observe this restart unless someone opts in -- but if a
+    log DOES show any "b12x W4A16" line on a boot that did not pass the flag, that
+    is a resolution bug, not a feature working. Two things to remember before
+    arming it: it needs CUDA_HOME=/usr/local/cuda-13.0 (a per-process repin whose
+    first boot pays a ~4-5 minute flashinfer re-JIT, see the entry), and it is
+    UNMEASURED -- expected bs1 gain is roughly zero because EP4 always passes an
+    expert_map, which disqualifies flashinfer's two fastest small-M paths. Its
+    reason to exist is acceptance-length recovery and bs>=8, both still owed.
   * BEHAVIOR WATCH -- NEXT RESTART (entries 244-246): BOTH ARMS BOOT WITH
     PCIe-IPC ALL-REDUCE FOR THE FIRST TIME. Neither arm has ever run this
     transport (prod logs contain zero PCIe-IPC lines to date), so the first
