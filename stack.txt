@@ -1,6 +1,6 @@
 # stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
 #
-# STACK: qwennext-stack-243-2026-10-20
+# STACK: qwennext-stack-246-2026-10-20
 #   main+pr36787+pr37275+pr38144+pr38209+pr36644+pr39862+pr39809+pr39893+local_hicache_qsa_fixes
 #   +pr39614+pr39978+pr40002+pr39065+pr40501+pr40175+pr40362+pr39391+pr37061+pr39333+pr33778
 #   +pr38977+pr39977+pr40480+pr39880+pr40235+pr39807+cpu-triage+boot-fix+plan_updates_perf
@@ -10,7 +10,7 @@
 #   +diffusion-batch-2026-10-08(pr27673+pr28690*+pr32513+pr32550*+pr33036*+pr33588*
 #    +pr36399+pr36767+pr37460*+pr38650+pr39212+pr40493+pr40588+pr40755+pr41340*
 #    +pr41944+pr42249+pr42928*+pr43028*+pr43064*)
-#   (entries 1-243; *=squash/ported, see commit messages. 10-10 added
+#   (entries 1-246; *=squash/ported, see commit messages. 10-10 added
 #   entries 157-161: parser batch A (Qwen3-Coder tool-call fixes + sampling
 #   upper bounds), on top of upstream merge #3 (see synced). 10-10b added
 #   entries 162-166: SM120 batch B (#42863 PCIe-IPC vocab gathers, #42566
@@ -166,6 +166,29 @@
 #   the battery-tested tip. PINNED BASELINES MOVED
 #   MATERIALLY -- new top bullet in CAVEATS. Live only after restart
 #   (user-driven); NOTHING pushed.
+#   10-20b added entries 244-246: the #42348 PLACEMENT LEFTOVERS and the
+#   BOTH-ARMS PCIe-IPC boot. 244 is three commits with one root cause --
+#   upstream deleted moe_tp_size/moe_ep_rank/moe_ep_size from
+#   FlashInferCutlassMoeQuantInfo and a fork gate plus TWO test files kept
+#   reading them: fea818f68f retargets _smallm_ineligibility_reason to
+#   runner_config.* and makes the eligibility decision degrade-instead-of-raise
+#   (it is an optimisation, so it may not kill a scheduler), 96a6d58caa puts the
+#   kernel's EP refusal behind SGLANG_NVFP4_MOE_SM120_MAX_EP (EnvInt(1), DEFAULT
+#   OFF, byte-identical today), c1323ca20b repairs three CUDA-gated kernel tests
+#   that could only have TypeErrors'd on hardware. Severity corrected in that
+#   entry: on ANY EP1 SM120 host running an NVFP4 ckpt a workspace IS built
+#   (SGLANG_NVFP4_MOE_SM120 defaults True), so this was a live crash there,
+#   masked on skynet2 only by EP4 refusing the workspace. 245 is the run-script
+#   record -- PCIe-IPC ON in both arms (9.sh change 14), 9c.sh at FOUR deltas
+#   (+ explicit triton draft pin, + fused-finalize on the FP4 arm), the
+#   corrected needle table, five needle-string traps recorded, and THREE stale
+#   comment blocks fixed comment-only (the "6 changes" count, the +30.2% ->
+#   +28.51% same-code capacity figure, the HiCache/L3 PARKED reality -- neither
+#   script passes --enable-hierarchical-cache). 246 is the A/B harness: arms
+#   33/34/35 autotune needles re-pinned off the advisory NEEDLE 0, and FOUR arms
+#   found asserting on log strings that DO NOT EXIST (21/22/36/38) plus base/
+#   being stale vs the parked-L3 script. Live only after restart (user-driven);
+#   NOTHING pushed.
 #   10-08 added entries
 #   136-155: 20 diffusion PRs (4 more evaluated-skipped, see NOT INCLUDED).
 #   09-28 added 22 entries: 9 new PR blocks, new head
@@ -173,7 +196,7 @@
 #   make --enable-mixed-chunk safe and fix the QSA verify ring collision.
 #   * = picked with local modifications, see the entries)
 # branch : qwennext-stack
-# tip    : fcc0000e16   (the stack.txt commit sits above it)
+# tip    : c1323ca20b   (the stack.txt commit sits above it)
 # base   : upstream sgl-project/sglang main @ 7ad55e4386 ([HiCache] TMA-staged
 #          host<->device KV transfer kernel (sm_90+) (#40278), 2026-09-21)
 # synced : upstream main @ f209e67767 (#39643, 2026-09-28) MERGED IN as
@@ -197,6 +220,11 @@
 #          is opt-in via SGLANG_ENABLE_PCIE_IPC_ALLREDUCE (default False,
 #          unset in prod) so the wheel only satisfies the dependency; and
 #          the pin/venv have both moved on to 0.7.2, see entry 228.]
+#          [10-20b: that second half is NOW TRUE -- BOTH run scripts export
+#          SGLANG_ENABLE_PCIE_IPC_ALLREDUCE=1 (9.sh change 14), so the next
+#          restart is the first boot with the transport on for either arm. See
+#          entry 245 for the verification needles; until that boot happens the
+#          honest status is still "armed, never booted".]
 #          decode-graph max_bs clamp to max_running_requests (33f6b00f32/
 #          #43172), rope_theta preserve 44b44774c3 (entry-173 class),
 #          #43444/#43538 truncation-align boot guard over entry-177's
@@ -236,6 +264,33 @@
 #          revisit that floor AND take the probe in the same step, and
 #          conversely rolling the flashinfer wheel back requires
 #          reverting 2b46270c5d first (see entry 228).
+# updated: 2026-10-20b (entries 244-246): NO UPSTREAM MERGE IN THIS BATCH
+#          (merge #5 stays owed -- see the synced note; nothing here came from
+#          origin/main, and #45151 is NOT owed work, it is already entry 232).
+#          Three commits close one root cause: upstream 10edb05e72 (#42348)
+#          deleted the moe_* placement fields from FlashInferCutlassMoeQuantInfo
+#          and our SM120 small-row gate, one unit-test fixture and one
+#          CUDA-gated kernel test all kept reading them. The gate bug was NOT
+#          merely latent: SGLANG_NVFP4_MOE_SM120 defaults True, so any EP1 SM120
+#          host loading an NVFP4 checkpoint builds a workspace and the first
+#          <=16-token MoE forward raises AttributeError out of a fused func and
+#          takes down a scheduler -- skynet2 escapes only because its EP4 config
+#          refuses the workspace. fea818f68f retargets the reads to
+#          runner_config.* AND wraps the decision so a future gate bug degrades
+#          to CUTLASS with one warning instead of failing a forward; 96a6d58caa
+#          adds SGLANG_NVFP4_MOE_SM120_MAX_EP (default 1 = byte-identical)
+#          because the kernel's map_expert is already EP-correct; c1323ca20b
+#          un-breaks three hardware tests whose skips mean this batch's fix has
+#          NO executed end-to-end coverage yet. Both run scripts now boot with
+#          PCIe-IPC all-reduce (the box's top pending perf lever, entry 245),
+#          the FP4 arm additionally with fused finalize and an explicit triton
+#          draft pin, and three stale comment blocks are corrected
+#          comment-only -- including the fact that HiCache/L3 is PARKED on BOTH
+#          arms, so every L3 needle in either file is currently unfireable.
+#          CPU PINS MOVED: test_nvfp4_smallm_dispatch.py 21P/51sub ->
+#          28P/66sub (prod venv); kernels_namespace STILL 76P; rust UNTOUCHED.
+#          Code tip c1323ca20b, tree clean, NOT pushed. LIVE ONLY AFTER
+#          RESTART (user-driven).
 # updated: 2026-10-20 (entries 230-242): THE NVFP4 ARM prepared without
 #          touching the FP8 arm. Two fork patches (entry 230 makes
 #          --moe-runner-backend auto safe for ModelOpt NVFP4/mixed on
@@ -4303,6 +4358,15 @@ STACK, IN BUILD ORDER (bottom first)
       # measured with carries over, so any behaviour difference is the
       # quantization. Backups: /tmp/opencode/run_sglang_qwenflashnext9*.bak-
       # 20261020. 9.sh itself was NOT modified.
+      #   [10-20b CORRECTION, both sentences now stale -- see entry 245: the
+      #   delta count is FOUR (DELTA 3 pins --speculative-moe-runner-backend
+      #   triton explicitly, a no-behavior-change clarification; DELTA 4 exports
+      #   SGLANG_FLASHINFER_MOE_FUSED_FINALIZE=1, a real kernel/order change on
+      #   the FP4 target experts), AND 9.sh WAS modified -- it gained change 14
+      #   (SGLANG_ENABLE_PCIE_IPC_ALLREDUCE=1, deliberately a BOTH-ARMS change)
+      #   plus three corrected comment blocks. Re-verified by the same method:
+      #   the comment-stripped streams differ only in the deltas plus a
+      #   pre-existing double space after --enable-linear-replayssm-spec.]
       # MUSTS encoded in it: explicit flashinfer_cutlass (triton ->
       # NotImplementedError at modelopt_quant.py:3437; auto -> entry 230
       # before, and the DeepGEMM Xid-43 path for the FP8-block draft either
@@ -4488,6 +4552,19 @@ STACK, IN BUILD ORDER (bottom first)
       # forwards, and below the grouped-path threshold (tokens >= 8) an EP4 rank
       # wastes ~75% of launched FC1 tiles. Neither kernel file has origin/main
       # history -- ours to own and to upstream.
+      #   [10-20b: DONE by entry 244 -- the clause is behind
+      #   SGLANG_NVFP4_MOE_SM120_MAX_EP (EnvInt(1), default = byte-identical), and
+      #   the re-pin is what FOUND the #42348 gate crash (the old fixture carried
+      #   the deleted attributes and hid it). The EV judgement above is UNCHANGED:
+      #   the door is open for measurement, nothing was flipped on, and this is
+      #   still not a reason to restart by itself. The line refs here predate the
+      #   commits: the predicate is modelopt_quant.py:2395-2430 (the clause is
+      #   `moe_ep_size <= max_ep` at :2427, max_ep default at :2412), the per-rank
+      #   shape reads are :3164-3165 and the call site :3195; env at
+      #   environ.py:1102-1108 (definition :1108). NOTE the drift this batch caused elsewhere:
+      #   SGLANG_ENABLE_PCIE_IPC_ALLREDUCE moved environ.py:1450 -> :1457 because
+      #   MAX_EP inserted 6 lines above it; the ":1450" refs in entries 162/228
+      #   and in the CAVEATS bullets are all the same variable, now at :1457.]
       # DO NOT TOUCH: --ep anything; --fp8-gemm-backend; SGLANG_MOE_NVFP4_DISPATCH,
       # SGLANG_FLASHINFER_NVFP4_PER_TOKEN_ACTIVATION, SGLANG_OPT_MOE_QUANT_ONCE
       # (inert or harmful here); --qsa-cache-sharding-size 4 (capacity lever, zero
@@ -4505,6 +4582,12 @@ STACK, IN BUILD ORDER (bottom first)
       # needle. (2) pin --speculative-moe-runner-backend triton explicitly in 9c.sh
       # -- it inherits flashinfer_cutlass and the runtime downgrades it with 4 log
       # lines, so the arms are not literally one flag apart in the dumps.
+      #   [10-20b: (1) and (2) ARE NOW DONE -- 9.sh change 14 exports the env on
+      #   the FP8 arm and 9c.sh inherits it; 9c.sh DELTA 3 pins the draft backend.
+      #   Both are ARMED, NOT MEASURED: no boot with the transport on exists yet,
+      #   so neither has an outcome. See entry 245 for the verification needles
+      #   and entry 246 for the harness re-pin. The "NEVER enabled" and "4 log
+      #   lines" phrasings above are superseded.]
       # (3) HIGH RISK, needs approval: upstream 7098ec387c (#44036) NVFP4 W4A16 --
       # 0.7.2 ships SM12xNvfp4Bf16Runner (fused_moe/runners.py:7894) whose support
       # check passes on this box, but it advertises
@@ -4526,6 +4609,305 @@ STACK, IN BUILD ORDER (bottom first)
       # OWED. STATUS: prod is FP8 again (pid 2658592, ready 13:36:32, 6,192,832
       # tokens); the NVFP4 arm is dead, its log closed at 13:34:24. No code change
       # here: LIVE ONLY AFTER RESTART (user-driven); NOTHING pushed.
+
+        244. fea818f68f 96a6d58caa c1323ca20b  FORK PATCHES x2 + ONE TEST REPAIR -- upstream #42348 deleted three placement fields and we left three sites reading them: a latent SCHEDULER-KILLING AttributeError, the EP door put behind SGLANG_NVFP4_MOE_SM120_MAX_EP (DEFAULT OFF), and three CUDA tests that could only have TypeError'd on hardware
+      # ONE ROOT CAUSE, THREE SITES. 10edb05e72 (#42348) removed
+      # moe_tp_size / moe_ep_rank / moe_ep_size from
+      # FlashInferCutlassMoeQuantInfo and rewired its OWN consumers onto
+      # MoeRunnerConfig (whose moe_* are properties over the layer). Our fork's
+      # small-row gate kept reading them off the quant info, and so did a test
+      # stub -- which is why the bug was invisible: the stub handed the dead
+      # attributes back to the code, so the reads "worked". Sites:
+      #   1. moe_runner/flashinfer_cutlass.py:_smallm_ineligibility_reason
+      #      (fork-local, from e787ec6ab3) -- fea818f68f retargets the three
+      #      reads to runner_config.*, already a parameter of that function and
+      #      already what this file's CUTLASS launches read (:571-573, :778-781).
+      #      Numbering at HEAD: the reads are now :402 and :415-417; at
+      #      9a8032e41c they were :381 and :394-396 off the quant info.
+      #   2. test/registered/unit/layers/moe/test_nvfp4_smallm_dispatch.py --
+      #      both fixtures now build a REAL FlashInferCutlassMoeQuantInfo, so the
+      #      contract is tested against the class instead of against a mock that
+      #      agrees with the bug. This is the pin that would have caught #42348:
+      #      a real quant-info object cannot carry a deleted field.
+      #   3. test/registered/kernels/ops/moe/test_nvfp4_moe_sm120.py --
+      #      c1323ca20b (see below).
+      # SEVERITY -- CORRECTING MY OWN EARLIER NOTE. "Latent because the EP gate
+      # blocks the branch" was TRUE FOR THIS BOX AND WRONG AS A GENERAL
+      # STATEMENT: SGLANG_NVFP4_MOE_SM120 is EnvBool(True) by default
+      # (environ.py:1101), so ANY SM120 host that runs an NVFP4 checkpoint at
+      # EP1 and passes the shape clauses BUILDS A WORKSPACE, and the first MoE
+      # forward with rows <= NVFP4_MOE_SM120_MAX_TOKENS (16) reaches the dead
+      # reads. The reads sat OUTSIDE the try/except that guards the JIT launch
+      # (call at :430, guard not opened until :461 -- numbering at 9a8032e41c),
+      # so the AttributeError escaped _run_flashinfer_cutlass
+      # and killed the scheduler process -- all ranks, SIGQUIT, no recovery.
+      # skynet2 is spared only because its EP4 config made the old
+      # `moe_ep_size == 1` clause refuse the workspace; that is an accident of
+      # our topology, not a property of the code. So this batch fixes a crash,
+      # not a smell.
+      # RED PROOF (not a claim about coverage): with the TEST fixed and the
+      # SOURCE reverted, the file goes 19F and every single one is
+      # `AttributeError: 'FlashInferCutlassMoeQuantInfo' object has no attribute
+      # 'moe_tp_size'`. Green at HEAD. Measured in the PROD venv for this record:
+      # 21P/51sub (the stale-stub pin from entry 225/c6b0deef04) -> 28P/66sub.
+      # THE SECOND HALF OF THE FIX IS A CONTRACT, not just a retarget: the
+      # eligibility decision is now wrapped, because "which kernel may run" is an
+      # OPTIMISATION and no future gate bug may fail a forward. A raise degrades
+      # to CUTLASS and warns ONCE per distinct text through the decision log's
+      # existing _logged_smallm_decisions set (this runs per layer per forward,
+      # so an unbounded warning would be thousands of lines) via the new
+      # _warn_smallm_unexpected -- logger.WARNING at :313 with the SAME "SM120
+      # NVFP4 small-row MoE: " prefix as the ordinary decision log, and sharing
+      # its dedupe set. That prefix is what 9c.sh checklist (n) greps for, and
+      # (n) asserts ZERO lines of it: correct here, because at EP4 with MAX_EP at
+      # its default 1 the kernel must not engage at all. The consequence of the
+      # shared prefix is that (n) CANNOT tell "the gate is buggy" apart from
+      # "the kernel legitimately declined" -- read the LEVEL (warning vs info) or
+      # the tail "because the eligibility check raised" to tell them apart.
+      # 96a6d58caa -- SGLANG_NVFP4_MOE_SM120_MAX_EP = EnvInt(1)
+      # (environ.py:1102-1108, next to the kernel's own switch; a row in
+      # docs/references/environment_variables.mdx). Replaces the hard
+      # `moe_ep_size == 1` clause in _nvfp4_smallm_load_eligible with
+      # `moe_ep_size <= max_ep`; the predicate stays pure and takes max_ep as a
+      # keyword, the ONE call site (modelopt_quant.py:3195) reads the env and
+      # clamps with max(1, ...) so 0/unset is byte-identical to yesterday.
+      # WHY THE CLAUSE WAS CONSERVATISM AND NOT CORRECTNESS: the kernel's own
+      # map_expert (kernels/jit/csrc/moe/nvfp4_moe_sm120.cuh:90-107) already maps
+      # a global expert id onto this rank's contiguous shard through
+      # local_expert_start and masks non-owned experts to -1, exactly like
+      # FusedMoE._map_global_expert_id_to_local_expert_id, the quant info already
+      # carries the global/local/start triple, and the kernel-level test covers
+      # local_expert_start != 0. The clauses KEPT VERBATIM around it (rank in
+      # range, storage rank agreeing, global == local * ep) are what prove the
+      # shard uniform for any ep. DEFAULT 1 -- this opens a door for MEASUREMENT,
+      # it changes nothing for any current deployment.
+      # TOPOLOGY ARITHMETIC, because two notes in this file look contradictory
+      # and are not. The gate sizes come from the PER-RANK weight tensors
+      # (modelopt_quant.py:3164-3165: hidden = w13_weight.shape[2] * 2,
+      # intermediate = w2_weight.shape[2] * 2), and an expert is TP-sharded only
+      # when it is not EP-owned:
+      #   TP4/EP4 (prod): intermediate stays 640 -> 640 % 64 == 0 PASSES, and the
+      #     ONLY failing clause is the ep one, so MAX_EP=4 is a real door.
+      #   TP4/EP1: experts are TP-sharded, 640/4 = 160, 160 % 64 = 32 FAILS ->
+      #     no workspace whatever MAX_EP says. That is entry 243's refutation of
+      #     "--ep 1 unlocks smallm", and it stands: MAX_EP moves the EP clause,
+      #     never the shape clause.
+      # c1323ca20b -- UNEXECUTED COVERAGE, flagged for the GPU window. Three
+      # CUDA-gated tests in test_nvfp4_moe_sm120.py constructed
+      # FlashInferCutlassMoeQuantInfo(moe_ep_size=2): same deleted field, so on
+      # real SM120 hardware each was a GUARANTEED TypeError before its first
+      # assertion. Invisible in every CPU run we have ever done, because the
+      # class is skipUnless(is_sm120_supported()) and only its three metadata
+      # tests execute off-device -- i.e. the pinned 3P/15S says NOTHING about
+      # those 15. Each config now carries the layer stub the fused funcs read
+      # (16 routed experts, 8+8 over EP2, TP1; the
+      # test_moe_runner_config_placement.py idiom) and the placement values
+      # MATCH the ones the deleted field carried, so every intended verdict is
+      # unchanged. THE 15 SKIPS MUST BE RUN ON HARDWARE: they are the only test
+      # of the small-row dispatch path end to end, and until they run nobody
+      # knows whether the fixed gate agrees with the kernel.
+      # CPU BATTERY (prod venv /root/sglang/.venv, CVD=9, per-file, PYTHONPATH
+      # set): test_nvfp4_smallm_dispatch.py 21P/51sub -> 28P/66sub (+7P/+15sub,
+      # all of it this batch's new pins);
+      # test_nvfp4_moe_sm120.py 3P/15S UNCHANGED (as expected -- the fix is in
+      # the skipped part); test_kernels_namespace.py 76P (no KernelSpec added or
+      # removed); cargo sglang-radix-tree NOT RUN, rust untouched by all three
+      # commits. LIVE ONLY AFTER RESTART (user-driven); NOTHING pushed.
+
+        245. no code  THE RUN SCRIPTS, 2026-10-20 evening -- PCIe-IPC all-reduce goes LIVE in BOTH arms (9.sh change 14), 9c.sh grows to FOUR deltas, and three stale comment blocks are corrected (the "6 changes" count, the +30.2% capacity figure, the HiCache tuning prose that describes a subsystem neither boot enables)
+      # /root/run_sglang_qwenflashnext9.sh and
+      # /root/run_sglang_qwenflashnext9c.sh are NOT in git; this entry is their
+      # record. Pre-edit originals:
+      # /tmp/opencode/run-scripts-20261020/backup/; the pre-this-step snapshot
+      # used for the functional proof is /tmp/opencode/step1-20261020/.
+      # FUNCTIONAL CHANGES (both verified against the source, not remembered):
+      #   9.sh gains ONE export, change 14: SGLANG_ENABLE_PCIE_IPC_ALLREDUCE=1.
+      #     Env only -- there is no CLI flag; the single reader chain is
+      #     environ.py:1457 (EnvBool(False)) -> pcie_ipc_ar.eligible_group() ->
+      #     parallel_state.py:503/508 -> vocab_gather.py. This is entry 243's
+      #     ranked lever (1) FINALLY PULLED, and entry 228's headline correction
+      #     ("entries 162-164 are INERT, never active") is what it corrects:
+      #     from the next boot the ~106 all-reduces and the 5 vocab gathers of a
+      #     NEXTN decode step are the thing under test instead of NCCL.
+      #   9c.sh grows from TWO deltas to FOUR: --speculative-moe-runner-backend
+      #     triton (DELTA 3, a CLARIFICATION -- it states the value the code
+      #     already force-downgraded to, so the arms differ by a flag you can
+      #     read rather than a flag plus a rewrite rule; the 4 implicit
+      #     "Fp8MoEMethod has no %s path" lines therefore DISAPPEAR and
+      #     checklist (l) asserts the resolved server_args PAIR instead) and
+      #     export SGLANG_FLASHINFER_MOE_FUSED_FINALIZE=1 (DELTA 4, a real
+      #     kernel/accumulation-order change on the FP4 target experts only --
+      #     no triton path reads it, which is why it is a delta and not a
+      #     BOTH-ARMS change).
+      # THE CORRECTED NEEDLE TABLE (checklist (s)-(y), shared alphabet across
+      #   the two files: (a)-(j) are 9.sh's, (k)-(r)+(z) are 9c.sh's, (s)-(y)
+      #   apply to BOTH). Expected counts per boot:
+      #     4x "FlashInfer PCIe-IPC all-reduce enabled (world=4, workspace sized
+      #         on first reduction)"                     (pcie_ipc_ar.py:242)
+      #     4x "FlashInfer PCIe-IPC workspace built (world=4, max_numel=491520,
+      #         hidden=2560)"                             (:299)
+      #     4x "FlashInfer PCIe-IPC all-reduce autotuned N shape(s)" with N > 0,
+      #         N = 9 expected                            (:381)
+      #     8x "PCIe-IPC vocab gather: up to 384 rows x 62080 (torch.bfloat16)"
+      #         -- TWO per rank, not one                 (vocab_gather.py:310)
+      #   The 8 is the number people will get wrong: there is one gatherer per
+      #   LogitsProcessor and this model builds two (target qwen3_vl.py:1387 via
+      #   qwen4_exp.py:3024, NEXTN draft qwen4_exp_mtp.py:72). SO 4 DOES NOT
+      #   MEAN "PARTIAL SUCCESS" -- it means only the TARGET's gatherer ever saw
+      #   an eager call outside a capture, i.e. the draft's vocab gather is still
+      #   NCCL inside the graph, a real unmeasured gap. max_numel 491520 is
+      #   self-sized from 48 (--cuda-graph-max-bs-decode) x 4 (draft tokens) =
+      #   192 rows x 2560 hidden; 62080 = vocab 248320 / tp 4; 384 = 96 max
+      #   running requests x 4. Read the dump rather than editing the expected
+      #   number if any of them moves.
+      # NEEDLE-STRING TRAPS (durable -- each one was re-verified in source today
+      #   and each is a way to mis-read a boot as clean):
+      #     - The setup failure is "Setup FlashInfer PCIe-IPC allreduce failed
+      #       with" -- "allreduce" with NO HYPHEN (parallel_state.py:518), while
+      #       every pcie_ipc_ar.py line says "all-reduce". Grepping
+      #       "all-reduce failed" returns nothing and looks EXACTLY like a clean
+      #       boot.
+      #     - "fixed fallback width 64" is assembled from adjacent string
+      #       literals ("...from the fixed " + "fallback width %d...") so
+      #       `grep "fixed fallback width"` over the SOURCE finds ZERO matches
+      #       (machine-checked: 0) while the server prints the phrase. Absence in
+      #       the source is not absence in the log; verify needles against a log.
+      #     - "reductions stay on NCCL" has TWO sources and only one is bad:
+      #       "serves bf16 only; %s reductions stay on NCCL" (:120, deduped per
+      #       dtype) is BENIGN and expected for any non-bf16 reduction, while
+      #       "workspace (max_numel=...) failed: ...; reductions stay on NCCL"
+      #       (:288) DISABLES the transport for the whole rank. A blanket FORBID
+      #       on that phrase can fail a perfectly good boot; match the wider
+      #       sentence.
+      #     - "keeping the seed policy" is a shared tail of THREE distinct
+      #       decline messages (:343-346 first reduction inside another autotune,
+      #       :355-358 inside a graph capture, :365 tune() raised) -- and the
+      #       seed-policy FAMILY is five more spellings (:331 "keeping
+      #       FlashInfer's seed policy", :349 "running FlashInfer's seed policy",
+      #       :374 "the kernels keep the seed policy", plus the two docstring
+      #       mentions). So the narrow phrase under-counts the failure modes;
+      #       the harness arm uses the regex `FlashInfer PCIe-IPC.*seed policy`
+      #       for that reason.
+      #     - "multimem all-gather disabled (no multicast for world_size=4)"
+      #       (triton_symm_mem_ag.py:570) fires in BOTH worlds -- the gatherer
+      #       tries multimem FIRST and falls through to PCIe-IPC precisely
+      #       because this box has no multicast. It is the PRELUDE to the change
+      #       working. Its presence proves nothing; two sibling messages share
+      #       its prefix (:500, :576). A future reader will grep it and draw the
+      #       opposite conclusion -- checklist (w) exists to stop that.
+      #     - "PCIe-IPC vocab gather was built on N of 4 ranks" is an INTENTIONAL
+      #       boot abort (vocab_gather.py:303-307): a half-build cannot
+      #       masquerade as a slow start.
+      # THREE STALE COMMENT BLOCKS CORRECTED IN THIS STEP (comment-only; the
+      #   comment-stripped command streams are byte-identical across the edit --
+      #   md5 1e78a97219b09ac8c53ac3430a5feb89 and 99e7105502a2c59821baf98b5f19159c
+      #   before and after, and every changed line in the raw diff is a comment):
+      #   1. 9.sh's header said "Copy of next7 with EXACTLY these 6 changes".
+      #      The real count is FOURTEEN (1-6 the 09-30 Tier-1 bundle, 7-11 the
+      #      10-18 L3 group, 12-13 the 10-19 prefill-OOM pair, 14 today). The
+      #      line had been stale since 2026-10-18; it now also says who must
+      #      update it.
+      #   2. 9c.sh quoted NVFP4's KV gain as "+30.2% / 7,958,336" against
+      #      6,111,616. That base predates entry 232/#45151, so it credited FP4
+      #      with ~81k tokens a code change had already bought. The SAME-CODE
+      #      read, now the headline in the script: 6,192,832 -> 7,958,336 =
+      #      +1,765,504 = +28.51% (entry 243's arithmetic; the old figure stays
+      #      visible, labelled "vs old-code baseline"). The "~8.3-8.5M"
+      #      projection was re-anchored to the same-code base (6,192,832 +
+      #      12.3 GB / ~5.7 kB per pool token ~= 8.35M, ~18% optimistic) and the
+      #      tail bullet that repeated 6,111,616 was corrected too.
+      #   3. HI_CACHE / L3 IS PARKED AND THE PROSE SAID OTHERWISE. Neither
+      #      script passes --enable-hierarchical-cache -- it sits in the
+      #      commented block after the command, and both arms' dumps read
+      #      enable_hierarchical_cache=False, hicache_size=0,
+      #      hicache_storage_backend=None. So the six
+      #      SGLANG_HICACHE_FILE_BACKEND_* exports in the live block are READ BY
+      #      NOBODY, and every needle in 9.sh's changes 2 and 7-11, in checklist
+      #      (b)'s hicache_write_policy item, and in the tail's "no HiCacheFile
+      #      eviction surprise" bullet CANNOT FIRE. Banners added at all five
+      #      places (9.sh change 2, the changes 7-11 block, checklist (b), the
+      #      live env block, the tail; 9c.sh's design rule, its L3 provenance
+      #      block, its live env block and its parked-flag block), the tuning
+      #      HISTORY kept intact, and the re-enable condition kept where it
+      #      already lived: purge/rotate /root/hicache_store first (formats
+      #      changed in entries 178/186/199/209; entry 196 does not retro-fix
+      #      cached mamba states, so a stale store is a wrong-output risk).
+      # WHAT IS LIVE AFTER THE NEXT RESTART, in order of consequence: (i) BOTH
+      #   arms boot with PCIe-IPC all-reduce -- first-ever boot for either, so
+      #   the first pass/fail is checklist (s)-(y), not a throughput number;
+      #   (ii) the FP4 arm additionally has fused-finalize ON, which is NOT
+      #   bit-reproducible and is force-disabled by --enable-deterministic-
+      #   inference (serving_hook.py:426-427) -- so any "determinism made my win
+      #   vanish" mystery starts there, and 9c.sh's (r) accuracy gate is the only
+      #   safety net it has because the env has NO log needle at all (three
+      #   readers, none of them logs); (iii) the draft backend is pinned
+      #   explicitly, so verify the PAIR in the dump (cutlass target + triton
+      #   draft) and stop expecting the 4 downgrade lines; (iv) entry 244's crash
+      #   fix and env door. NOTHING here is live in the current process.
+
+        246. no code  A/B HARNESS (/root/ab_harness, not in git) -- arms 33/34/35 needles re-pinned so a seed-policy boot can no longer PASS, and FOUR arms found asserting on log strings that DO NOT EXIST anywhere in the tree
+      # THE RE-PIN (arm D7, arms/33_pcieipcon_pcieipc.conf and its two siblings).
+      # lib/boot_check.sh:237 treats `NEEDLE 0 <re>` as ADVISORY (a lower bound of
+      # zero can never be violated), so arm 33's proof line
+      # "autotuned N shape(s)" was bound NEEDLE 0 -- a boot that left every
+      # kernel on FlashInfer's untuned seed policy PASSED the arm that exists to
+      # measure the transport. The three lines that PROVE engagement are now
+      # NEEDLE RANKS-1 RANKS+1, the gather is RANKS-1..RANKS+8 (2 per rank is the
+      # honest ceiling -- target + draft gatherers -- and the build is lazy, so a
+      # tight bound would fail a correct boot), and the silent-fallback strings
+      # are FORBID'd. Bounds are expressed in RANKS so they track --tp instead of
+      # hard-coding 4.
+      # FOUR ARMS WITH UNSATISFIABLE POSITIVE NEEDLES -- each "NEEDLE 0" here
+      #   matches NOTHING, and because a 0-bound needle is advisory it can never
+      #   pass AND can never fail: the arm is decorative, its boot_check is green
+      #   whether or not the feature works. All four verified tree-wide today:
+      #     21_losslessverify_lossless.conf  NEEDLE 0 lossless.verify|CACHE_U_TUPLES
+      #       -- neither string is ever LOGGED (CACHE_U_TUPLES is a Triton
+      #       constexpr name). The real per-rank line is
+      #       mem_cache/memory_pool.py:1128 "Lossless GDN tuple cache is on:
+      #       (u, k, g) ring ...".
+      #     22_qsasharding4_qsa4.conf  NEEDLE 0 sharded QSA|QSA cache sharding|cache_sharding
+      #       -- layers/attention/qsa/cache_sharding.py contains ZERO logger
+      #       references (machine-checked count 0) and no logger call in the tree
+      #       matches any of the three alternatives. The feature is observable
+      #       only through the pool numbers, i.e. from the KV/mamba allocation
+      #       lines and /get_server_info, not from a needle.
+      #     36_mambacap640_mamba640.conf  NEEDLE 0 skipped checkpoint
+      #       -- "skipped checkpoint" has ZERO hits tree-wide. The pin this arm
+      #       exists to assert is a server_args value: take it from the dump
+      #       ('max_mamba_cache_size': 640), which is the same method 9c.sh (l)
+      #       now uses.
+      #     38_hicacheoff_l3off.conf  NEEDLE 0 host mamba slots
+      #       -- the WORST of the four: that line is printed by
+      #       mem_cache/hybrid_cache/hicache_mamba_sizing.py:174/:181 only when
+      #       the HiCache HOST pools get sized, and this arm's whole job is to
+      #       turn HiCache OFF. It is a presence needle on a line that cannot
+      #       exist in the arm that sets it. (Its FORBIDs are fine.)
+      #   NONE OF THESE IS RE-BOUND IN THIS BATCH: a correct bound needs a real
+      #   boot to see what each arm actually emits, and guessing bounds is how
+      #   the NEEDLE 0 trap got written into four files in the first place.
+      #   TODO(harness): re-pin all four against the next boots, then re-run
+      #   lib/selftest_pending.sh (last full run 826 ok / 0 fail).
+      # BASE/ IS NOW STALE -- REFRESH IT BEFORE THE NEXT SWEEP.
+      #   /root/ab_harness/base/base_args.txt was extracted 2026-10-19T21:23:37Z
+      #   from a 9.sh that still PASSED the hierarchy: it carries
+      #   --enable-hierarchical-cache plus six dependent --hicache-* flags and
+      #   --hicache-size 32, and base_env.sh has NO SGLANG_ENABLE_PCIE_IPC_
+      #   ALLREDUCE. Consequences, both serious: arms 27/28/29 and 38/39/40 would
+      #   A/B a HiCache configuration the live arm no longer boots at all (and
+      #   arm 38's REMOVE cascade is now a no-op against a base that prod does
+      #   not use), and arms 33/34 would compare a PCIe-IPC boot against a
+      #   control from a script that does not export the variable -- i.e. the
+      #   one lever under test is also the base's difference, which is exactly
+      #   the confound the 00/_end anchors exist to catch. Re-run
+      #   base_extract.sh against the CURRENT 9.sh when the box is free, and
+      #   re-read the L3 arms' hypotheses at the same time (entry 245: L3 is
+      #   parked).
+      # ALSO STANDING, unchanged from the 10-20 hardening round: pkill is gone
+      # from the launch path, handover signals only VERIFIED sglang pids inside
+      # the owned GPU set and otherwise REFUSES (touching nothing), --gpus/--port
+      # scope a co-resident run, and a contaminated energy number is marked
+      # instead of being silently averaged in.
 
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
@@ -4757,6 +5139,42 @@ WATCH LIST (re-evaluate before next sync)
 CAVEATS
 ==============================================================================
 
+  * CPU-BATTERY DIFFS 2026-10-20b (entries 244-246, measured on the tree at
+    c1323ca20b IN THE PROD VENV /root/sglang/.venv -- not .venv2 -- because the
+    two files that moved are exactly the ones whose behavior depends on the
+    installed wheel. Method unchanged: PER-FILE runs, CUDA_VISIBLE_DEVICES=9,
+    PYTHONPATH=/root/sglang/sglang/python).
+      test_nvfp4_smallm_dispatch.py  21P/51sub -> 28P/66sub. THE OLD PIN WAS ITSELF
+        A MASK: c6b0deef04 (entry 225) "fixed the stale stub" by adding the very
+        attributes upstream 10edb05e72/#42348 had DELETED, so the fixture kept
+        satisfying the dangling reads and the gate looked tested. fea818f68f
+        builds a REAL FlashInferCutlassMoeQuantInfo in both fixtures; with that
+        in place and the source reverted the file is 19F, every failure
+        `AttributeError: 'FlashInferCutlassMoeQuantInfo' object has no attribute
+        'moe_tp_size'`. Pin the new number; a log showing 21P/51sub is a PRE-244
+        tree.
+      test_nvfp4_moe_sm120.py  3P/15S -> 3P/15S NUMERICALLY UNCHANGED, AND THE
+        NUMBER IS A LIE OF OMISSION: the 15 skips are the CUDA-gated dispatch
+        tests, and all three that built a quant info were passing the deleted
+        moe_ep_size= to the real class -- on SM120 hardware each was a guaranteed
+        TypeError, never a pass and never a skip. c1323ca20b gives them a layer
+        placement stub. Until the GPU window runs them, NOTHING in this file
+        exercises the small-row dispatch path, and the entry-244 gate fix has no
+        executed end-to-end coverage. Do not cite 3P/15S as green coverage of
+        that path.
+      test_kernels_namespace.py  76P UNCHANGED (no KernelSpec added or removed --
+        the small-row kernel is reached through the existing ops module, and none
+        of the three commits touches the registry).
+      cargo sglang-radix-tree  NOT RE-RUN: 932P/0F stands, rust untouched by all
+        three commits (git show --stat: 4 files, all python/docs/test).
+    THE GENERALIZATION WORTH KEEPING: a dataclass field deleted by an upstream
+      merge does NOT fail import and does NOT fail a stub-based test -- it fails
+      the first real call. When a merge touches a quant-info / runner-config
+      dataclass, grep for the deleted field names ACROSS THE TREE INCLUDING
+      TESTS, and prefer a real-class fixture over a SimpleNamespace that can
+      carry dead attributes. That single habit is the difference between a
+      latent crash and a green CPU lane.
+
   * CPU-BATTERY DIFFS 2026-10-20 (entries 230-242, measured on the tree at
     fcc0000e16). Method unchanged: PER-FILE runs, CVD=9, PYTHONPATH set for
     worktrees. Everything NOT listed here was re-confirmed EXACT against
@@ -4912,6 +5330,63 @@ CAVEATS
     DEFAULT", was NOT taken -- our SGLANG_ENABLE_HICACHE_BATCHED_BACKUP
     stays EnvBool(False) (entry 199's opt-in A/B lever for the 2400:1
     L3 write-amp; still not measured on prod).
+  * BEHAVIOR WATCH -- NEXT RESTART (entries 244-246): BOTH ARMS BOOT WITH
+    PCIe-IPC ALL-REDUCE FOR THE FIRST TIME. Neither arm has ever run this
+    transport (prod logs contain zero PCIe-IPC lines to date), so the first
+    thing to do at that boot is READ THE NEEDLES, not benchmark.
+      - Expected per boot: 4x "FlashInfer PCIe-IPC all-reduce enabled",
+        4x "FlashInfer PCIe-IPC workspace built (world=4, max_numel=491520,
+        hidden=2560)", 4x "...all-reduce autotuned N shape(s)", and UP TO 8x
+        "PCIe-IPC vocab gather: up to 384 rows x 62080". THE VOCAB GATHER IS
+        TWO PER RANK, because target and draft each build their own gatherer --
+        so 4 lines is NOT partial success, it means the NEXTN DRAFT is still on
+        NCCL inside the graph (an unmeasured gap; record which you got).
+        0 enabled lines = the gate never opened. 8 enabled lines = the
+        group-aliasing model (one `tp` coordinator for attn-TP/MoE-EP/TP) is
+        wrong; re-derive before trusting anything else.
+      - THE HARD PASS/FAIL IS `autotuned N shape(s)` WITH N > 0 (expected 9).
+        An UNTUNED seed policy can be SLOWER than NCCL, so a boot that merely
+        came up is not a pass. Four distinct declines exist and none of them is
+        the ordinary path: "autotune covered no shapes", "autotune failed
+        (...); keeping the seed policy", "no host group to autotune on",
+        "--disable-flashinfer-autotune is set" -- precondition: the dump shows
+        'disable_flashinfer_autotune': False.
+      - FIRST BOOT COST, both arms: a one-time flashinfer JIT for the PCIe-IPC
+        kernels plus a nine-shape autotune pass, cached per flashinfer version +
+        arch. Judge startup and tok/s from the SECOND boot and write down which
+        boot a number came from.
+      - Needle traps (a wrong grep here reads as a clean boot): the setup
+        failure says "allreduce" WITHOUT a hyphen; "fixed fallback width 64" is
+        invisible to a SOURCE grep but prints; "reductions stay on NCCL" is both
+        a benign per-dtype note AND a real transport disable; "keeping the seed
+        policy" is shared by three declines; "multimem all-gather disabled (no
+        multicast for world_size=4)" fires whether or not the change works.
+    THE FP4 ARM ADDITIONALLY CHANGES OUTPUT ORDER. DELTA 4
+    (SGLANG_FLASHINFER_MOE_FUSED_FINALIZE=1) fuses the top-k reduce into the
+    GEMM2 epilogue and accumulates ATOMICALLY: not bit-reproducible run-to-run
+    or against FP8, no log needle at all (three readers, none logs), and it is
+    SILENTLY FORCED BACK TO 0 by --enable-deterministic-inference. So a small
+    accept-length or logprob move on that arm is expected until the (r) accuracy
+    gate runs, and a "determinism made my win vanish" mystery starts here.
+    DELTA 3 removes four log lines people have been told to look for: with
+    --speculative-moe-runner-backend triton pinned, "Fp8MoEMethod has no %s
+    path; using triton for its fp8 experts." NEVER PRINTS by design. The
+    authority is now the server_args PAIR ('moe_runner_backend':
+    'flashinfer_cutlass' + 'speculative_moe_runner_backend': 'triton'), which
+    is checklist (l). A 9.sh dump says 'triton' for the draft TOO, so only the
+    combination identifies the arm.
+    TWO MORE SILENT-STATE WATCHES. (1) HiCache/L3 is parked on BOTH arms
+    (no --enable-hierarchical-cache), so every L3 needle -- the entry-209
+    sidecar counters, "HiCacheFile eviction enabled", the harness arms
+    27/28/29/38/39/40 -- measures NOTHING while parked, and its absence from a
+    log is not a fix and not a regression. (2) entry 244 added a new WARNING in
+    the small-row decision path, "SM120 NVFP4 small-row MoE: using CUTLASS
+    because the eligibility check raised <Type>: <msg>". It must stay SILENT: it
+    means the run is safe but the gate is buggy again. 9c.sh checklist (n)
+    greps the shared "SM120 NVFP4 small-row MoE" prefix and requires ZERO
+    lines -- which at EP4/default-MAX_EP-1 is the right demand, but it cannot
+    by itself separate this warning from a legitimate decline; check the LEVEL.
+
   * BEHAVIOR WATCH -- TOP PRIORITY, FIRST BOOT ON FLASHINFER 0.7.2
     (entry 228). (1) EXPECT A SLOWER BOOT. flashinfer's JIT cache is
     version-tagged at <FLASHINFER cache base>/<version>/120f/cached_ops
