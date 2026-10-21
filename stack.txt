@@ -1,6 +1,6 @@
 # stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
 #
-# STACK: qwennext-stack-247-2026-10-20
+# STACK: qwennext-stack-249-2026-10-21
 #   main+pr36787+pr37275+pr38144+pr38209+pr36644+pr39862+pr39809+pr39893+local_hicache_qsa_fixes
 #   +pr39614+pr39978+pr40002+pr39065+pr40501+pr40175+pr40362+pr39391+pr37061+pr39333+pr33778
 #   +pr38977+pr39977+pr40480+pr39880+pr40235+pr39807+cpu-triage+boot-fix+plan_updates_perf
@@ -10,7 +10,7 @@
 #   +diffusion-batch-2026-10-08(pr27673+pr28690*+pr32513+pr32550*+pr33036*+pr33588*
 #    +pr36399+pr36767+pr37460*+pr38650+pr39212+pr40493+pr40588+pr40755+pr41340*
 #    +pr41944+pr42249+pr42928*+pr43028*+pr43064*)
-#   (entries 1-247; *=squash/ported, see commit messages. 10-10 added
+#   (entries 1-249; *=squash/ported, see commit messages. 10-10 added
 #   entries 157-161: parser batch A (Qwen3-Coder tool-call fixes + sampling
 #   upper bounds), on top of upstream merge #3 (see synced). 10-10b added
 #   entries 162-166: SM120 batch B (#42863 PCIe-IPC vocab gathers, #42566
@@ -208,6 +208,38 @@
 #   EXACTLY on main (prod venv, per-file, CVD=9), the first time this port
 #   coexists with 244-246. Live only after restart (user-driven); NOTHING
 #   pushed.
+#   10-21 added entries 248-249: ONE REPO FIX + THE RUN-SCRIPT/HARNESS
+#   RECORD. 248 = 1818e2c0fb, a fork-local performance/memory fix with no
+#   upstream PR behind it: the get_rope memo key carried the CALLER's raw
+#   max_position_embeddings, and because _derive_context_length rewrites the
+#   DRAFT's to --context-length while the target keeps the checkpoint's
+#   262144, target and draft each built their OWN (1048576, 64) fp32 cos/sin
+#   cache -- bit-identical, 256 MiB per rank duplicated, 1 GiB over TP4,
+#   charged before the KV pool is sized. The fix normalizes the KEY (a
+#   construction-identity tuple instead of the raw argument, plus the
+#   ambient device tag, a for_cpu discriminator and a sorted scaling dict)
+#   and deliberately does NOT touch model_config.py or get_context_length.
+#   No env var, no default flip. New 469-line test file, 29P here / 21F at
+#   base. 249 is the 10-21 /root batch: THREE functional changes in each of
+#   9c.sh and 9.sh at the same relative position (L3 cap 50G->150G, metadata
+#   TTL 300->30, NEW --random-seed 20260930) with the seed's honesty limits
+#   spelled out -- it does NOT make greedy traffic reproducible and the A/B
+#   harness benches at temperature 0, so no harness re-run can demonstrate
+#   it; the store measurement that was STALE in my own earlier note
+#   (199.1 GB, not ~740 GB -- the 17:42 boot's 50G drain already deleted
+#   ~1.15M files, so a cap RAISE is free at boot and only a LOWERING pays);
+#   the POWER finding that max_limit is 325 W on ALL FOUR cards while both
+#   scripts still assert a 300 W ceiling on two of them; and the A/B
+#   harness round -- per-run HiCache store isolation, the base-corruption
+#   repair and its provenance guard, selftests 945/2 -> 977/0 and 14/1 ->
+#   15/0. ALSO CORRECTED HERE, by reading the LIVE process: entries
+#   245/246's "HiCache/L3 is PARKED on BOTH arms" is FALSE for the
+#   10-21 17:42 boot -- it runs --enable-hierarchical-cache with
+#   --hicache-size 32 / mamba auto / write_through_selective / storage=file,
+#   and 0.88 + max-mamba 384 are already LIVE in it (max_total_num_tokens=
+#   8,012,096, the entry-243/246 prediction of ~8.01M). Read entry 245's
+#   parked-L3 banners as history. Live only after restart (user-driven);
+#   NOTHING pushed by this batch.
 #   10-08 added entries
 #   136-155: 20 diffusion PRs (4 more evaluated-skipped, see NOT INCLUDED).
 #   09-28 added 22 entries: 9 new PR blocks, new head
@@ -215,7 +247,7 @@
 #   make --enable-mixed-chunk safe and fix the QSA verify ring collision.
 #   * = picked with local modifications, see the entries)
 # branch : qwennext-stack
-# tip    : 4c91151ed0   (the stack.txt commit sits above it)
+# tip    : 1818e2c0fb   (the stack.txt commit sits above it)
 # base   : upstream sgl-project/sglang main @ 7ad55e4386 ([HiCache] TMA-staged
 #          host<->device KV transfer kernel (sm_90+) (#40278), 2026-09-21)
 # synced : upstream main @ f209e67767 (#39643, 2026-09-28) MERGED IN as
@@ -283,6 +315,58 @@
 #          revisit that floor AND take the probe in the same step, and
 #          conversely rolling the flashinfer wheel back requires
 #          reverting 2b46270c5d first (see entry 228).
+#          MERGE #5 STILL OWED (refreshed at the 248/249 docs commit):
+#          origin/main is now 1dd0f361b8 = +435 commits since 12dc623102.
+#          [The 553836c164/+378 figure was the count at the 230-242 batch.]
+# updated: 2026-10-21 (entries 248-249): ONE FORK FIX + THE /root BATCH,
+#          NO UPSTREAM MERGE AND NO PORT. 1818e2c0fb normalizes the get_rope
+#          memo key so the target and the NEXTN draft share ONE cos/sin
+#          cache. The duplicated bytes were real and measured: the key
+#          included the caller's raw max_position_embeddings, and
+#          _derive_context_length (configs/model_config.py:1182-1206) rewrites
+#          the DRAFT's max_position_embeddings to --context-length (1,000,000)
+#          while the target keeps 262,144 -- so both built a (1048576, 64)
+#          fp32 cache of 268,435,456 B, torch.equal-identical, 256 MiB/rank
+#          and 1 GiB over TP4, allocated during weight load BEFORE the KV
+#          pool is sized. Fix the KEY, not the config rewrite: that rewrite
+#          is load-bearing for non-YaRN derived lengths, and
+#          utils/hf_transformers/common.py:682-698 (which zeroes the scaling
+#          factor whenever original_max_position_embeddings is present) is
+#          also why sglang's own derived context says 262,144 and why a
+#          727,894-token prompt warning is a FALSE ALARM on this geometry.
+#          DEFAULTS UNCHANGED, no env var, no invalidation change.
+#          THE 10-21 /root batch (entry 249, files outside git like
+#          245/246): 9c.sh and 9.sh each take THREE functional lines at the
+#          same relative position -- L3 cap 50G->150G, metadata TTL
+#          300->30, and --random-seed 20260930 -- proven by functional-stream
+#          md5 (9c d112bb0f..->c2dcb878.., 9.sh c069ec66..->5db87f98..) plus
+#          a 539-field offline prepare_server_args diff of EXACTLY one field.
+#          Say the seed's limits plainly: it does NOT make greedy traffic
+#          reproducible (greedy bypasses the RNG entirely) and the A/B
+#          harness benches at temperature 0.0, so a harness re-run cannot
+#          demonstrate it either -- what it buys is temp>0 traffic plus the
+#          boot-path RNG consumers, i.e. comparable boots. My own earlier
+#          "~740 GB store, so a raise costs ~250 GB of blocking unlinks at
+#          boot" was STALE and is corrected in the entry: the drain only
+#          runs when _total_bytes > max_size, so a RAISE is free and only a
+#          LOWERING pays. NEW FINDING, no code: nvidia-smi reports
+#          power.max_limit = 325 W on ALL FOUR cards while both scripts still
+#          assert a 300 W cap on GPU0/GPU1, and the box sits at 70-74% of
+#          clocks under a SW power cap at 98% util -- raising -pl is the
+#          highest-EV throughput experiment on this machine and it is an
+#          OPERATOR action, not a repo change. Harness: per-run HiCache
+#          store isolation (arms no longer silently boot against PROD's
+#          store while the harness reports prod's numbers as theirs) + the
+#          base-corruption repair and its provenance guard; selftests
+#          945/2 -> 977/0 and 14/1 -> 15/0, and the repair UN-SKIPPED the
+#          HiCache arms. LIVE STATE CORRECTED FROM /proc, not from prose:
+#          the running 17:42:20 boot ALREADY carries --enable-hierarchical-
+#          cache, --hicache-mamba-size-gb auto, 0.88 and max-mamba 384
+#          (max_total_num_tokens=8,012,096 -- the entry-243 sizing
+#          prediction), so entry 245's and 246's "HiCache/L3 is PARKED on
+#          BOTH arms" is now HISTORY, not status. Restart-PENDING are only
+#          MAX_SIZE 150G, TTL 30 and --random-seed. Code tip 1818e2c0fb,
+#          tree clean. LIVE ONLY AFTER RESTART (user-driven).
 # updated: 2026-10-20b (entries 244-246): NO UPSTREAM MERGE IN THIS BATCH
 #          (merge #5 stays owed -- see the synced note; nothing here came from
 #          origin/main, and #45151 is NOT owed work, it is already entry 232).
@@ -4907,6 +4991,15 @@ STACK, IN BUILD ORDER (bottom first)
       #   the NEEDLE 0 trap got written into four files in the first place.
       #   TODO(harness): re-pin all four against the next boots, then re-run
       #   lib/selftest_pending.sh (last full run 826 ok / 0 fail).
+      #   [10-21 ANNOTATION, do not read the 826 above as current: it was a
+      #   point-in-time figure and the totals printed by that suite are
+      #   "pass=N fail=M total=T", so a bare number is ambiguous. The ladder,
+      #   from the logs: 897/2 (total 899) pre-10-21, 945/2 (total 947) after
+      #   the L3-isolation section (24), 977/0 after the base repair at entry
+      #   249. HISTORY: the "899" that appears in operator notes is the TOTAL
+      #   of the 897/2 run, NOT a pass count; 826 and 841 were pass counts of
+      #   earlier trees. Current authority = /root/ab_harness and the entry-249
+      #   log paths.]
       # BASE/ IS NOW STALE -- REFRESH IT BEFORE THE NEXT SWEEP.
       #   /root/ab_harness/base/base_args.txt was extracted 2026-10-19T21:23:37Z
       #   from a 9.sh that still PASSED the hierarchy: it carries
@@ -5220,6 +5313,410 @@ STACK, IN BUILD ORDER (bottom first)
       # (user-driven), and even then INERT until someone names the backend AND
       # repins CUDA_HOME.
 
+        248. 1818e2c0fb  FORK PATCH, no upstream PR behind it  ROPE-CACHE DEDUP -- the get_rope memo key carried the CALLER's raw max_position_embeddings, so the target and the NEXTN draft each built their OWN (1048576, 64) fp32 cos/sin cache: 256 MiB per rank of BIT-IDENTICAL duplication, 1 GiB over TP4, allocated before the KV pool is sized. The key is now built from what gets CONSTRUCTED, not from the argument the caller happened to pass
+      # WHAT THE BUG COST, MEASURED. On the live geometry (nvidia/Qwen3.8-
+      # Flash-Next-NVFP4, TP4, --context-length 1000000 with the YaRN override
+      # factor=4.0 / original_max_position_embeddings=262144, head_dim 256 x
+      # partial_rotary_factor 0.25 = rotary_dim 64, cache fp32 on CUDA):
+      #   rows = original_max_position_embeddings * factor = 1048576; width 64;
+      #   4 B  =>  1048576 * 64 * 4 = 268,435,456 B = 256 MiB per rope object.
+      # The target and the draft each had one, and they were the same tensor
+      # content -- torch.equal(a.cos_sin_cache, b.cos_sin_cache) is True -- so
+      # this was pure duplication, NOT a numerical divergence and not a
+      # correctness bug in the outputs. Two facts make the bytes material:
+      # rope is built DURING model load, before the KV pool is sized, so the
+      # pool was paying for it; and the FP4 arm's observed floor mid-run is
+      # 0.59 GiB free, so 256 MiB/rank is not a rounding error here.
+      # AFTER the first forward the saving is 128 MiB/rank, not 256, because
+      # MRotaryEmbedding.forward_cuda calls _match_cos_sin_cache_dtype(query)
+      # and re-casts the cache to bf16 in place. Quote 256 MiB/rank for the
+      # allocation-time headroom and 128 MiB/rank for steady state; they are
+      # the same fix at two different moments.
+      # WHY THE TWO KEYS DIFFERED. configs/model_config.py:1182-1206
+      # (_derive_context_length) rewrites hf_text_config.max_position_embeddings
+      # to the user's --context-length, but ONLY for the draft model
+      # (is_draft_model branch, the "Overriding the draft model's
+      # max_position_embeddings to 1000000" warning). The target keeps the
+      # checkpoint's 262144. get_rope's memo key included that raw argument,
+      # so the two builds hashed differently and each got its own entry --
+      # even though the yarn / yarn+mrope_section / deepseek_yarn branches
+      # never hand the caller's max_position to their constructor at all:
+      # they pass rope_scaling["original_max_position_embeddings"] positionally
+      # and derive BOTH the cache length (torch.arange(original * factor)) and
+      # the inv_freq correction range from that value alone. Two calls build
+      # the same tensors iff (class, the positional the ctor receives, the
+      # resolved length) agree -- which is exactly what the key now carries.
+      # THE FALSE ALARM THAT LED HERE, recorded so nobody re-chases it: a
+      # tokenizer warning about a 727,894-token prompt implied the context was
+      # smaller than the traffic. It is not. YaRN factor 4.0 x
+      # original_max_position_embeddings 262144 = 1,048,576 rows and the cache
+      # really has them; sglang's own derived context says 262,144 because
+      # utils/hf_transformers/common.py:682-698 (get_context_length) sets
+      # rope_scaling_factor = 1 whenever "original_max_position_embeddings" is
+      # in the scaling dict, so the factor never multiplies the derived
+      # length. That file is UNTOUCHED by this entry, deliberately: the
+      # derivation is what keeps --context-length validation honest, and the
+      # warning is a reporting artifact, not a capacity limit.
+      # THE FIX -- python/sglang/srt/layers/rotary_embedding/factory.py,
+      # +240/-22, the ONLY source file changed:
+      #   * _rope_cache_key (:276) is now TEN fields: the old eight MINUS
+      #     max_position, PLUS _ambient_device_tag() (:125), the _rope_geometry
+      #     tuple (:256) and a for_cpu discriminator.
+      #   * _rope_geometry (:256, over _resolve_rope_geometry :155) mirrors the
+      #     factory's dispatch BRANCH FOR BRANCH (:155) and returns
+      #     (the class the factory will build, the max_position_embeddings the
+      #     CONSTRUCTOR is handed, the resolved cache rows). Every branch whose
+      #     class really does read the caller's value keeps it -- plain, mrope,
+      #     llama3, linear, dynamic, dynamic-alpha, Bailing video_rope,
+      #     longrope, proportional, dual-chunk, and any YaRN config that OMITS
+      #     original_max_position_embeddings and so falls back to max_position.
+      #     Those stay exactly as strict as before; only the branches that
+      #     provably ignore the argument collapse together.
+      #   * It is wrapped so it can NEVER raise: an unanalysable scaling type
+      #     returns the conservative fallback ("", max_position, None), i.e. a
+      #     key that shares nothing it is not sure about. A geometry helper
+      #     that raised would fail a boot that the old key happily served.
+      #   * _canonical_scaling_args (:141) now sorts its items. The old key
+      #     was INSERTION-ORDER-SENSITIVE, so two configs carrying the same
+      #     scalars in a different dict order already built two caches -- a
+      #     latent second duplication this fix also closes.
+      #   * _arange_rows (:120) = len(torch.arange(float)), i.e. CEIL, the real
+      #     row formula for the scaling branches. Computing rows with int()
+      #     would have keyed two different caches as the same entry, which is
+      #     the dangerous direction.
+      #   * get_rope_cpu (:678-690) now shares the builder with for_cpu=True.
+      #     Its old 7-tuple was only ACCIDENTALLY disjoint from the CUDA key;
+      #     that is no longer something to rely on.
+      #   * WHAT WAS NOT DONE, on purpose, and it is the design decision here:
+      #     the sub-fields of rope_parameters are NOT enumerated individually.
+      #     A subset would make EVERY omitted knob a silent sharing bug (the
+      #     exact class of defect entries 244 and 246 are about); class +
+      #     ctor-positional + the full canonical dict is strictly stronger and
+      #     needs no maintenance as knobs are added. Also untouched:
+      #     model_config.py (the draft rewrite is load-bearing for non-YaRN
+      #     derived lengths), common.py:682-698, and there is NO env var, NO
+      #     default flip and NO change to cache invalidation/clearing.
+      # THE RED/GREEN IS MACHINE-CHECKED, and the number in my own working
+      # notes was wrong. Re-measured for this entry, PROD venv
+      # (/root/sglang/.venv), per-file, CUDA_VISIBLE_DEVICES=9:
+      #   at 1818e2c0fb      29 passed, 7.54 s
+      #   at base 578c16a188  21 FAILED / 8 passed  (NOT 20/9 as first noted)
+      #     - 15 of the 21 are AttributeError: module ...factory has no
+      #       attribute '_rope_geometry' -- the white-box class (the 12
+      #       test_geometry_describes_the_object_that_gets_built params,
+      #       test_unanalyzed_scaling_type_is_conservative,
+      #       test_live_geometry_duplicated_256_mib_per_rank,
+      #       test_yarn_cache_length_is_the_arange_length_of_a_fractional_product).
+      #       They cannot pass at base by construction; they pin the NEW
+      #       symbol's contract.
+      #     - 6 are BEHAVIOURAL reds, and those are the actual proof of the
+      #       fix: test_target_and_draft_share_one_yarn_entry,
+      #       test_every_max_position_free_branch_shares x3 params,
+      #       test_rope_scaling_insertion_order_does_not_split_the_entry,
+      #       test_dead_entry_is_still_discarded_under_the_new_key.
+      #   The 8 that pass at BASE AND at HEAD are the invariant pins -- they
+      #   were never red and never pretended to be, they guard the DANGEROUS
+      #   direction of a dedup change:
+      #     test_plain_rope_draft_needing_a_longer_cache_gets_its_own_entry
+      #       (4096 vs 8192 -> still 2 entries, shapes (4096,64) and
+      #       (8192,64): a draft can NEVER inherit a smaller cache),
+      #     test_yarn_without_an_original_in_the_dict_stays_unshared
+      #       (fallback IS the caller's value -> still 2 entries, rows
+      #       1024/2048),
+      #     test_equal_cache_rows_from_different_classes_are_not_shared
+      #       (plain-1024 vs YaRN-1024 do not collide),
+      #     test_different_scaling_factor_is_not_shared (4.0 vs 8.0),
+      #     test_mrope_section_difference_is_not_shared,
+      #     test_shared_entry_is_bit_identical_to_a_freshly_built_one,
+      #     test_meta_device_entry_is_not_handed_to_a_real_build,
+      #     test_get_rope_cpu_entry_is_disjoint_from_the_device_build.
+      #   A future "improvement" that makes any of those eight go RED has
+      #   over-merged; that is the read that matters, not the 29.
+      # BATTERY, all reproduced at CVD=9 and unchanged by the fix (the point
+      # of the list is that sharing a cache does not disturb anything that
+      # reads one): test_kernels_namespace 76P; test_qsa 0F/76P/140S;
+      # test_qsa_fused_kv_prepare 0F/12P/146S; test/registered/unit/spec/
+      # 335P/9S/180sub; test_yarn_cache_extension 18P; test_hf_transformers
+      # 81P + 21sub; test_hf_transformers_loading 5P + 4sub; 7 adjacent rope
+      # files green. ruff --select=F401,F821,F823,UP037 and ruff format
+      # --check rc=0; scripts/lint/check_registered_tests.py and
+      # check_no_bare_pytest_main.py both rc=0.
+      # STANDING FACTS ABOUT THIS CACHE WORTH KNOWING (they predate the entry
+      # and the fix does NOT change them):
+      #   * _ROPE_DICT is NEVER cleared process-wide. loader.py:1937-1947
+      #     deletes only the meta-param entries and _get_live_rope_cache_entry
+      #     is a content heuristic. Before this change the raw max_position +
+      #     the differing 7-tuple for CPU did the separating by accident; now
+      #     _ambient_device_tag() and for_cpu do it EXPLICITLY, which is the
+      #     only reason dropping a key field is safe.
+      #   * NEW SHARED-MUTABILITY CONSEQUENCE, the residual risk to watch:
+      #     the in-place bf16 re-cast in _match_cos_sin_cache_dtype and any
+      #     growth in _ensure_cos_sin_cache_length now apply to BOTH consumers
+      #     of the shared entry. Benign for us -- the target and the draft are
+      #     both bf16, and a cache that is too SHORT for one of them still
+      #     gets its own entry by the geometry rows -- but it is now a real
+      #     coupling: a future per-model dtype or cache-length change is a
+      #     change to a shared object. See BEHAVIOR WATCH.
+      # GPU-WINDOW DEBT: nothing here needs a device to verify (the 29 tests
+      # are CPU and the geometry math is host-side), but the SAVING is only
+      # observable on a boot: read the pool-sizing sequence, not a rope log
+      # line -- there is no needle for this fix, by design. Expected effect
+      # on the FP4 arm: 128-256 MiB/rank more headroom at the moment the KV
+      # pool is sized, i.e. max_total_num_tokens should NOT go down.
+      # STATUS: 2 files on main, tree clean, NOT pushed by this batch. LIVE
+      # ONLY AFTER RESTART (user-driven).
+
+        249. no code  THE 2026-10-21 /root BATCH -- both run scripts take THREE identical-shape functional lines (L3 cap 50G->150G, metadata TTL 300->30, NEW --random-seed 20260930), with the seed's limits stated plainly and my own stale store-size premise corrected; the A/B harness gets PER-RUN HiCache STORE ISOLATION and the base-corruption repair plus a provenance guard that makes the class of failure impossible; and a POWER finding nobody has acted on -- max_limit is 325 W on ALL FOUR cards while both scripts still assert 300 W on two of them
+      # FILES OUTSIDE THE REPO (like entries 245/246/242/243): /root/run_-
+      # sglang_qwenflashnext9c.sh (the FP4 arm), /root/run_sglang_qwenflash-
+      # next9.sh (the FP8 arm), /root/ab_harness (not a git repo). NOTHING in
+      # this entry is a repo change; the repo delta for the day is entry 248.
+      # 1. THE RUN SCRIPTS
+      # THREE functional changes in EACH file, at the SAME relative position
+      # in both, so the "the arms differ by exactly one variable" property
+      # that makes the FP8/FP4 comparison meaningful SURVIVES the edit:
+      #   (a) SGLANG_HICACHE_FILE_BACKEND_MAX_SIZE   50G -> 150G
+      #   (b) SGLANG_HICACHE_FILE_BACKEND_METADATA_TTL 300 -> 30
+      #   (c) NEW  --random-seed 20260930
+      # PROOF (re-verified for this entry, and the numbers in the working
+      # notes are right): comment-stripped functional-stream md5s
+      #   9c.sh  d112bb0f99acaed49c7e1e71e8e3bcc5 -> c2dcb87813d5b7ada27f52ee7007aa10
+      #   9.sh   c069ec66fed0ddf941c80003ae1e5617 -> 5db87f987f53e5159516b4599d64277f
+      # (both re-computed with `grep -v '^ *#' | grep -v '^ *$' | md5sum` and
+      # MATCHING, so the scripts on disk are the ones that were measured).
+      # bash -n rc=0 on both; the continued-block audit is clean (no interior
+      # comment or blank line inside the backslash-continued command -- that
+      # footgun is recorded in entry 209 -- and exactly one unterminated
+      # trailing line, the tee). The offline prepare_server_args resolve is a
+      # 539-field diff containing EXACTLY ONE changed field,
+      # random_seed: None -> 20260930, which is the machine proof that nothing
+      # else moved. NOTE the exec-line counts quoted as "60->61 / 50->51" are
+      # NON-BLANK non-comment lines; a naive `grep -vc '^ *#'` includes blanks
+      # and reports 63 / 54 on these files today. Use the md5, not a count.
+      # 2. SEED HONESTY -- READ THIS BEFORE CITING A REPRODUCIBLE BOOT
+      # --random-seed 20260930 is NOT a bit-identical-output pin and it is
+      # NOT demonstrable by an A/B harness re-run. Three code facts make
+      # greedy traffic RNG-free already: sampling_params.py:250-255 maps
+      # temperature < 1e-10 to top_k = 1; sampler.py:1320-1323 returns the
+      # logits VERBATIM for an all-greedy batch; eagle_utils.py:860-877
+      # argmaxes when is_all_greedy. And /root/ab_harness benches at
+      # temperature 0.0 -- SEED = "20260930" is defined at
+      # lib/bench_profiles.py:41, EMITTED into every phase's argv at :392, and
+      # enforced by the "missing --seed" guard at :545 (lib/bench_runner.sh:342
+      # only RECORDS it, so grepping the runner for the literal misleads). So a
+      # harness sweep shows the SAME NUMBERS with or without this pin, and that
+      # is NOT evidence the pin failed.
+      # WHAT IT DOES BUY: (i) reproducibility for temp>0 / top_p<1 traffic,
+      # the only traffic where sampling draws coins at all; (ii) the BOOT-PATH
+      # RNG consumers, which are the real confound -- model_runner.py:776,
+      # Scheduler.__init__, the NEXTN/EAGLE3 draft's init_new, the DeepGEMM
+      # warmup's torch.manual_seed, the Triton autotuner's RNG and
+      # radix_cache.py:1685. Concretely: the 10-20 and 10-21 FP4 boots had
+      # DIFFERENT seeds, which is one of the reasons entry 243's A/B could not
+      # be scored cleanly. That is a comparability fix, not a perf fix.
+      # IT IS NOT UPSTREAM'S PREFERENCE: upstream deliberately randomizes
+      # (PR #43, 159cc741e4). It is independent of
+      # --enable-deterministic-inference, which uses a per-request
+      # sampling_seed instead.
+      # THE KL CAVEAT, and it is the one that bites: a pinned-seed green KL
+      # run is NOT an accuracy verdict on its own. Same seed + same
+      # accumulation order can converge to the SAME wrong answer (false
+      # convergence). Never let a pinned-seed green be the only evidence.
+      # 3. L3 CAP -- MY "~740 GB STORE" PREMISE WAS STALE; A RAISE IS FREE
+      # The reasoning I had written down was: the store is ~740 GB, so raising
+      # the cap costs ~250 GB of blocking unlinks before the server is ready.
+      # WRONG, and the correction changes the decision. Measured with
+      # `du -sb /root/hicache_store`: 199,126,318,144 B = 185.47 GiB across
+      # 139,790 files -- because the 10-21 17:42 boot's own 50G drain ALREADY
+      # deleted ~1.15M files. The evictor's constructor only runs the drain
+      # when `_total_bytes > max_size_bytes`
+      # (mem_cache/storage/file/lru_file_evictor.py:117-118, the
+      # "eviction enabled: cap=... existing=... B (N entries)" line at :124
+      # reports what it found), so:
+      #   * raising a cap is FREE at boot -- the new cap is above the existing
+      #     total, nothing is unlinked, the store keeps warming;
+      #   * only LOWERING below the current per-rank holding pays, and that is
+      #     the blocking-unlink storm (boot-time, before ready). The 17:42
+      #     boot is the one that paid it; that cost is SPENT.
+      # 4 x 150 GB fits: other tenants take 690.84 GB of the 1.8T filesystem,
+      # leaving 575.8 GB of slack ABOVE the 100 GB global MIN_FREE_SPACE floor
+      # (even 4x200 leaves 461 GB; breaking the floor needs ~4x231 GB).
+      # THE KNOB SCOPE, the thing to keep straight: MAX_SIZE is PER RANK (one
+      # LRUFileEvictor per process, each scanning only its own
+      # _<model>_<tp_rank>_<tp_size> suffix); MIN_FREE_SPACE is the only
+      # GLOBAL knob. So "50G" always meant 4 x 50G, and 150G means 4 x 150G.
+      # Steady state is the watermark, not the cap: 150 x 0.85 (EVICTION_RATIO)
+      # = 127.5 GB/rank = 510 GB aggregate => roughly 9.1-11.8 h of warm
+      # retention vs ~3.0-3.9 h at the old cap.
+      # WHAT THE NEXT BOOT SHOULD PRINT, and what to check that it did: the
+      # per-rank evictor logs ONE INFO line at the END of its constructor
+      # (lru_file_evictor.py:121-125) -- "HiCacheFile eviction enabled:
+      # cap=150000000000 B, watermark=0.85, min_free=100000000000 B,
+      # existing=<N> B (<M> entries)" -- and it should show existing= ~= that
+      # rank's ~50 GB holding, NOT 42,494,887,632 (that number is the 10-21
+      # 00:11:29 snapshot, i.e. history). Grep that line for the CAP; it is
+      # the only place the value is echoed. Two things it does NOT echo:
+      # METADATA_TTL (never logged at all -> read /proc/<newpid>/environ) and
+      # the individual unlink decisions (logger.debug at :390).
+      # THE CLAMP THAT CAN SILENTLY EAT A CAP RAISE, checked for this entry so
+      # nobody re-derives it: the constructor clamps max_size against the
+      # filesystem before use -- safe_max = fs_total - min_free_bytes, and a
+      # cap above it is reduced with the WARNING "HiCacheFile max_size exceeds
+      # filesystem capacity; clamping to ..." (:107-114). On this box fs_total =
+      # 1,966,603,517,952 B and min_free 100G, so safe_max ~= 1.87 TB PER RANK
+      # and 150G is nowhere near it -- no clamp. It fires only for absurd caps,
+      # which is the reassuring half; the other half is that the clamp is
+      # PER-PROCESS and compares ONE rank's cap against the WHOLE filesystem,
+      # so it can never see the 4x aggregate pressure. That is what
+      # min_free_bytes is for: _enforce_free_space_locked runs at boot (:192)
+      # and on every write, independent of the cap.
+      # AGGREGATE PRESSURE, measured fresh for this entry: `df -B1 /` on the
+      # /dev/md0 filesystem = 1,966,603,517,952 total, 872,542,162,944 used,
+      # 994,087,866,368 available. 4 x 150G = 600 GB of cap fits inside that
+      # with ~394 GB to spare, i.e. ~294 GB above the 100 GB floor. Judge
+      # growth with df, not with the cap.
+      # PER-RANK SEMANTICS, mechanically: _is_storage_owner is
+      # `(not is_mla_model) or tp_rank == 0`, so for this non-MLA model ALL
+      # FOUR ranks run their own evictor over their own
+      # _<model>_<tp_rank>_<tp_size> suffix -- MAX_SIZE really is 4 x 150G, and
+      # the "rank N (MLA): eviction handled by rank 0" INFO at :96-99 should
+      # NOT appear on this stack (if it does, something became MLA-shaped).
+      # TTL 300 -> 30, the reason: a stale metadata-cache POSITIVE makes set()
+      # short-circuit "already exists" and return success WITHOUT WRITING
+      # (hicache_storage.py:613-619, the "Key ... already exists. Skipped."
+      # branch is logger.debug so a missing write leaves NO INFO trace), so an
+      # external `rm` of a cache file leaves a permanently-lieing index for the
+      # TTL window. contains() re-reads TTL per lookup (383-392), so 30 s heals
+      # an rm in <=30 s instead of <=5 min. Cost: 10x the stat traffic.
+      # Upstream default is 5.0 s (environ.py:825), so 30 is still conservative.
+      # WATCH: an explicit metadata_ttl key in --hicache-storage-backend-extra-
+      # config OVERRIDES this env var (hicache_storage.py:453/:457, and the
+      # evictor's own _cfg prefers extra_config over env) -- an env edit then
+      # silently does nothing.
+      # 4. POWER -- A FINDING, NOT A CHANGE (operator action)
+      # `nvidia-smi -q -d POWER` now reports power.max_limit = 325 W on ALL
+      # FOUR cards. Both scripts still ASSERT otherwise -- 9c.sh:261-263 and
+      # 9.sh:435-437 claim GPU0/GPU1 are hard-capped at 300 W -- and those
+      # comment lines are LEFT IN PLACE (power limits are an operator's call,
+      # not a doc agent's), but they are STALE and they misdirect: they make
+      # the asymmetric, low-EV version of the experiment look like the only
+      # one available. The box is otherwise screaming for it: clocks
+      # 2095-2287 of 3090 MHz (70-74%), util 98-99%, 233-293 W against the
+      # enforced limit, clocks_throttle_reasons.active = 0x4 = SW POWER CAP,
+      # no thermal component active, HBM at 95.5% of its clock. Raising -pl to
+      # 325 W on all four is therefore the highest-EV throughput experiment
+      # found on this machine, it is reversible, and it requires no code, no
+      # rebuild and no restart to prepare. Every memory knob in this file is
+      # ranked BELOW it now.
+      # 5. THE A/B HARNESS (/root/ab_harness, not in git)
+      # (i) PER-RUN HiCache STORE ISOLATION. The hazard was SILENT, not loud:
+      # run_pending_ab.sh's L3_STORE fed ONLY the accounting, and ab_sweep.sh
+      # read ZERO of the driver's AB_DRIVER_* variables -- so an arm booted
+      # with PROD's /root/hicache_store from BASE_ENV while the harness
+      # measured prod's directory and reported those bytes as the ARM's L3
+      # numbers. New lib/l3_store.sh (242 L): ISOLATION IS THE DEFAULT, each
+      # run gets /root/ab_harness_l3/<UTC stamp>, deliberately OUTSIDE
+      # RESULTS_ROOT because --rerun-arms `cp -a`s the arm dirs; per-RUN not
+      # per-arm on purpose, so the HiCache arms (38/39/40) and the 00 anchors
+      # still see one shared cache state; compose_env_kv FORCES the resolved
+      # path into the child env, over both BASE_ENV and an arm's own ENV rule
+      # (loudly). Sharing prod is opt-in and noisy: --share-prod-l3 /
+      # --no-l3-isolate / AB_L3_ISOLATE=0 sets l3_cache_contamination_risk in
+      # meta.json. AB_L3_STORE (an explicit operator path) always wins. A disk
+      # guard REFUSES to create a harness store on a filesystem with < 150 GB
+      # free. Resolution now happens in THREE places -- prepare_run_dir,
+      # cmd_live_prepare, and the ab_sweep.sh boot (FATAL exit 1), which is
+      # what closes the --resume / --rerun-arms hole. Nothing in the harness
+      # ever deletes a store; end_of_run prints the exact command.
+      #   One REAL bug this caught: l3_resolve scraped the run record with
+      #   `sed -n 's/[[:space:]]*"store":.../'` and NO leading `.*`, so on a
+      #   COMPACT one-line JSON everything before the key survived into the
+      #   value (mode came out `{"store":"...`, store came out `{path`) --
+      #   the pretty format parsed fine, so a jq -c record would have sent
+      #   --resume to a nonsense path. Anchor `.*` on BOTH sides when scraping
+      #   JSON with sed.
+      # (ii) THE BASE-CORRUPTION REPAIR, and the guard that retires the class.
+      #   Root cause was NOT the selftest sandbox-escape family (already
+      #   closed): ab_sweep.sh:47 carried its OWN stale default
+      #   AB_BASE_SCRIPT = the FP8 9.sh, and hard-coded BASEDIR="$ABH/base",
+      #   so ~0.5 s after the driver cut base/ from 9c.sh, the engine
+      #   re-extracted it from 9.sh. Neither file was wrong alone; only the
+      #   PAIR disagreed -- which is why every new check is a CONSISTENCY
+      #   check and never a frozen literal. Repaired through the sanctioned
+      #   path only (a driver --dry-run refresh), and re-verified for this
+      #   entry from the artifacts: base/base_provenance.txt says
+      #   script=/root/run_sglang_qwenflashnext9c.sh, tokens=83, env=13,
+      #   model=nvidia/Qwen3.8-Flash-Next-NVFP4, cut=2026-10-21T23:30:41Z,
+      #   forced=0; base_args.txt is 83 lines and carries --mem-fraction-static
+      #   0.88, --max-mamba-cache-size 384, --hicache-mamba-size-gb auto and
+      #   --random-seed 20260930; base_env.sh carries MAX_SIZE=150G and
+      #   METADATA_TTL=30; l3_max_size.txt is no longer a stale 50G.
+      #   THE GUARD, the durable value: base_extract.sh:107-150 is the ONLY
+      #   writer of a base dir and now refuses (rc 1) when the dir holds
+      #   BASE_FROZEN or its recorded script differs from the one being
+      #   extracted, unless AB_BASE_FORCE=1|true|yes|on; it writes
+      #   base_provenance.txt LAST. A same-script re-cut is ALWAYS allowed, so
+      #   real runs and --plan throwaways pay nothing for it. ab_sweep.sh's
+      #   default now matches the driver's and honours AB_BASE_DIR;
+      #   run_pending_ab.sh:1433 EXPORTS both pointers to the engine;
+      #   lib/selftest_exec.sh's base check is a THREE-WAY agreement check
+      #   (args == refresh_report == provenance tokens, and provenance model
+      #   == argv --model-path) -- exactly the corruption shape, each file
+      #   individually plausible and the pair lying. Freshness is deliberately
+      #   NOT asserted: a legitimately edited prod script would go red for the
+      #   wrong reason. base_fp8_20261019/ is FROZEN with a back-filled
+      #   provenance file, so a wrong AB_BASE_SCRIPT can no longer turn the
+      #   FP8 reference into today's script either.
+      #   SELFTEST TOTALS, with the log paths so the numbers are checkable:
+      #   lib/selftest_pending.sh 945 ok / 2 fail -> 977 ok / 0 fail
+      #   (/tmp/opencode/basefix-20261021/selftest-pending-FINAL.log, "pass=977
+      #   fail=0 total=977", "ALL PENDING-A/B SELFTESTS PASS");
+      #   lib/selftest_exec.sh 14/1 -> 15 ok / 0 fail (exec-AFTER.log);
+      #   lib/selftest_analyze.py PASS. NOTHING was weakened or deleted to get
+      #   there -- the 2 remaining pending failures were section (13)'s honest
+      #   PROXIES of the exec base check, correct all along, green once base
+      #   was green. The repair also UN-SKIPPED the HiCache arms: 21-29, 33-40
+      #   and 43-52 all read `ready` now, where under the FP8 base they were
+      #   SKIPPED(needs-hicache-base).
+      #   SETTLED, because it has been asserted and contradicted inside one
+      #   day: lib/test_env_compose.sh, lib/test_dsl_matrix.sh and
+      #   lib/test_ab_meta.sh DO NOT EXIST (own `ls`). That coverage lives in
+      #   lib/selftest_pending.sh sections (24) and (25).
+      # (iii) WHAT THE DRIVER SAYS A SWEEP COSTS, quoting its own --plan
+      #   output against the repaired FP4 base: --mode smoke --arms 00,43,48
+      #   = 44 min / ~2 boots; --arms 00,43,44,45,46,48,49 = 159 min / ~10
+      #   boots; the full 41-arm manifest = 914 min (~15 h) / ~61 boots.
+      #   PREREQUISITE UNCHANGED AND NOT YET MET: prod holds all four cards,
+      #   so a real sweep needs the operator to free them (or --gpus with free
+      #   indices, or the verified-pid --allow-foreign-takeover path). Nothing
+      #   in this batch booted or signalled anything.
+      # 6. LIVE STATE, READ FROM /proc INSTEAD OF FROM PROSE
+      # This is a CORRECTION to entries 245 and 246, which both assert
+      # "HiCache/L3 is PARKED on BOTH arms" (neither script passed
+      # --enable-hierarchical-cache). That was true when written and is FALSE
+      # for the process running now. Verified by reading
+      # /proc/4058818/cmdline and /proc/4058818/environ (pid 4058818, started
+      # Wed Oct 21 17:42:20, the FP4 9c.sh arm, alive and never signalled by
+      # this batch):
+      #   ALREADY LIVE in that boot: --enable-hierarchical-cache, --hicache-size
+      #     32, --hicache-mamba-size-gb auto, write_through_selective,
+      #     io direct, storage file, prefetch policy timeout, AND BOTH device
+      #     levers from the 10-21b note -- --mem-fraction-static 0.88 and
+      #     --max-mamba-cache-size 384.
+      #   SIZING PREDICTION CONFIRMED IN PROD: max_total_num_tokens=8,012,096
+      #     at ready (predicted ~8.01M vs 7,958,336 at 0.89/480 -- the
+      #     7,488 B/token/rank model in this file was right to within ~1k
+      #     tokens), available_gpu_mem 6.18 GB at ready.
+      #   STILL RESTART-PENDING (the ONLY three): SGLANG_HICACHE_FILE_BACKEND_-
+      #     MAX_SIZE (live process still 50G), _METADATA_TTL (still 300), and
+      #     --random-seed (0 occurrences in the live argv). SGLANG_ENABLE_-
+      #     PCIE_IPC_ALLREDUCE=1 and SGLANG_FLASHINFER_MOE_FUSED_FINALIZE=1 are
+      #     live, as entry 245 predicted for that boot.
+      #   Treat entry 245's parked-L3 banners and entry 246's "BASE/ IS NOW
+      #   STALE / L3 is parked" instruction as HISTORY. Every L3 needle and
+      #   every HiCache arm is FIREABLE now -- which is precisely why the store
+      #   isolation in (i) stopped being hygiene and became load-bearing.
+
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
 ==============================================================================
@@ -5450,6 +5947,41 @@ WATCH LIST (re-evaluate before next sync)
 CAVEATS
 ==============================================================================
 
+  * CPU-BATTERY DIFFS 2026-10-21 (entry 248, measured on main at 1818e2c0fb IN
+    THE PROD VENV /root/sglang/.venv, per-file, CVD=9, PYTHONPATH=/root/sglang/
+    sglang/python -- the same method and venv as the 2026-10-20c bullet below, so
+    the numbers are directly comparable). ONE new file, NOTHING moved.
+      test_rope_cache_key.py  NEW, 29P, 7.54 s. PIN IT. A tree WITHOUT this file
+        is a tree without entry 248. Its red/green, re-measured for the record in
+        a throwaway worktree at the base commit: 21F/8P at 578c16a188, and the
+        split matters -- 15 of the 21 die on `AttributeError: module ...factory
+        has no attribute '_rope_geometry'` (white-box: they pin the NEW symbol's
+        contract and could not pass at base by construction), 6 are BEHAVIOURAL
+        reds (target/draft sharing, the 3 max-position-free branches, insertion
+        order, dead-entry discard). The 8 that are GREEN AT BASE are the
+        invariant guards, not fixes -- a dedup change that makes any of those 8
+        go RED has OVER-merged. That is the reading to teach: 29P says nothing on
+        its own; "8 green at base, still green" is the safety claim.
+      UNCHANGED AND RE-CONFIRMED: test_kernels_namespace 76P; test_qsa
+        0F/76P/140S; test_qsa_fused_kv_prepare 0F/12P/146S;
+        test/registered/unit/spec/ 335P/9S/180sub; test_nvfp4_smallm_dispatch
+        28P/66sub (entry 244's pin); test_yarn_cache_extension 18P;
+        test_hf_transformers 81P+21sub; test_hf_transformers_loading 5P+4sub.
+        cargo sglang-radix-tree NOT RE-RUN: 932P/0F stands, rust untouched (the
+        commit is 2 files, both python).
+      HARNESS SELFTESTS (not repo CI, but the number gets quoted here -- see the
+        entry-246 annotation for the full ladder): lib/selftest_pending.sh 977 ok
+        / 0 fail, lib/selftest_exec.sh 15 ok / 0 fail, lib/selftest_analyze.py
+        PASS. HISTORY: 826/841 were pass counts of earlier harness trees and
+        "899" was a TOTAL field, not a pass count.
+    THE GENERALIZATION WORTH KEEPING: a memo key that includes a CALLER-CONTEXT
+      argument (a length, a device, a mode) is a silent per-caller cache
+      multiplication, and the duplicated objects are usually bit-identical -- so
+      nothing ever looks wrong, you just pay twice. When two model copies (target
+      + draft) are built from one process-global builder, check what the KEY
+      contains versus what the CONSTRUCTOR receives. And fix the KEY, not the
+      upstream value: the rewrite that made them differ was load-bearing.
+
 
   * CPU-BATTERY DIFFS 2026-10-20c (entry 247, measured on main at 4c91151ed0 IN
     THE PROD VENV /root/sglang/.venv, per-file, CVD=9 -- the same method and the
@@ -5677,6 +6209,57 @@ CAVEATS
     stays EnvBool(False) (entry 199's opt-in A/B lever for the 2400:1
     L3 write-amp; still not measured on prod).
 
+  * BEHAVIOR WATCH -- NEXT RESTART (entries 248-249): FOUR THINGS, ONE OF WHICH
+    IS A COUPLING THAT DID NOT EXIST BEFORE.
+      - TARGET AND DRAFT NOW SHARE ONE ROPE CACHE (entry 248). They got the same
+        ANSWERS before (the tensors were bit-identical), but they now share the
+        SAME OBJECT, so anything that mutates it mutates both: the in-place bf16
+        re-cast in _match_cos_sin_cache_dtype and any growth in
+        _ensure_cos_sin_cache_length. Benign on today's config (both models are
+        bf16; a cache too SHORT for either still gets its own entry because rows
+        are in the key). The watch is for the day a per-model dtype, a different
+        rotary_dim, or a per-model cache length is introduced -- that change is
+        now a change to a shared object, and it will not announce itself as a
+        rope change. Symptom to look for: one model's rope table behaving like the
+        other's. Rollback is one commit (1818e2c0fb), revert-alone.
+      - THE SEED PIN DOES NOTHING FOR GREEDY TRAFFIC (entry 249). If a harness
+        re-run produces byte-identical numbers with and without --random-seed,
+        that is EXPECTED: greedy bypasses the RNG and the harness benches at
+        temperature 0.0. Judge the pin on temp>0/top_p<1 traffic and on the BOOT
+        PATH (draft init_new, DeepGEMM warmup, autotuner RNG), whose whole purpose
+        is that two boots become comparable. And never accept a pinned-seed green
+        KL as an accuracy verdict by itself.
+      - THE L3 STORE WILL GROW, ON PURPOSE, TO ~510 GB AGGREGATE (entry 249). Cap
+        is now 150G PER RANK with a 127.5 GB/rank watermark, up from ~3.0-3.9 h of
+        warm retention to ~9.1-11.8 h. Judge it with `df -B1 /root/hicache_store`
+        and `/proc/<pid>/environ`. What the log does and does not tell you: each
+        rank prints ONE INFO line at boot, "HiCacheFile eviction enabled:
+        cap=150000000000 B, watermark=..., min_free=..., existing=... B (N
+        entries)" (lru_file_evictor.py:121-125) -- grep THAT to confirm the cap
+        landed. METADATA_TTL is never logged at all, and per-file unlink
+        decisions are logger.debug, so "I see no eviction lines" proves nothing;
+        absence of INFO eviction chatter is the normal state. The 100 GB GLOBAL
+        MIN_FREE_SPACE is the real ceiling and the only knob that can make
+        writes start refusing; watch it as the aggregate approaches ~1.7 TB used.
+        A cap RAISE is free at boot; a LOWERING below a rank's holding is the
+        blocking-unlink storm -- do not lower it casually.
+      - 325 W IS AVAILABLE AND UNEXERCISED ON ALL FOUR CARDS (entry 249, operator
+        action, no code). The box is SW-power-capped at 70-74% of clocks at 98%
+        util with no thermal component, and both run scripts still assert a 300 W
+        ceiling on GPU0/GPU1 -- that comment is stale, so the highest-EV
+        throughput experiment on this machine is one `nvidia-smi -pl` away and
+        nothing in the repo is waiting on it.
+      - STANDING RESTART CAVEAT. The running FP4 boot (pid 4058818, 10-21
+        17:42:20) already carries HiCache ON, --hicache-mamba-size-gb auto,
+        --mem-fraction-static 0.88 and --max-mamba-cache-size 384 -- so the
+        "HiCache/L3 is PARKED" statements in entries 245/246 are HISTORY, and
+        max_total_num_tokens=8,012,096 CONFIRMS the sizing model. What is still
+        restart-pending after this batch, and nothing else: SGLANG_HICACHE_FILE_-
+        BACKEND_MAX_SIZE (live 50G), SGLANG_HICACHE_FILE_BACKEND_METADATA_TTL
+        (live 300), --random-seed (absent from the live argv), and entry 248's
+        rope dedup. All four land on the next restart the USER drives; until then
+        a boot-level claim about them is unverifiable, and re-reading the current
+        log cannot show any of them.
   * BEHAVIOR WATCH -- NEXT RESTART (entry 247): A NEW MoE BACKEND IS SELECTABLE
     AND IT IS NOT IN USE. `--moe-runner-backend flashinfer_b12x_w4a16` exists in
     the CLI choices, `auto` still resolves to flashinfer_cutlass on SM120 (pinned
