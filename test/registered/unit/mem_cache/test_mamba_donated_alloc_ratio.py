@@ -157,6 +157,8 @@ class TestMambaRatioEnvGate(unittest.TestCase):
                 req = SimpleNamespace(
                     kv=SimpleNamespace(
                         mamba_ping_pong_track_buffer=torch.tensor([0, -1]),
+                        # #45472 host mirror of the buffer (-1 entries empty).
+                        mamba_ping_pong_empty=[False, True],
                         mamba_next_track_idx=0,
                         mamba_last_track_seqlen=192,
                         kv_committed_len=255,
