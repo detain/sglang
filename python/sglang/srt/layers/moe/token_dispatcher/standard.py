@@ -115,8 +115,10 @@ def _keeps_global_expert_ids(backend: MoeRunnerBackendLike) -> bool:
     # - mxfp4 dispatcher mapping is already global
     # - hpc_ops consumes global ids together with rank_ep / num_expert_total
     # - flashinfer_megamoe routes by global expert ID inside the mega kernel
+    # - b12x_w4a16 translates global ids through its own per-call expert_map
     return (
         backend.is_flashinfer_cutlass()
+        or backend.is_flashinfer_b12x_w4a16()
         or backend.is_flashinfer_cutedsl()
         or backend.is_flashinfer_trtllm()
         or backend.is_experimental_sgl_trtllm()

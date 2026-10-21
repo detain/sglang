@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
@@ -2460,6 +2461,148 @@ def _prepare_nvfp4_smallm_workspace(
         )
 
 
+_B12X_W4A16_PREP_LOGGED = False
+
+
+def _reuse_b12x_scale_storage(
+    source: torch.Tensor, packed: torch.Tensor, *, name: str
+) -> torch.Tensor:
+    """Move a prepared scale layout into its byte-identical source storage.
+
+    flashinfer's preparer returns permuted/packed scale tensors. Their volume
+    equals the swizzled grid the layer already owns (one E4M3 byte per 16
+    weights, and NVFP4 requires the swizzle-aligned shape), so copying them back
+    over that storage keeps one set of scale bytes per layer instead of two --
+    at this model's geometry that is ~39 MB per MoE layer per rank.
+    """
+    if not source.is_contiguous():
+        raise ValueError(f"{name} source scale storage must be contiguous")
+    if source.device != packed.device:
+        raise ValueError(
+            f"{name} source and prepared scales must share a device: "
+            f"{source.device} != {packed.device}"
+        )
+    if source.nbytes != packed.nbytes:
+        raise ValueError(
+            f"{name} prepared scale layout changed storage size: "
+            f"{source.nbytes} != {packed.nbytes} bytes"
+        )
+
+    with torch.no_grad():
+        source.view(torch.uint8).reshape(-1).copy_(
+            packed.contiguous().view(torch.uint8).reshape(-1)
+        )
+    return source.view(packed.dtype).reshape(packed.shape)
+
+
+def b12x_w4a16_w13_layout(up_first: bool) -> str:
+    """The ``w13_layout`` string describing how this layer's rows are stored.
+
+    ``w13_layout`` names the ORDER THE ROWS ARRIVE IN, not the kernel's internal
+    order: "w13" means [Up, Gate] (the preparer rotates the halves), "w31" means
+    [Gate, Up]. sglang stores [Up, Gate] only where
+    ``ModelOptNvFp4FusedMoEMethod.load_up_proj_weight_first`` is true, so the
+    string has to be derived from that same predicate. Hardcoding either value
+    breaks the moment the loader's order changes, and the failure mode is a
+    silent gate/up swap inside SwiGLU.
+    """
+    from sglang.srt.layers.moe.moe_runner.flashinfer_cutlass import (
+        B12X_W4A16_W13_LAYOUT,
+        B12X_W4A16_W13_LAYOUT_UP_FIRST,
+    )
+
+    return B12X_W4A16_W13_LAYOUT_UP_FIRST if up_first else B12X_W4A16_W13_LAYOUT
+
+
+def prepare_flashinfer_b12x_w4a16_weights(layer: torch.nn.Module, *, up_first: bool):
+    """Prepare one layer's NVFP4 weights for the b12x W4A16 route, in place.
+
+    flashinfer's functional b12x API otherwise caches a second packed weight and
+    scale set per layer on first use (and refuses to allocate at all during a
+    CUDA graph capture). Its preparer can tile the FP4 weights into their own
+    byte-identical storage, so do that once here, copy the equally sized prepared
+    scale grid back over the layer's swizzled storage, and keep only the returned
+    views for the layer's lifetime.
+
+    The global scales handed in are ``g1_alphas`` / ``g2_alphas``, which for this
+    route the input-scale neutralization above has reduced to the checkpoint's
+    weight-only ``w13_weight_scale_2`` / ``w2_weight_scale_2`` (already EP-sliced
+    to the local experts). They are folded into the packed block scales here, so
+    the launch itself needs no alpha argument.
+    """
+    global _B12X_W4A16_PREP_LOGGED
+
+    for name in ("w13_blockscale_swizzled", "w2_blockscale_swizzled"):
+        if getattr(layer, name, None) is None:
+            raise RuntimeError(
+                f"b12x W4A16 preparation needs {name}: the swizzled NVFP4 block "
+                "scales are built at the end of process_weights_after_loading "
+                "and this ran before them."
+            )
+
+    from sglang.srt.layers.moe.moe_runner.flashinfer_cutlass import (
+        B12X_W4A16_SOURCE_FORMAT,
+    )
+
+    try:
+        from flashinfer.fused_moe.cute_dsl.blackwell_sm12x.moe_w4a16_prepare import (
+            prepare_w4a16_packed_weights,
+        )
+    except Exception as error:  # pragma: no cover - wheel without the preparer
+        raise RuntimeError(
+            "FlashInfer b12x W4A16 MoE needs flashinfer.fused_moe.cute_dsl."
+            "blackwell_sm12x.moe_w4a16_prepare.prepare_w4a16_packed_weights, "
+            f"which the installed flashinfer does not provide "
+            f"({type(error).__name__}: {error}). Install flashinfer >= 0.7.2 "
+            "with SM12x b12x MoE support, or use --moe-runner-backend "
+            "flashinfer_cutlass."
+        ) from error
+
+    import time
+
+    started = time.perf_counter()
+    prepared = prepare_w4a16_packed_weights(
+        layer.w13_weight,
+        layer.w13_blockscale_swizzled,
+        layer.g1_alphas,
+        layer.w2_weight,
+        layer.w2_blockscale_swizzled,
+        layer.g2_alphas,
+        activation="silu",
+        params_dtype=layer.params_dtype,
+        source_format=B12X_W4A16_SOURCE_FORMAT,
+        w13_layout=b12x_w4a16_w13_layout(up_first),
+        reuse_input_storage=True,
+    )
+
+    if prepared.w13.data_ptr() != layer.w13_weight.data_ptr():
+        raise RuntimeError("FlashInfer W13 preparation did not reuse source storage")
+    if prepared.w2.data_ptr() != layer.w2_weight.data_ptr():
+        raise RuntimeError("FlashInfer W2 preparation did not reuse source storage")
+
+    w13_scale = _reuse_b12x_scale_storage(
+        layer.w13_blockscale_swizzled, prepared.w13_scale, name="W13"
+    )
+    w2_scale = _reuse_b12x_scale_storage(
+        layer.w2_blockscale_swizzled, prepared.w2_scale, name="W2"
+    )
+    elapsed = time.perf_counter() - started
+    if not _B12X_W4A16_PREP_LOGGED:
+        _B12X_W4A16_PREP_LOGGED = True
+        # The preparer loops per expert in Python, so the first layer reports
+        # what the remaining ones will cost.
+        logger.info(
+            "FlashInfer b12x W4A16 weight preparation took %.2f s for the first "
+            "MoE layer (%d local experts, hidden %d, intermediate %d); the "
+            "route is CUDA 13 gated and repacks weights in place.",
+            elapsed,
+            int(layer.w13_weight.shape[0]),
+            int(layer.w13_weight.shape[2]) * 2,
+            int(layer.w2_weight.shape[2]) * 2,
+        )
+    return replace(prepared, w13_scale=w13_scale, w2_scale=w2_scale)
+
+
 class ModelOptNvFp4FusedMoEMethod(FusedMoEMethodBase):
     """
        MoE Method for FP4 Quantization with Blockscales and PerTensorScales
@@ -2507,6 +2650,91 @@ class ModelOptNvFp4FusedMoEMethod(FusedMoEMethodBase):
         return getattr(
             self, "_moe_runner_backend", get_moe_runner_backend()
         ).is_flashinfer_cutlass()
+
+    @property
+    def _use_flashinfer_b12x_w4a16(self) -> bool:
+        """Whether this layer runs on flashinfer's SM120 b12x W4A16 route.
+
+        Reads the backend ``create_moe_runner()`` resolved for the layer, like
+        :attr:`enable_flashinfer_cutlass_moe`. Nothing ever resolves to b12x on
+        its own: ``auto`` keeps resolving to ``flashinfer_cutlass``, so this is
+        true only when the operator named the backend.
+        """
+        from sglang.srt.layers.moe import get_moe_runner_backend
+
+        return getattr(
+            self, "_moe_runner_backend", get_moe_runner_backend()
+        ).is_flashinfer_b12x_w4a16()
+
+    def _b12x_w4a16_contract_violation(self, layer: torch.nn.Module) -> Optional[str]:
+        """Why the selected route cannot take this layer's weights, if so."""
+        if not self.quant_config.is_checkpoint_nvfp4_serialized:
+            return "requires a serialized NVFP4 checkpoint"
+        if not layer.moe_runner_config.is_gated:
+            return "supports gated (SwiGLU) experts only"
+        if layer.moe_runner_config.activation != "silu":
+            return (
+                "supports gated SiLU experts only, got activation="
+                f"{layer.moe_runner_config.activation!r}"
+            )
+        if layer.num_fused_shared_experts:
+            return "cannot fuse shared experts into its packed FP4 weights"
+        group_size = getattr(
+            getattr(self.quant_config, "nvfp4_config", None) or self.quant_config,
+            "group_size",
+            None,
+        )
+        if group_size != 16:
+            return (
+                "consumes the NVFP4 E4M3 K/16 scale grid (source_format "
+                f"'modelopt'), but this checkpoint declares group_size={group_size}"
+            )
+        if layer.w13_weight_scale.shape[-1] * 16 != layer.w13_weight.shape[2] * 2:
+            return (
+                "w13 block scales do not match the K/16 grid: "
+                f"{tuple(layer.w13_weight_scale.shape)} for packed w13 "
+                f"{tuple(layer.w13_weight.shape)}"
+            )
+        if layer.w2_weight_scale.shape[-1] * 16 != layer.w2_weight.shape[2] * 2:
+            return (
+                "w2 block scales do not match the K/16 grid: "
+                f"{tuple(layer.w2_weight_scale.shape)} for packed w2 "
+                f"{tuple(layer.w2_weight.shape)}"
+            )
+        return None
+
+    def b12x_w4a16_warm_payload(self, layer: torch.nn.Module):
+        """(quant_info, runner_config) for the CUDA-graph prewarm.
+
+        The same payload :meth:`apply` builds per forward, exposed so the model
+        hook can drive the real launch on dummy activations. Returns
+        ``(None, None)`` when the route is not selected or the layer was never
+        prepared.
+        """
+        if not self._use_flashinfer_b12x_w4a16:
+            return None, None
+        prepared = getattr(layer, "_flashinfer_b12x_w4a16_prepared_weights", None)
+        if prepared is None:
+            return None, None
+        from sglang.srt.layers.moe.moe_runner.flashinfer_cutlass import (
+            FlashInferCutlassMoeQuantInfo,
+        )
+
+        quant_info = FlashInferCutlassMoeQuantInfo(
+            quant_type="w4a16_b12x",
+            w13_weight=layer.w13_weight,
+            w2_weight=layer.w2_weight,
+            output_dtype=torch.bfloat16,
+            quant_scales=[
+                prepared.w13_scale,
+                prepared.w13_global_scale,
+                prepared.w2_scale,
+                prepared.w2_global_scale,
+            ],
+            apply_routed_scaling_factor=False,
+            prepared_weights=prepared,
+        )
+        return quant_info, self.moe_runner_config
 
     @property
     def enable_flashinfer_cutedsl_moe(self) -> bool:
@@ -2623,6 +2851,7 @@ class ModelOptNvFp4FusedMoEMethod(FusedMoEMethodBase):
         # during construction. TRTLLM and MegaMoE also defer their layouts.
         defer_blockscale_swizzle = (
             self.enable_flashinfer_trtllm_moe
+            or self._use_flashinfer_b12x_w4a16
             or get_moe_runner_backend().is_flashinfer_megamoe()
             or (
                 self.quant_config.is_checkpoint_nvfp4_serialized
@@ -2882,7 +3111,15 @@ class ModelOptNvFp4FusedMoEMethod(FusedMoEMethodBase):
             self._is_cutedsl_v2_standard
             and envs.SGLANG_FLASHINFER_CUTEDSL_NVFP4_W4A16.get()
         )
-        if self.quant_config.use_per_token_activation or use_cutedsl_w4a16:
+        if (
+            self.quant_config.use_per_token_activation
+            or use_cutedsl_w4a16
+            # b12x W4A16: the activations reach the kernel in BF16, so there is
+            # no activation quantization step for the checkpoint's calibrated
+            # input scale to describe. Folding it into g1_alphas/g2_alphas would
+            # multiply it in a second time on top of the raw BF16 activations.
+            or self._use_flashinfer_b12x_w4a16
+        ):
             # FlashInfer computes activation scales dynamically per token, so
             # the static checkpoint activation scale is intentionally neutral.
             # CuTe DSL W4A16 keeps activations in BF16, so its GEMM alphas must
@@ -2897,6 +3134,15 @@ class ModelOptNvFp4FusedMoEMethod(FusedMoEMethodBase):
             w13_input_scale,
             layer.moe_runner_config.is_gated,
         )
+        if self._use_flashinfer_b12x_w4a16 and not torch.equal(g1_alphas, g1_alphas_up):
+            # b12x (like CUTLASS beside it) takes a single GEMM1 alpha for the
+            # fused w13, so a checkpoint with distinct gate/up global scales
+            # would silently apply the gate scale to the up half.
+            raise ValueError(
+                "FlashInfer b12x W4A16 requires shared gate/up GEMM1 weight "
+                "scales; this checkpoint has distinct w13 gate and up global "
+                "scales, which the single-alpha route cannot represent."
+            )
         copy_or_rebind_param(layer, "g1_alphas", g1_alphas)
         copy_or_rebind_param(layer, "g1_alphas_up", g1_alphas_up)
         copy_or_rebind_param(
@@ -2964,7 +3210,8 @@ class ModelOptNvFp4FusedMoEMethod(FusedMoEMethodBase):
 
         # TODO: for flashinfer always do MOE_NVFP4_DISPATCH
         use_dispatch_fp4 = (
-            not self.quant_config.use_per_token_activation
+            not self._use_flashinfer_b12x_w4a16
+            and not self.quant_config.use_per_token_activation
             and not use_cutedsl_w4a16
             and (
                 use_nvfp4_dispatch or should_use_flashinfer_cutlass_moe_fp4_allgather()
@@ -3161,6 +3408,24 @@ class ModelOptNvFp4FusedMoEMethod(FusedMoEMethodBase):
                 if layer._cutedsl_wrapper is not None:
                     refresh_cutedsl_standard_scales_for_weight_update(layer)
 
+        if self._use_flashinfer_b12x_w4a16:
+            reason = self._b12x_w4a16_contract_violation(layer)
+            if reason is not None:
+                raise ValueError(
+                    f"FlashInfer b12x W4A16 MoE {reason}; use "
+                    "--moe-runner-backend flashinfer_cutlass for this checkpoint."
+                )
+            # Deliberately after the *_blockscale_swizzled rebuild above (the
+            # preparer consumes the swizzled K/16 grid) and last in the method:
+            # the repack rewrites this layer's weight bytes in place, so the
+            # tensors end up in the b12x layout and only the b12x route can read
+            # them. That is also why the backend has to be chosen at boot.
+            layer._flashinfer_b12x_w4a16_prepared_weights = (
+                prepare_flashinfer_b12x_w4a16_weights(
+                    layer, up_first=self.load_up_proj_weight_first
+                )
+            )
+
         hidden_size = layer.w13_weight.shape[2] * 2
         intermediate_size = layer.w2_weight.shape[2] * 2
         top_k = layer.moe_runner_config.top_k
@@ -3247,6 +3512,11 @@ class ModelOptNvFp4FusedMoEMethod(FusedMoEMethodBase):
             layer._cutedsl_wrapper = None
 
         if moe_runner_backend.is_flashinfer_cutlass():
+            import sglang.srt.layers.moe.moe_runner.flashinfer_cutlass  # noqa: F401
+
+        if moe_runner_backend.is_flashinfer_b12x_w4a16():
+            # Registers the b12x fused func; MoeRunner re-checks the hardware
+            # gate when it builds the runner.
             import sglang.srt.layers.moe.moe_runner.flashinfer_cutlass  # noqa: F401
 
         if moe_runner_backend.is_cutlass():
@@ -3429,6 +3699,23 @@ class ModelOptNvFp4FusedMoEMethod(FusedMoEMethodBase):
                 ),
                 quant_mode=quant_mode,
             )
+            return self.runner.run(dispatch_output, quant_info)
+
+        if moe_runner_backend.is_flashinfer_b12x_w4a16():
+            from sglang.srt.layers.moe.moe_runner.flashinfer_cutlass import (
+                FlashInferCutlassMoeQuantInfo,
+            )
+
+            assert not self.moe_runner_config.apply_router_weight_on_input, (
+                "apply_router_weight_on_input is not supported for FlashInfer"
+            )
+            quant_info, _ = self.b12x_w4a16_warm_payload(layer)
+            if quant_info is None:
+                raise RuntimeError(
+                    "FlashInfer b12x W4A16 MoE reached forward() without "
+                    "prepared weights; process_weights_after_loading did not run "
+                    "the b12x preparation for this layer."
+                )
             return self.runner.run(dispatch_output, quant_info)
 
         if moe_runner_backend.is_flashinfer_cutlass():

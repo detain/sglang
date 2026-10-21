@@ -142,6 +142,7 @@ MOE_RUNNER_BACKEND_CHOICES = [
     "experimental_sgl_trtllm",
     "flashinfer_trtllm_routed",
     "flashinfer_cutlass",
+    "flashinfer_b12x_w4a16",  # SM120 b12x FP4-weights/BF16-activations MoE; CUDA 13+ only, opt-in
     "flashinfer_mxfp4",
     "flashinfer_cutedsl",
     "flashinfer_megamoe",

@@ -146,6 +146,9 @@ class _MoeRunnerBackendPredicates:
     def is_flashinfer_cutlass(self):
         return self.value == MoeRunnerBackend.FLASHINFER_CUTLASS.value
 
+    def is_flashinfer_b12x_w4a16(self):
+        return self.value == MoeRunnerBackend.FLASHINFER_B12X_W4A16.value
+
     def is_flashinfer_cutedsl(self):
         return self.value == MoeRunnerBackend.FLASHINFER_CUTEDSL.value
 
@@ -190,6 +193,10 @@ class MoeRunnerBackend(_MoeRunnerBackendPredicates, Enum):
     EXPERIMENTAL_SGL_TRTLLM = "experimental_sgl_trtllm"
     FLASHINFER_TRTLLM_ROUTED = "flashinfer_trtllm_routed"
     FLASHINFER_CUTLASS = "flashinfer_cutlass"
+    # SM120-native FlashInfer b12x fused MoE with FP4 weights and BF16
+    # activations (W4A16). Opt-in only: never resolved from `auto`, because the
+    # route needs CUDA 13 and the SM12x b12x kernels in flashinfer.
+    FLASHINFER_B12X_W4A16 = "flashinfer_b12x_w4a16"
     FLASHINFER_MXFP4 = "flashinfer_mxfp4"
     FLASHINFER_CUTEDSL = "flashinfer_cutedsl"
     FLASHINFER_MEGAMOE = "flashinfer_megamoe"

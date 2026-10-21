@@ -3553,6 +3553,19 @@ class Qwen4ExpForConditionalGeneration(Qwen3VLForConditionalGeneration):
         if precompile_splitk_tactics():
             logger.info("Precompiled BF16 split-K GEMM tactics for Qwen4-Exp")
 
+        # b12x W4A16 (--moe-runner-backend flashinfer_b12x_w4a16) builds its
+        # packed route tables and its workspace lazily, and that workspace
+        # refuses to allocate inside a CUDA graph capture. This is the only hook
+        # that runs after weight preparation and before the KV pools and graphs
+        # are built, so warm the captured decode shapes here. No-op (no device
+        # work, no flashinfer import) for every other MoE backend.
+        from sglang.srt.layers.moe.moe_runner.flashinfer_cutlass import (
+            prewarm_flashinfer_b12x_w4a16,
+        )
+
+        if prewarm_flashinfer_b12x_w4a16(self):
+            logger.info("Precompiled b12x W4A16 MoE routes for Qwen4-Exp")
+
     @classmethod
     def get_model_config_for_expert_location(cls, config):
         text_config = getattr(config, "text_config", config)

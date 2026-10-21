@@ -1559,6 +1559,15 @@ def _moe_runner_fusion_disable(view: Any) -> dict:
             "FlashInfer TRTLLM routed MoE is enabled. --disable-shared-experts-fusion is automatically set."
         )
         return {"disable_shared_experts_fusion": True}
+    if runner == "flashinfer_b12x_w4a16":
+        # The b12x W4A16 route runs on the rank-local packed FP4 tensors plus an
+        # explicit global-id -> local-id expert map, so a shared expert cannot
+        # ride in those buffers (and would break the ep_size * num_local ==
+        # num_experts map arithmetic).
+        logger.warning(
+            "FlashInfer b12x W4A16 MoE is enabled. --disable-shared-experts-fusion is automatically set."
+        )
+        return {"disable_shared_experts_fusion": True}
     return {}
 
 

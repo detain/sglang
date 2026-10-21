@@ -40,6 +40,61 @@ from sglang.srt.utils.common import (
 logger = logging.getLogger(__name__)
 
 
+def _validate_flashinfer_b12x_w4a16(view: Any, cfg: Any) -> None:
+    """Reject a b12x W4A16 launch that cannot run, before any GPU work.
+
+    The route is an explicit opt-in, so a boot that names it and cannot honour
+    it stops here rather than falling back: silently running CUTLASS would make
+    an A/B arm measure the wrong kernel. Config errors are checked first
+    (device-independent), the hardware/toolkit gate last, so a misconfigured
+    launch is not reported as a CUDA problem.
+    """
+    assert view.quantization in [
+        "modelopt_fp4",
+        "modelopt_mixed",
+    ], (
+        f"Invalid quantization '{view.quantization}'. \nFlashInfer b12x "
+        "W4A16 MoE supports only NVFP4-quantized experts: 'modelopt_fp4' "
+        "or 'modelopt_mixed'."
+    )
+    assert view.moe_a2a_backend == "none", (
+        "flashinfer_b12x_w4a16 supports only --moe-a2a-backend none: the "
+        "route takes global expert ids plus its own expert map and has no "
+        "dispatch/combine kernels."
+    )
+    assert view.ep_size in [1, cfg.tp_size], (
+        "The expert parallel size must be 1 or the same as the tensor parallel size"
+    )
+    if getattr(view, "moe_dp_size", 1) not in (None, 0, 1):
+        raise ValueError(
+            "flashinfer_b12x_w4a16 does not support expert data parallelism "
+            f"(moe_dp_size={view.moe_dp_size}); use --moe-a2a-backend none "
+            "with EP or TP."
+        )
+    if getattr(view, "lora_paths", None) or getattr(view, "enable_lora", False):
+        raise ValueError(
+            "flashinfer_b12x_w4a16 repacks expert weights in place for its "
+            "kernel layout and has no validated LoRA path; use "
+            "--moe-runner-backend flashinfer_cutlass with LoRA."
+        )
+    if getattr(view, "enable_flashinfer_moe_autotune", False):
+        logger.warning(
+            "FlashInfer MoE autotune does not cover the b12x W4A16 route; "
+            "the CUTLASS autotune cache will not apply to it."
+        )
+    from sglang.srt.layers.moe.moe_runner.flashinfer_cutlass import (
+        flashinfer_b12x_w4a16_unavailable_reason,
+    )
+
+    reason = flashinfer_b12x_w4a16_unavailable_reason()
+    if reason is not None:
+        raise ValueError(
+            f"--moe-runner-backend flashinfer_b12x_w4a16 {reason} "
+            "(it is an explicit opt-in backend, so startup stops here "
+            "instead of booting a route that cannot run)."
+        )
+
+
 def handle_moe_kernel_config(server_args: Any):
     # The quantization-driven runner resolutions moved to the pipeline
     # (arg_groups/overrides.py: _moe_runner_backend_quant_constraints);
@@ -63,6 +118,9 @@ def handle_moe_kernel_config(server_args: Any):
             1,
             cfg.tp_size,
         ], "The expert parallel size must be 1 or the same as the tensor parallel size"
+
+    if view.moe_runner_backend == "flashinfer_b12x_w4a16":
+        _validate_flashinfer_b12x_w4a16(view, cfg)
 
     if view.moe_runner_backend == "flashinfer_cutedsl":
         # modelopt_mixed with non-NVFP4 MoE layers is rejected at load time.

@@ -1106,6 +1106,11 @@ class Envs:
     # so it is opt-in. Only meaningful on SM120 (not SM121) with
     # --moe-runner-backend flashinfer_cutlass.
     SGLANG_NVFP4_MOE_SM120_MAX_EP = EnvInt(1)
+    # b12x W4A16 MoE: also prewarm the workspace + route kernels for prefill
+    # chunks this large. 0 (default) warms only the captured decode shapes and
+    # lets the first big prefill allocate lazily; the W4A16 intermediates scale
+    # as tokens * top_k * intermediate_size and the cache never releases them.
+    SGLANG_B12X_W4A16_PREWARM_PREFILL_TOKENS = EnvInt(0)
     SGLANG_NVFP4_CKPT_FP8_GEMM_IN_ATTN = EnvBool(False)
     SGLANG_NVFP4_CKPT_FP8_NEXTN_MOE = EnvBool(False)
     # GLM NextN (MTP): cast the draft layer's bf16 fused MoE to per-channel FP8

@@ -2989,6 +2989,7 @@ class Fp8MoEMethod(FusedMoEMethodBase):
         if (
             moe_runner_backend.is_flashinfer_cutlass()
             or moe_runner_backend.is_flashinfer_cutedsl()
+            or moe_runner_backend.is_flashinfer_b12x_w4a16()
         ):
             # Neither runner has an fp8 MoE path; they get pinned globally for
             # NVFP4 experts on sm120, so run this layer's fp8 experts on triton.
@@ -3019,6 +3020,7 @@ class Fp8MoEMethod(FusedMoEMethodBase):
         if (
             configured_backend.is_flashinfer_cutlass()
             or configured_backend.is_flashinfer_cutedsl()
+            or configured_backend.is_flashinfer_b12x_w4a16()
         ):
             logger.info(
                 "Fp8MoEMethod has no %s path; using triton for its fp8 experts.",

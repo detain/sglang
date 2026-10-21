@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 import torch
 
@@ -30,6 +30,10 @@ from sglang.srt.layers.moe.moe_runner.base import (
     MoeRunnerConfig,
     register_fused_func,
 )
+from sglang.srt.layers.moe.utils import (
+    get_moe_a2a_backend,
+    get_moe_runner_backend,
+)
 from sglang.srt.model_executor.runner_backend_utils.breakable_cuda_graph.breakable_cuda_graph import (
     _is_stream_capturing,
 )
@@ -37,6 +41,7 @@ from sglang.srt.runtime_context import (
     get_disagg,
     get_parallel,
     get_schedule,
+    get_server_args,
     max_prefill_buffer_tokens,
 )
 from sglang.srt.utils import is_flashinfer_available
@@ -64,6 +69,12 @@ class FlashInferCutlassMoeQuantInfo(MoeQuantInfo):
       - ``"bf16"``: unquantized weights, BF16/FP16 input, no quant scales.
       - ``"fp8"``: FP8 weights, FP8-quantized input, per-tensor scales.
       - ``"fp4"``: NVFP4 packed weights and optional NVFP4 packed input.
+      - ``"w4a16_b12x"``: SM120 b12x route -- packed NVFP4 weights with the
+        E4M3 K/16 scale grid and BF16 activations (nothing is quantized on the
+        activation side). ``quant_scales`` carries the four *prepared* tensors
+        (block scales + weight global scales) and ``prepared_weights`` carries
+        the object flashinfer's preparer returned at load time, which is what the
+        launch actually consumes.
     """
 
     quant_type: str
@@ -81,6 +92,300 @@ class FlashInferCutlassMoeQuantInfo(MoeQuantInfo):
     smallm_global_routed_experts: Optional[int] = None
     smallm_local_routed_experts: Optional[int] = None
     smallm_local_expert_start: Optional[int] = None
+    # flashinfer W4A16PackedWeights, built once per layer at weight-load time.
+    # The b12x launch ignores the weight/scale/alpha arguments when this is set:
+    # the prepared object already embeds the repacked weights, the permuted
+    # scales and the folded weight-only global scale.
+    prepared_weights: Optional[Any] = None
+
+
+B12X_W4A16_MIN_CUDA_MAJOR = 13
+# The route's contract, both derived from the installed flashinfer 0.7.2 wheel:
+# ``source_format`` is a key of blackwell_sm12x/moe_w4a16_prepare.py
+# ``_SOURCE_FORMATS`` -- "modelopt" is the plain ModelOpt NVFP4 export (E2M1
+# weights with the normal K/16 E4M3 scale grid in swizzled storage). The
+# "w4a16" preparer never folds activation input scales, so this is the correct
+# spelling for a ModelOpt A4 checkpoint whose activations stay BF16.
+B12X_W4A16_SOURCE_FORMAT = "modelopt"
+# ``w13_layout`` names the ORDER THE ROWS ARRIVE IN, not the kernel's internal
+# order: "w13" == [Up, Gate] (the preparer rotates the halves), "w31" ==
+# [Gate, Up]. sglang only stores [Up, Gate] when
+# ``ModelOptNvFp4FusedMoEMethod.load_up_proj_weight_first`` is true, which is
+# keyed on the flashinfer_cutlass / cutedsl-v2 runners -- so this route, which
+# is neither, gets the default [Gate, Up] and must say "w31". Passing "w13"
+# would rotate a gate-first tensor and swap gate/up inside SwiGLU.
+B12X_W4A16_W13_LAYOUT = "w31"
+B12X_W4A16_W13_LAYOUT_UP_FIRST = "w13"
+
+
+def b12x_w4a16_launch():
+    """Import ``flashinfer.fused_moe..launch_sm120_moe``, or raise a named error."""
+    try:
+        from flashinfer.fused_moe.cute_dsl.blackwell_sm12x.moe_dispatch import (
+            launch_sm120_moe,
+        )
+    except Exception as error:  # ImportError, or a wheel built without SM12x
+        raise RuntimeError(
+            "FlashInfer b12x W4A16 MoE needs "
+            "flashinfer.fused_moe.cute_dsl.blackwell_sm12x.moe_dispatch."
+            "launch_sm120_moe, which the installed flashinfer does not provide "
+            f"({type(error).__name__}: {error}). Install flashinfer >= 0.7.2 "
+            "with SM12x b12x MoE support."
+        ) from error
+    return launch_sm120_moe
+
+
+def _b12x_w4a16_cuda_major() -> Optional[int]:
+    """CUDA major version flashinfer's JIT gate will see, or None if unknown.
+
+    Deliberately asks flashinfer rather than ``torch.version.cuda``: the wheel's
+    b12x gate calls ``flashinfer.jit.cpp_ext.get_cuda_version()``, which shells
+    out to ``$CUDA_HOME/bin/nvcc`` and only falls back to torch's build version
+    when nvcc is missing. A torch cu130 runtime with a CUDA 12.9 toolkit on
+    ``CUDA_HOME`` therefore fails the wheel's gate, and this has to agree with
+    it or the check would be fiction.
+    """
+    try:
+        from flashinfer.jit.cpp_ext import get_cuda_version
+
+        return int(get_cuda_version().major)
+    except Exception:
+        return None
+
+
+def flashinfer_b12x_w4a16_unavailable_reason() -> Optional[str]:
+    """Why the b12x W4A16 MoE route cannot run here, or ``None`` when it can.
+
+    Checked at backend selection (server-args resolution and again in
+    ``MoeRunner``) so an unsupported configuration fails with the fix in the
+    message instead of deep inside a kernel launch or, worse, a CUDA graph
+    capture. Never allocates device memory.
+    """
+    if not torch.cuda.is_available():
+        return "requires a CUDA device (no GPU is visible to this process)"
+    try:
+        capability = torch.cuda.get_device_capability()
+    except Exception as error:  # pragma: no cover - driver query failure
+        return f"could not read the CUDA device capability ({error})"
+    if capability != (12, 0):
+        return (
+            "is implemented only for SM120 (compute capability 12.0, e.g. RTX "
+            f"PRO 6000 Blackwell); this device is sm{capability[0]}{capability[1]}"
+        )
+    try:
+        b12x_w4a16_launch()
+    except RuntimeError as error:
+        return f"cannot be imported: {error}"
+    major = _b12x_w4a16_cuda_major()
+    if major is not None and major < B12X_W4A16_MIN_CUDA_MAJOR:
+        return (
+            f"requires CUDA {B12X_W4A16_MIN_CUDA_MAJOR} or later, but flashinfer's "
+            f"JIT gate sees CUDA {major}. flashinfer gates every b12x/SM12x "
+            "kernel on the version reported by `$CUDA_HOME/bin/nvcc`, not on the "
+            "CUDA the torch build links, so a cu130 torch with a CUDA 12.9 "
+            "toolkit prefix still fails. Fix: export `CUDA_HOME` (and put "
+            "`$CUDA_HOME/bin` first on PATH) to a CUDA "
+            f"{B12X_W4A16_MIN_CUDA_MAJOR}.x toolkit before launching -- expect a "
+            "one-time flashinfer re-JIT for the new toolkit (~100 MB of cached "
+            "objects, several minutes) and rebuild any flashinfer autotune cache "
+            "captured under the old one. Or use "
+            "--moe-runner-backend flashinfer_cutlass."
+        )
+    return None
+
+
+class _B12xWarmTopkOutput:
+    """The two fields of a ``TopKOutput`` the b12x warm launches read."""
+
+    __slots__ = ("topk_ids", "topk_weights")
+
+    def __init__(self, *, topk_ids: torch.Tensor, topk_weights: torch.Tensor):
+        self.topk_ids = topk_ids
+        self.topk_weights = topk_weights
+
+
+def b12x_w4a16_token_capacities(max_tokens: int) -> list[int]:
+    """Power-of-two token ladder up to ``max_tokens``, plus ``max_tokens`` itself.
+
+    The packed route table is built for ``route_pack_token_capacity(tokens)``,
+    which rounds the token count up to the next power of two, so this ladder
+    enumerates the distinct specializations the route can be asked for.
+    """
+    max_tokens = max(1, int(max_tokens))
+    capacities = []
+    capacity = 1
+    while capacity < max_tokens:
+        capacities.append(capacity)
+        capacity *= 2
+    capacities.append(max_tokens)
+    return capacities
+
+
+def _b12x_warm_token_capacity() -> int:
+    """Largest MoE token count a captured decode/verify CUDA graph can carry."""
+    server_args = get_server_args()
+    if server_args is None:  # pragma: no cover - only outside a server
+        return 0
+
+    tokens_per_request = 1
+    if server_args.speculative_algorithm:
+        # A verify batch carries one drafted tree per request: `num_draft_tokens`
+        # rows for a chain (top_k 1), 1 + num_steps * top_k for a wider tree.
+        top_k = max(1, int(server_args.speculative_eagle_topk or 1))
+        steps = int(server_args.speculative_num_steps or 0)
+        draft = int(server_args.speculative_num_draft_tokens or 0)
+        tokens_per_request = max(1, draft, 1 + steps * top_k)
+
+    configs = getattr(server_args, "cuda_graph_config", None)
+    decode_bs = getattr(getattr(configs, "decode", None), "max_bs", None)
+    if not decode_bs:
+        decode_bs = server_args.cuda_graph_max_bs or 0
+    decode_bs = int(decode_bs)
+    if server_args.max_running_requests:
+        decode_bs = (
+            min(decode_bs, int(server_args.max_running_requests))
+            if decode_bs
+            else int(server_args.max_running_requests)
+        )
+    return decode_bs * tokens_per_request
+
+
+@torch.inference_mode()
+def precompile_flashinfer_b12x_w4a16_routes(
+    *,
+    payload: FlashInferCutlassMoeQuantInfo,
+    runner_config: MoeRunnerConfig,
+    token_capacities: list[int],
+) -> int:
+    """Launch the b12x W4A16 route once per token capacity, largest first.
+
+    The route has two lazy, shape-specialized steps that a CUDA graph capture
+    must never meet for the first time:
+
+    1. the packed route table and its kernels, which specialize on the
+       power-of-two token capacity and on the routed block size that capacity
+       selects (``select_route_block_size_m``), and
+    2. the W4A16 workspace, whose cache raises ``W4A16 workspace is not
+       initialized for CUDA graph capture`` if it has to allocate while a graph
+       is being captured.
+
+    The workspace cache keys on geometry only (experts, hidden, intermediate,
+    top-k, device) and keeps the largest capacity it has seen, reusing it for
+    every smaller call, so walking the ladder in descending order means one
+    allocation covers all of it.
+
+    Each warm runs the real fused func on zero activations, so it exercises the
+    same expert map, output allocation and launch arguments as serving. Returns
+    the number of capacities warmed; the first failure stops the ladder and is
+    logged rather than raised -- a prewarm must not fail a boot, and the launch
+    that needs the shape reports its own error.
+    """
+    from sglang.srt.layers.moe.token_dispatcher.standard import StandardDispatchOutput
+
+    # Built positionally: StandardDispatchOutput is a NamedTuple whose
+    # hidden_states_scale field is required (it has no default), so a
+    # keyword-only construction of the two fields the route reads would
+    # TypeError -- caught here rather than in a log line nobody reads.
+    if payload.prepared_weights is None or not runner_config.top_k:
+        return 0
+    hidden_size = int(payload.w13_weight.shape[2]) * 2
+    device = payload.w13_weight.device
+    top_k = int(runner_config.top_k)
+    warmed = 0
+    for tokens in sorted(
+        {int(t) for t in token_capacities if int(t) > 0}, reverse=True
+    ):
+        try:
+            _run_flashinfer_b12x_w4a16(
+                dispatch_output=StandardDispatchOutput(
+                    torch.zeros(
+                        tokens, hidden_size, dtype=torch.bfloat16, device=device
+                    ),
+                    None,
+                    _B12xWarmTopkOutput(
+                        topk_ids=torch.zeros(
+                            (tokens, top_k), dtype=torch.int64, device=device
+                        ),
+                        topk_weights=torch.zeros(
+                            (tokens, top_k), dtype=torch.float32, device=device
+                        ),
+                    ),
+                ),
+                quant_info=payload,
+                runner_config=runner_config,
+                output=None,
+                enable_alltoall=False,
+            )
+        except Exception as error:
+            detail = str(error).strip().splitlines()
+            logger.warning(
+                "b12x W4A16 prewarm stopped at %d tokens (%s: %s)",
+                tokens,
+                type(error).__name__,
+                detail[0] if detail else "no detail",
+            )
+            break
+        warmed += 1
+    if warmed:
+        logger.info(
+            "b12x W4A16 prewarm: warmed %d token capacities (hidden %d, top_k %d, "
+            "%d local experts, ep_size %d) on %s",
+            warmed,
+            hidden_size,
+            top_k,
+            int(payload.w13_weight.shape[0]),
+            runner_config.moe_ep_size,
+            device,
+        )
+    return warmed
+
+
+def prewarm_flashinfer_b12x_w4a16(model: torch.nn.Module) -> int:
+    """Model-hook entry point: warm the b12x route for the captured shapes.
+
+    Called from a model's ``precompile_kernels_after_loading``, i.e. after the
+    weights (and so the one-time in-place preparation) are in place and before
+    the KV pools are committed and CUDA graphs captured -- the only window with
+    free device memory to allocate the workspace in. Every MoE layer shares one
+    geometry, so warming through the first prepared layer fills the cache for
+    all of them.
+
+    Prefill is not capture-constrained, so its workspace is left to allocate
+    lazily on the first large chunk unless the operator asks for it up front with
+    ``SGLANG_B12X_W4A16_PREWARM_PREFILL_TOKENS``: the intermediate caches scale as
+    tokens * top_k * intermediate_size, so a 16K-token warm costs hundreds of MB
+    per rank and is never released.
+    """
+    # Cheap first, and before the gate: the reason check imports flashinfer
+    # and shells out to nvcc, so it must not run on a boot that never selected
+    # this backend.
+    if not get_moe_runner_backend().is_flashinfer_b12x_w4a16():
+        return 0
+    if flashinfer_b12x_w4a16_unavailable_reason() is not None:
+        return 0
+
+    max_tokens = _b12x_warm_token_capacity()
+    prefill_tokens = int(envs.SGLANG_B12X_W4A16_PREWARM_PREFILL_TOKENS.get())
+    if prefill_tokens > 0:
+        max_tokens = max(max_tokens, prefill_tokens)
+    if max_tokens <= 0:
+        return 0
+
+    for module in model.modules():
+        build_payload = getattr(
+            getattr(module, "quant_method", None), "b12x_w4a16_warm_payload", None
+        )
+        if build_payload is None:
+            continue
+        payload, runner_config = build_payload(module)
+        if payload is None:
+            continue
+        return precompile_flashinfer_b12x_w4a16_routes(
+            payload=payload,
+            runner_config=runner_config,
+            token_capacities=b12x_w4a16_token_capacities(max_tokens),
+        )
+    return 0
 
 
 def materialize_swiglu_params_for_cutlass(
@@ -429,6 +734,18 @@ def _run_flashinfer_cutlass(
     output: Optional[torch.Tensor] = None,
     enable_alltoall: bool = False,
 ) -> torch.Tensor:
+    if quant_info.quant_type == "w4a16_b12x":
+        # The b12x route is its own kernel family (not CUTLASS grouped FP4) and
+        # reads none of the CUTLASS input preparation, so branch before any of it
+        # runs rather than threading a fourth quant_type through below.
+        return _run_flashinfer_b12x_w4a16(
+            dispatch_output=dispatch_output,
+            quant_info=quant_info,
+            runner_config=runner_config,
+            output=output,
+            enable_alltoall=enable_alltoall,
+        )
+
     flashinfer_cutlass_fused_moe, _ = _flashinfer_cutlass_fused_moe()
 
     dispatch_output = _prescale_router_weight_on_input(dispatch_output, runner_config)
@@ -625,6 +942,175 @@ def fused_experts_flashinfer_to_flashinfer_cutlass(
         enable_alltoall=True,
     )
     return FlashinferCombineInput(hidden_states=output)
+
+
+def _b12x_w4a16_expert_map(
+    *, num_experts: int, num_local_experts: int, ep_rank: int, ep_size: int, device
+) -> Optional[torch.Tensor]:
+    """Global-id -> local-id map for this EP rank, or None when there is no EP.
+
+    flashinfer translates the (global) top-k ids itself when given a map and
+    silently falls back to a rank-0 prefix map otherwise, so an EP caller must
+    always pass its own. sglang without EPLB gives rank r the contiguous chunk
+    ``[r * num_local_experts, (r + 1) * num_local_experts)``, which is what this
+    encodes; the MoE layer then all-reduces the per-rank partials.
+
+    The map relies on the chunk covering the whole expert range: a non-divisible
+    split would clip the slice (torch clamps), silently leaving trailing experts
+    unroutable, so that is asserted rather than assumed.
+    ``flashinfer.experimental.b12x.moe.ep_moe.prepare_ep_expert_map`` validates
+    exactly this shape (int32, contiguous, rank-1, every local id used once), but
+    for the sibling ``b12x.*`` package that ``launch_sm120_moe`` does not consume,
+    so the equivalent construction is spelled out here.
+    """
+    if ep_size <= 1:
+        return None
+    assert ep_size * num_local_experts == num_experts, (
+        f"b12x W4A16 expects a divisible EP split: {ep_size} * "
+        f"{num_local_experts} != {num_experts}"
+    )
+    expert_map = torch.full((num_experts,), -1, dtype=torch.int32, device=device)
+    local_start = ep_rank * num_local_experts
+    expert_map[local_start : local_start + num_local_experts] = torch.arange(
+        num_local_experts, dtype=torch.int32, device=device
+    )
+    return expert_map
+
+
+def _run_flashinfer_b12x_w4a16(
+    *,
+    dispatch_output,
+    quant_info: FlashInferCutlassMoeQuantInfo,
+    runner_config: MoeRunnerConfig,
+    output: Optional[torch.Tensor],
+    enable_alltoall: bool,
+) -> torch.Tensor:
+    """FP4 weights, BF16 activations on flashinfer's SM120 b12x kernels.
+
+    Because the activations are never quantized, no activation scale may reach
+    the kernel: the global scales the load-time preparation folded into the
+    packed scale grid are weight-only (``w13_weight_scale_2`` /
+    ``w2_weight_scale_2``), which is why ``ModelOptNvFp4FusedMoEMethod``
+    neutralizes the checkpoint's input scales for this route. Passing the usual
+    ``g1_alphas = input_scale * weight_scale_2`` product would apply the
+    activation scale twice and silently rescale every expert output.
+    """
+    if enable_alltoall:
+        raise NotImplementedError(
+            "FlashInfer b12x W4A16 does not support expert all-to-all dispatch; "
+            "run expert parallelism with --moe-a2a-backend none."
+        )
+    if not get_moe_a2a_backend().is_none():
+        raise NotImplementedError(
+            "FlashInfer b12x W4A16 requires --moe-a2a-backend none, got "
+            f"'{get_moe_a2a_backend().value}'."
+        )
+    if runner_config.activation != "silu" or not runner_config.is_gated:
+        raise NotImplementedError(
+            "FlashInfer b12x W4A16 supports gated SiLU (SwiGLU) MoE only, got "
+            f"activation={runner_config.activation!r}, "
+            f"is_gated={runner_config.is_gated}."
+        )
+    if runner_config.moe_tp_size != 1:
+        raise NotImplementedError(
+            "FlashInfer b12x W4A16 has no inner-dimension sharding of an expert: "
+            f"moe_tp_size must be 1, got {runner_config.moe_tp_size}."
+        )
+    for name in ("num_experts", "num_local_experts", "top_k"):
+        if getattr(runner_config, name) is None:
+            raise ValueError(f"b12x W4A16 requires {name} in the runner config")
+    if quant_info.prepared_weights is None:
+        raise RuntimeError(
+            "FlashInfer b12x W4A16 requires load-time prepared weights: this "
+            "layer did not go through process_weights_after_loading for the "
+            "b12x route (or its tensors were replaced afterwards)."
+        )
+    if quant_info.quant_scales is None or len(quant_info.quant_scales) != 4:
+        got = None if quant_info.quant_scales is None else len(quant_info.quant_scales)
+        raise ValueError(
+            "b12x W4A16 expects four prepared scales: w13 block scales, w13 "
+            f"global scale, w2 block scales, w2 global scale, got {got}."
+        )
+
+    x = dispatch_output.hidden_states
+    if x.dtype != torch.bfloat16:
+        # The route is validated for bf16 activations only, and the output
+        # allocation below is fixed to bf16; fail closed rather than guessing.
+        raise ValueError(
+            f"FlashInfer b12x W4A16 expects bf16 activations, got {x.dtype}"
+        )
+
+    topk_output = dispatch_output.topk_output
+    if output is None:
+        with use_symmetric_memory(
+            get_parallel().tp_group, disabled=not is_allocation_symmetric()
+        ):
+            if runner_config.moe_ep_size > 1:
+                # EP zero-fill: a rank writes only rows with at least one local
+                # expert, so unwritten rows would carry allocator garbage into
+                # the layer all-reduce that sums the per-rank partials. With EP
+                # off this rank writes every row, so empty_like skips zeroing.
+                output = torch.zeros_like(x, dtype=torch.bfloat16)
+            else:
+                output = torch.empty_like(x, dtype=torch.bfloat16)
+
+    expert_map = _b12x_w4a16_expert_map(
+        num_experts=int(runner_config.num_experts),
+        num_local_experts=int(runner_config.num_local_experts),
+        ep_rank=int(runner_config.moe_ep_rank),
+        ep_size=int(runner_config.moe_ep_size),
+        device=x.device,
+    )
+
+    launch_sm120_moe = b12x_w4a16_launch()
+    w13_scale, w13_global_scale, w2_scale, w2_global_scale = quant_info.quant_scales
+    return launch_sm120_moe(
+        a=x,
+        w1_weight=quant_info.w13_weight,
+        w1_weight_sf=w13_scale,
+        w1_alpha=w13_global_scale,
+        w2_weight=quant_info.w2_weight,
+        w2_weight_sf=w2_scale,
+        w2_alpha=w2_global_scale,
+        topk_ids=topk_output.topk_ids.to(torch.int),
+        topk_weights=topk_output.topk_weights,
+        num_experts=int(runner_config.num_experts),
+        num_local_experts=int(runner_config.num_local_experts),
+        top_k=int(runner_config.top_k),
+        scatter_output=output,
+        expert_map=expert_map,
+        activation="silu",
+        quant_mode="w4a16",
+        source_format=B12X_W4A16_SOURCE_FORMAT,
+        _prepared_weights=quant_info.prepared_weights,
+    )
+
+
+@register_fused_func("none", "flashinfer_b12x_w4a16")
+def fused_experts_none_to_flashinfer_b12x_w4a16(
+    dispatch_output: StandardDispatchOutput,
+    quant_info: MoeQuantInfo,
+    runner_config: MoeRunnerConfig,
+) -> StandardCombineInput:
+    from sglang.srt.layers.moe.token_dispatcher.standard import StandardCombineInput
+
+    assert isinstance(quant_info, FlashInferCutlassMoeQuantInfo), (
+        f"Unexpected quant_info type for flashinfer_b12x_w4a16: {type(quant_info)}"
+    )
+    assert quant_info.quant_type == "w4a16_b12x", (
+        f"Unexpected quant_type {quant_info.quant_type!r} for "
+        "flashinfer_b12x_w4a16; the quantization method must build the b12x "
+        "payload."
+    )
+
+    output = _run_flashinfer_b12x_w4a16(
+        dispatch_output=dispatch_output,
+        quant_info=quant_info,
+        runner_config=runner_config,
+        output=None,
+        enable_alltoall=False,
+    )
+    return StandardCombineInput(hidden_states=output)
 
 
 @register_fused_func("none", "flashinfer_mxfp4")

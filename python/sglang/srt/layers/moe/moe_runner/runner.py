@@ -131,6 +131,17 @@ class MoeRunner:
             self.runner_core = None  # FlashInfer CuteDSL only supports fused path
         elif runner_backend.is_flashinfer_cutlass():
             self.runner_core = None  # FlashInfer CUTLASS only supports fused path
+        elif runner_backend.is_flashinfer_b12x_w4a16():
+            self.runner_core = None  # b12x W4A16 only supports the fused path
+            # Import here (not at module top, to avoid a circular import) to
+            # register the b12x fused func before the pool lookup, and to fail at
+            # construction with the fix in the message rather than at the first
+            # forward when the wheel or toolkit cannot run the route.
+            from sglang.srt.layers.moe.moe_runner import flashinfer_cutlass
+
+            reason = flashinfer_cutlass.flashinfer_b12x_w4a16_unavailable_reason()
+            if reason is not None:
+                raise ValueError(f"--moe-runner-backend flashinfer_b12x_w4a16 {reason}")
         elif runner_backend.is_flashinfer_mxfp4():
             self.runner_core = None  # FlashInfer MXFP4 only supports fused path
             # Import flashinfer_cutlass here (not at module top, to avoid a circular
