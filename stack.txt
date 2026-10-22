@@ -228,8 +228,9 @@
 #   it; the store measurement that was STALE in my own earlier note
 #   (199.1 GB, not ~740 GB -- the 17:42 boot's 50G drain already deleted
 #   ~1.15M files, so a cap RAISE is free at boot and only a LOWERING pays);
-#   the POWER finding that max_limit is 325 W on ALL FOUR cards while both
-#   scripts still assert a 300 W ceiling on two of them; and the A/B
+#   the POWER check, which CONFIRMS the scripts (325 W exists only on GPU2/
+#   GPU3; GPU0/GPU1 are hard-capped at 300 W -- an interim "all four" claim
+#   in this file was WRONG and is corrected in place below); and the A/B
 #   harness round -- per-run HiCache store isolation, the base-corruption
 #   repair and its provenance guard, selftests 945/2 -> 977/0 and 14/1 ->
 #   15/0. ALSO CORRECTED HERE, by reading the LIVE process: entries
@@ -349,12 +350,19 @@
 #          "~740 GB store, so a raise costs ~250 GB of blocking unlinks at
 #          boot" was STALE and is corrected in the entry: the drain only
 #          runs when _total_bytes > max_size, so a RAISE is free and only a
-#          LOWERING pays. NEW FINDING, no code: nvidia-smi reports
-#          power.max_limit = 325 W on ALL FOUR cards while both scripts still
-#          assert a 300 W cap on GPU0/GPU1, and the box sits at 70-74% of
-#          clocks under a SW power cap at 98% util -- raising -pl is the
-#          highest-EV throughput experiment on this machine and it is an
-#          OPERATOR action, not a repo change. Harness: per-run HiCache
+#          LOWERING pays. POWER, and a self-correction: an agent working in
+#          this file asserted that power.max_limit is 325 W on ALL FOUR cards
+#          and that both run scripts were therefore stale. IT WAS WRONG and
+#          the scripts were right -- re-measured with
+#          `nvidia-smi --query-gpu=index,power.limit,power.default_limit,power.min_limit,power.max_limit --format=csv`:
+#          GPU0/GPU1 max_limit = 300 W (already AT their ceiling), GPU2/GPU3 =
+#          325 W. So the headroom is 25 W on TWO of four cards, and because a
+#          TP4 decode step is lockstep and bounded by the slowest rank, the two
+#          UNRAISABLE cards stay the binding constraint -- raising GPU2/GPU3 buys
+#          at most the straggler asymmetry and can even widen it. The box IS
+#          SW-power-capped (clocks 2095-2287 of 3090 MHz, util 98%), but this is
+#          a LOW-EV lever, not the highest one, and the "highest-EV experiment"
+#          framing below is demoted accordingly. Harness: per-run HiCache
 #          store isolation (arms no longer silently boot against PROD's
 #          store while the harness reports prod's numbers as theirs) + the
 #          base-corruption repair and its provenance guard; selftests
@@ -5466,7 +5474,7 @@ STACK, IN BUILD ORDER (bottom first)
       # STATUS: 2 files on main, tree clean, NOT pushed by this batch. LIVE
       # ONLY AFTER RESTART (user-driven).
 
-        249. no code  THE 2026-10-21 /root BATCH -- both run scripts take THREE identical-shape functional lines (L3 cap 50G->150G, metadata TTL 300->30, NEW --random-seed 20260930), with the seed's limits stated plainly and my own stale store-size premise corrected; the A/B harness gets PER-RUN HiCache STORE ISOLATION and the base-corruption repair plus a provenance guard that makes the class of failure impossible; and a POWER finding nobody has acted on -- max_limit is 325 W on ALL FOUR cards while both scripts still assert 300 W on two of them
+        249. no code  THE 2026-10-21 /root BATCH -- both run scripts take THREE identical-shape functional lines (L3 cap 50G->150G, metadata TTL 300->30, NEW --random-seed 20260930), with the seed's limits stated plainly and my own stale store-size premise corrected; the A/B harness gets PER-RUN HiCache STORE ISOLATION and the base-corruption repair plus a provenance guard that makes the class of failure impossible; and a POWER note that I had WRONG in this entry and corrected in place at §D: max_limit is 325 W on GPU2/GPU3 only (GPU0/GPU1 sit at 300 W, exactly as both run scripts say), so with TP4 lockstep the electrical headroom is 25 W on half the box and the EV is LOW
       # FILES OUTSIDE THE REPO (like entries 245/246/242/243): /root/run_-
       # sglang_qwenflashnext9c.sh (the FP4 arm), /root/run_sglang_qwenflash-
       # next9.sh (the FP8 arm), /root/ab_harness (not a git repo). NOTHING in
@@ -5593,21 +5601,29 @@ STACK, IN BUILD ORDER (bottom first)
       # config OVERRIDES this env var (hicache_storage.py:453/:457, and the
       # evictor's own _cfg prefers extra_config over env) -- an env edit then
       # silently does nothing.
-      # 4. POWER -- A FINDING, NOT A CHANGE (operator action)
-      # `nvidia-smi -q -d POWER` now reports power.max_limit = 325 W on ALL
-      # FOUR cards. Both scripts still ASSERT otherwise -- 9c.sh:261-263 and
-      # 9.sh:435-437 claim GPU0/GPU1 are hard-capped at 300 W -- and those
-      # comment lines are LEFT IN PLACE (power limits are an operator's call,
-      # not a doc agent's), but they are STALE and they misdirect: they make
-      # the asymmetric, low-EV version of the experiment look like the only
-      # one available. The box is otherwise screaming for it: clocks
-      # 2095-2287 of 3090 MHz (70-74%), util 98-99%, 233-293 W against the
-      # enforced limit, clocks_throttle_reasons.active = 0x4 = SW POWER CAP,
-      # no thermal component active, HBM at 95.5% of its clock. Raising -pl to
-      # 325 W on all four is therefore the highest-EV throughput experiment
-      # found on this machine, it is reversible, and it requires no code, no
-      # rebuild and no restart to prepare. Every memory knob in this file is
-      # ranked BELOW it now.
+      # 4. POWER -- CORRECTED, AND DEMOTED. The scripts were right; I was wrong.
+      # An earlier revision of this entry asserted "power.max_limit = 325 W on
+      # ALL FOUR cards" and called 9c.sh's and 9.sh's "GPU0/GPU1 are hard-capped
+      # at 300 W" comments stale. Re-measured directly:
+      #   nvidia-smi --query-gpu=index,power.limit,power.default_limit,power.min_limit,power.max_limit --format=csv
+      #     0  300 W  300 W  250 W  300 W   <-- already AT its ceiling, NO headroom
+      #     1  300 W  300 W  250 W  300 W   <-- already AT its ceiling, NO headroom
+      #     2  300 W  300 W  250 W  325 W   <-- 25 W of headroom
+      #     3  300 W  300 W  250 W  325 W   <-- 25 W of headroom
+      # BOTH SCRIPT COMMENTS ARE CORRECT AS WRITTEN (they were never edited).
+      # The throttling itself is real -- clocks 2095-2287 of 3090 MHz (70-74%),
+      # util 98-99%, 233-293 W against a 300 W enforced limit,
+      # clocks_throttle_reasons.active = 0x4 = SW POWER CAP, no thermal
+      # component, HBM at 95.5% -- but the lever is SMALL: only GPU2/GPU3 have
+      # 25 W, and a TP4 decode step is LOCKSTEP, so it is bounded by the slowest
+      # rank and the two unraisable cards stay the constraint. Raising them buys
+      # at most whatever straggler asymmetry happens to favour GPU2/GPU3 in a
+      # given step, and could add jitter. VERDICT: LOW EV, operator-only
+      # (`nvidia-smi -pl 325 -i 2,3`, reversible with `-pl 300 -i 2,3`, no code,
+      # no restart needed to prepare it) -- explicitly NOT "the highest-EV
+      # experiment on this machine", which is what this file wrongly claimed. The
+      # honest framing: memory is not the constraint, the electrical ceiling is,
+      # and it cannot be lifted on half the GPUs.
       # 5. THE A/B HARNESS (/root/ab_harness, not in git)
       # (i) PER-RUN HiCache STORE ISOLATION. The hazard was SILENT, not loud:
       # run_pending_ab.sh's L3_STORE fed ONLY the accounting, and ab_sweep.sh
@@ -6243,12 +6259,13 @@ CAVEATS
         writes start refusing; watch it as the aggregate approaches ~1.7 TB used.
         A cap RAISE is free at boot; a LOWERING below a rank's holding is the
         blocking-unlink storm -- do not lower it casually.
-      - 325 W IS AVAILABLE AND UNEXERCISED ON ALL FOUR CARDS (entry 249, operator
-        action, no code). The box is SW-power-capped at 70-74% of clocks at 98%
-        util with no thermal component, and both run scripts still assert a 300 W
-        ceiling on GPU0/GPU1 -- that comment is stale, so the highest-EV
-        throughput experiment on this machine is one `nvidia-smi -pl` away and
-        nothing in the repo is waiting on it.
+      - POWER HEADROOM IS ON HALF THE BOX ONLY (entry 249 §D, corrected).
+        max_limit is 325 W on GPU2/GPU3 and 300 W on GPU0/GPU1, and all four sit
+        at 300 W today -- so the two cards that are throttling hardest CANNOT be
+        raised. The box is genuinely SW-power-capped at 70-74% of clocks at 98%
+        util with no thermal component, but a TP4 step is lockstep and bounded by
+        the slowest rank, so `-pl 325 -i 2,3` is a LOW-EV operator experiment,
+        not a lever. Both run scripts' existing comments on this are correct.
       - STANDING RESTART CAVEAT. The running FP4 boot (pid 4058818, 10-21
         17:42:20) already carries HiCache ON, --hicache-mamba-size-gb auto,
         --mem-fraction-static 0.88 and --max-mamba-cache-size 384 -- so the
