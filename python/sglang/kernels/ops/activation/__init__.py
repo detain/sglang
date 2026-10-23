@@ -356,6 +356,14 @@ register_kernel(
         ),
     )
 )
+register_kernel(
+    KernelSpec(
+        op="activation.cast_to_float32_logits",
+        backend=KernelBackend.TRITON,
+        target="sglang.kernels.ops.activation.softcap:cast_to_float32_logits",
+        capabilities=_CUDA,
+    )
+)
 
 
 # Kernels introduced with Kimi-K3, inventoried by logical operator group.
