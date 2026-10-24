@@ -36,6 +36,9 @@ from sglang.multimodal_gen.runtime.pipelines_core.schedule_batch import (
     OutputBatch,
     Req,
 )
+from sglang.multimodal_gen.runtime.post_training.rl_dataclasses import (
+    RolloutTrajectoryData,
+)
 from sglang.multimodal_gen.runtime.scheduler_client import async_scheduler_client
 
 
@@ -193,6 +196,7 @@ def test_worker_without_image_bytes_request_returns_none(tmp_path):
 
 def test_dynamic_batch_split_keeps_each_requests_image_bytes():
     scheduler = object.__new__(Scheduler)
+    scheduler.worker = SimpleNamespace(is_output_rank=True)
     reqs = [Req(sampling_params=SamplingParams()) for _ in range(2)]
 
     outputs = scheduler._split_batched_output(
@@ -259,6 +263,35 @@ def test_disaggregated_image_result_keeps_pixels_for_the_head(
     torch.testing.assert_close(tensors["output"], expected, rtol=0, atol=0)
     assert metadata["request_id"] == "test"
     assert list(tmp_path.iterdir()) == []
+
+
+def test_dynamic_batch_split_keeps_each_requests_rollout_trajectory():
+    """A batched rollout response must carry each request's own log-probs and
+    conditioning, not drop the trajectory (regression for a batching merge that
+    omitted ``rollout_trajectory_data`` from the per-request split)."""
+    scheduler = object.__new__(Scheduler)
+    scheduler.worker = SimpleNamespace(is_output_rank=True)
+    reqs = [Req(sampling_params=SamplingParams()) for _ in range(2)]
+    batched_data = RolloutTrajectoryData(
+        rollout_log_probs=torch.tensor([[1.0, 1.0], [2.0, 2.0]]),
+    )
+
+    outputs = scheduler._split_batched_output(
+        OutputBatch(
+            output_file_paths=["a.png", "b.png"],
+            rollout_trajectory_data=batched_data,
+        ),
+        reqs,
+    )
+
+    assert [output.rollout_trajectory_data is not None for output in outputs] == [
+        True,
+        True,
+    ]
+    assert [
+        output.rollout_trajectory_data.rollout_log_probs.flatten().tolist()
+        for output in outputs
+    ] == [[1.0, 1.0], [2.0, 2.0]]
 
 
 @pytest.mark.parametrize("sequential", [False, True])
