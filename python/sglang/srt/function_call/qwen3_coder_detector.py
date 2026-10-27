@@ -1,7 +1,11 @@
 import json
 import logging
+import math
 import re
 from typing import Any, List, Optional
+
+from jsonschema import Draft202012Validator
+from referencing import Registry
 
 from sglang.srt.entrypoints.openai.protocol import Tool
 from sglang.srt.function_call.base_format_detector import BaseFormatDetector
@@ -140,10 +144,10 @@ class Qwen3CoderDetector(BaseFormatDetector):
 
     def _get_arguments_config(
         self, func_name: str, tools: Optional[list[Tool]]
-    ) -> dict:
-        """Extract argument configuration for a function."""
+    ) -> tuple[dict, dict]:
+        """Return argument properties and their enclosing schema."""
         if tools is None:
-            return {}
+            return {}, {}
         for config in tools:
             try:
                 config_type = config.type
@@ -156,17 +160,17 @@ class Qwen3CoderDetector(BaseFormatDetector):
                 try:
                     params = config_function.parameters
                 except AttributeError:
-                    return {}
+                    return {}, {}
 
                 if isinstance(params, dict):
                     properties = get_schema_properties(params)
                     if properties or "properties" in params:
-                        return properties
-                    return params
+                        return properties, params
+                    return params, params
                 else:
-                    return {}
+                    return {}, {}
         logger.warning(f"Tool '{func_name}' is not defined in the tools list.")
-        return {}
+        return {}, {}
 
     def _get_param_type(self, param_schema: Any) -> str:
         """Infer the parser conversion type from a JSON schema parameter."""
@@ -175,8 +179,20 @@ class Qwen3CoderDetector(BaseFormatDetector):
             return "string"
         return str(inferred_type).strip().lower()
 
+    @staticmethod
+    def _parse_finite_float(value: str) -> float:
+        number = float(value)
+        if not math.isfinite(number):
+            raise ValueError("Non-finite JSON number")
+        return number
+
     def _convert_param_value(
-        self, param_value: str, param_name: str, param_config: dict, func_name: str
+        self,
+        param_value: str,
+        param_name: str,
+        param_config: dict,
+        func_name: str,
+        parameters: Optional[dict] = None,
     ) -> Any:
         """Convert parameter value based on its type in the schema."""
         # String values are written raw, so `null` is the text "null" for a
@@ -200,6 +216,29 @@ class Qwen3CoderDetector(BaseFormatDetector):
 
         param_type = self._get_param_type(param_config[param_name])
         if param_type in STRING_PARAM_TYPES:
+            schema = param_config[param_name]
+            if (
+                isinstance(schema, dict)
+                and ("anyOf" in schema or "oneOf" in schema)
+                and param_value.lstrip().startswith(("{", "["))
+            ):
+                try:
+                    value = json.loads(
+                        param_value,
+                        parse_constant=self._parse_finite_float,
+                        parse_float=self._parse_finite_float,
+                    )
+                    if isinstance(value, (dict, list)) and Draft202012Validator(
+                        parameters if parameters is not None else schema,
+                        registry=Registry(),
+                    ).evolve(schema=schema).is_valid(value):
+                        return value
+                except Exception as exc:
+                    logger.debug(
+                        "Structured union conversion failed (%s); preserving the original string.",
+                        type(exc).__name__,
+                    )
+                    return param_value
             return param_value
         elif (
             param_type.startswith("int")
@@ -305,7 +344,9 @@ class Qwen3CoderDetector(BaseFormatDetector):
                     func_name = func_body[:name_end]
                     params_str = func_body[name_end + 1 :]
 
-                    param_config = self._get_arguments_config(func_name, tools)
+                    param_config, parameters = self._get_arguments_config(
+                        func_name, tools
+                    )
                     parsed_params = {}
 
                     for p_match in self.tool_call_parameter_regex.findall(params_str):
@@ -321,7 +362,7 @@ class Qwen3CoderDetector(BaseFormatDetector):
                             p_val = p_val[:-1]
 
                         parsed_params[p_name] = self._convert_param_value(
-                            p_val, p_name, param_config, func_name
+                            p_val, p_name, param_config, func_name, parameters
                         )
 
                     calls.append(
@@ -517,7 +558,7 @@ class Qwen3CoderDetector(BaseFormatDetector):
                 name_end = current_slice.find(">")
                 if name_end != -1:
                     param_name = current_slice[len(self.parameter_prefix) : name_end]
-                    param_config = self._get_arguments_config(
+                    param_config, _ = self._get_arguments_config(
                         self.current_func_name, tools
                     )
                     schema = param_config.get(param_name)
@@ -581,11 +622,15 @@ class Qwen3CoderDetector(BaseFormatDetector):
                             )
                             self.json_started = True
 
-                        param_config = self._get_arguments_config(
+                        param_config, parameters = self._get_arguments_config(
                             self.current_func_name, tools
                         )
                         converted_val = self._convert_param_value(
-                            raw_value, param_name, param_config, self.current_func_name
+                            raw_value,
+                            param_name,
+                            param_config,
+                            self.current_func_name,
+                            parameters,
                         )
 
                         # Construct JSON fragment: "key": value
