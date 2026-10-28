@@ -184,6 +184,10 @@ def test_merge_cache_serves_replicated_replicas_only():
     """Sequence-/data-parallel ranks hold the same weights, so they share one
     cache entry; sharded ranks would all collide on one entry and must not."""
     pipeline = _make_pipeline(_make_layer())
+    # #45834 made _merge_cache_for key on the *resolved* adapter file and bail
+    # when it is unregistered; #45782's test forked before that gate existed.
+    # Register the file so the tp/fsdp gating below is actually exercised.
+    pipeline.loaded_adapter_files["/adapter"] = "/adapter"
 
     def cache():
         return pipeline._merge_cache_for(
