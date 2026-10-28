@@ -11,54 +11,14 @@
 # LANES are parallel worktree branches with disjoint file sets; integrate lanes 1->5 in order,
 # then the LATE serial block. As each entry lands, MOVE it to stack.txt and delete it here.
 #
-# ORDERING RATIONALE: within a lane, entries are ordered by file overlap (e.g. fp8_fa_sm120
-# import fix before the backend-quality knob; scheduler ports before the batching cluster;
-# LoRA cluster ordered 43261->45834->45837->42257->46129->46255->45782 because all touch
-# pipelines_core/lora/pipeline.py or layers/lora/linear.py). LATE items touch scheduler.py AND
-# cache/teacache files and therefore cannot join a parallel lane.
+# STATUS 2026-10-28: LANES 1-4 HAVE LANDED (entries 1-27 in stack.txt,
+# diffusion-stack bccd8f5443 + integration fixup 988a599d41; lane-2's L2.6 went to REJECTED
+# below). Only LANE 5 + LATE + OPTIONAL remain to stack.
 #
-# ==================== LANE 1 — attention / SM120 ====================
-# files: kernels/ops/attention/fp8_fa_sm120/**, multimodal_gen/runtime/layers/attention/**, dits (many)
-L1.1  PR #45239 [Fix] diffusion: import fp8_fa_sm120 under a meta-device model build  [open a73528b498]
-      (replaces local 71fe8a08c4 from qwennext-stack; adds regression test)
-L1.2  PORT local 3642490413  [diffusion] fix: materialize non-contiguous seq splits before FP8 requant
-L1.3  PORT local 55aaa02d2a  residue ONLY (USP half landed via merged #43793; Ulysses k/v gathers at
-      layer.py ~477/~2249 still unguarded)
-L1.4  PR #43433 fp8_fa_sm120: keep listed attention layers in BF16 (+min_seq_len escape) [open e012ffefa9]
-      RTX PRO 6000 measured: -11.7%/-13.4% video latency with bf16 exception list
-L1.5  PORT local 512e08de1e  requires_equal_len_qkv -> Ulysses exchange (fp8_fa_sm120 was dead config at sp=2)
-L1.6  PR #47094 diffusion-sdpa: lazy lower-right causal bias when Sq!=Sk (routes to flash kernels) [open]
-L1.7  PR #43242 [Fix] keep TP/Ulysses head shards on the unsharded torch SDPA kernel [open 5b378813ae]
-      correctness class: SM120 default-SDPA split-KV mismatch (35-41%) behind closed-not-planned #41192
-L1.8  PORT PR #39212 allow SageAttention for FLUX.2 [closed unmerged ea1943ff62; base flux_2.py lacks SAGE_ATTN]
-# ==================== LANE 2 — scheduler / batching / comm ====================
-L2.1  PR #44448 [Fix][NVIDIA] allreduce: stage VMM graph inputs in CustomAllreduce instead of IPC-registering
-      [open] crash repro'd on 2x RTX PRO 6000 (sm120, PCIe) under CUDA graph capture w/ expandable_segments;
-      diffusion group_coordinator can route through srt custom-allreduce
-L2.2  PORT local b7c770ebec  fix: ship unresolvable CUDA IPC handles on non-loopback scheduler endpoints
-      (we run --host 0.0.0.0; webui/benchmarks/client payloads break today)
-L2.3  PR #43750 [Fix] dynamic batching: non-output-rank split false error + OOM reserved-memory climb
-      [open] repro'd on THIS topology (2 GPUs, --batching-max-size 2); 2048 MB -> 0 MB climb
-L2.4  PR #46274 keep rollout trajectory/conditioning under dynamic batching [open] silent-wrong conditioning fix
-L2.5  PR #46281 seed lists in multi-output dynamic batches [open]
-L2.6  PR #41473 avoid busy-polling idle scheduler ranks [open, conflicts scheduler.py — apply last in lane]
-# ==================== LANE 3 — LoRA / weight updates ====================
-L3.1  PR #33588 stop silently dropping weights in update_weights_from_disk [open cc103ddbca]
-L3.2  PR #45832 avoid full GC per tensor update [open, 1 line, weights_updater.py]
-L3.3  PR #43261 map merged-LoRA cache read-only (1 GiB unreclaimable RAM fix) [open]
-L3.4  PR #45834 LoRA merge-cache key identity + eviction [open]
-L3.5  PR #45837 LoRA adapter-state & merge-transition fixes [open b4b7130075]
-L3.6  PR #42257 preserve eager base dispatch for LoRA [open]
-L3.7  PR #46129 LoRA rank-0 download hang + QKV LoRA slicing + IPC sync [open]
-L3.8  PR #46255 LoRA alpha reload / auto-mode skip [open]
-L3.9  PR #45782 replicated ranks share the LoRA merge cache [open] — DIRECT dp2 win: adapter load 230s->170s
-# ==================== LANE 4 — TeaCache / Spectrum / Wan ====================
-L4.1  PR #24227 Wan TeaCache skipping off-by-one [open 9c6e858d86, tiny: unlocks intended skip budget]
-L4.2  PR #36767 TeaCache coefficient calibration + LongCat-Image/Wan2.2/MiniMax-H3 states [open e312da42ef]
-L4.3  PR #42423 TeaCache/Spectrum: reset state per CFG branch [open] (cfg-parallel correctness — our Wan runs cfg-degree 2)
-L4.4  PR #44261 bound Spectrum under FLUX.1 true CFG, cap CFG-gate reuse [open] (FLUX.1-dev served)
-L4.5  PR #46328 encode only real Wan UMT5 tokens [DRAFT fd2c82c15b] 5-10x faster text encode (324->31ms);
-      NOT bit-identical (cosine 0.99999994) — optional, easy revert
+# ORDERING RATIONALE: within a lane, entries are ordered by file overlap. LATE items touch
+# scheduler.py AND cache/teacache files (now carrying the landed lane-2 scheduler fixes and
+# lane-4 teacache reworks) and therefore cannot join a parallel lane.
+#
 # ==================== LANE 5 — quant infra + per-model perf ====================
 L5.1  PR #42249 defer quantization implementation imports (lazy exports) [open 6f0ebb2d06 moved 10-22]
 L5.2  PR #46319 fix 11 quant-layer correctness bugs (MXFP4/FP8/W4A4/Nunchaku) [open]
@@ -95,6 +55,13 @@ ALREADY IN BASE (merged <= 2026-10-28; no-op): #43390 (fp8_fa_sm120 block-scaled
   #46110/11/05/09/45966 #46237 #46240 #46149 #41834 #41819 #40573 #44865 #44196 #43584 #29621 #46045 #46046 #46047
 SUPERSEDED local fixes: c16d89efd7 + 1b66dcb374 (main refactored mp4 save path; NOTE base now hard-imports
   imageio_ffmpeg — present in the prod venv; file upstream issue if a venv without it breaks)
+  local 71fe8a08c4 (fp8_fa_sm120 meta-device import fix — superseded by PR #45239, landed as stack entry 1
+  b709492929 with regression test)
+L2.6 -> REJECTED: PR #41473 avoid busy-polling idle scheduler ranks — superseded by merged #46007/#46221
+  idle-loop refactor in base (lane-2 verdict). Base already has sleep_on_idle + _wait_idle finalize-convoy
+  waits; the PR's unconditional rank-0 idle poll would break the documented multi-rank idle-cache-release
+  invariant and bypass _socket_lock discipline; its 328-line test targets the pre-refactor loop.
+  Recommend dropping upstream or re-authoring as a sleep_on_idle default-on change.
 REFUSED (reason): #37460 rework — new LoRA cluster is written against current main; stacking this refactor
   buys hooks, costs the whole cluster's conflict surface. #27673 LiteAttention — Hopper-gated resolver, inert
   on SM120. #32550/#45394/#46957/#43732 — disaggregation topologies we do not run. #40230 (11k-line draft),
@@ -108,7 +75,7 @@ REFUSED (reason): #37460 rework — new LoRA cluster is written against current 
 * BCG for LTX-2.5 (#46239, in base) auto-gates at >=130 GiB cards; ours are 96 GB — verify the explicit
   --enable-breakable-cuda-graph (or server-arg override) works on 96 GB; if the gate is unbreakable, a small
   local patch or upstream PR is warranted.
-* fp8_fa_sm120 (L1 cluster) is an explicit --attention-backend fp8_fa_sm120 choice; auto still resolves to
-  SDPA/cuDNN on SM120.
-* Entry L4.5/L5.6 are DRAFT — land them but expect upstream revision; keep them at the tip of their lane so a
-  re-pull is cheap.
+* fp8_fa_sm120 (stack.txt entries 1-8, landed) is an explicit --attention-backend fp8_fa_sm120 choice;
+  auto still resolves to SDPA/cuDNN on SM120.
+* L4.5 (landed, stack.txt entry 27) and L5.6 are DRAFT — expect upstream revision; L4.5 sits at its lane's
+  tip so a re-pull is cheap.
