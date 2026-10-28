@@ -185,6 +185,56 @@ class TestUSPAttentionKVGather(unittest.TestCase):
 
         torch.testing.assert_close(out, expected)
 
+    def test_strided_kv_suffixes_are_materialized_before_all_gather(self):
+        # Same hazard as the Ulysses gather: the sharded suffix of a fused K/V
+        # projection is a strided view, and the kv_gather branch all-gathers it
+        # without going through _gather_sharded_sequence.
+        q = torch.randn(1, 3, self.heads, self.head_dim)
+        k_prefix = torch.randn(1, 2, self.heads, self.head_dim)
+        v_prefix = torch.randn(1, 2, self.heads, self.head_dim)
+        packed_k = torch.randn(1, 3, 2 * self.heads * self.head_dim)
+        k_suffix = packed_k.chunk(2, dim=-1)[1].unflatten(
+            -1, (self.heads, self.head_dim)
+        )
+        v_suffix = packed_k.chunk(2, dim=-1)[0].unflatten(
+            -1, (self.heads, self.head_dim)
+        )
+        self.assertFalse(k_suffix.is_contiguous() or v_suffix.is_contiguous())
+
+        gathered = []
+
+        def identity_all_gather(tensor, dim=-1):
+            gathered.append(tensor)
+            return tensor
+
+        with (
+            patch(
+                f"{_LAYER}.get_forward_context",
+                return_value=SimpleNamespace(attn_metadata=None),
+            ),
+            patch(f"{_LAYER}.get_sequence_parallel_world_size", return_value=2),
+            patch(f"{_LAYER}.get_ring_parallel_world_size", return_value=1),
+            patch(
+                f"{_LAYER}.sequence_model_parallel_all_gather",
+                new=identity_all_gather,
+            ),
+        ):
+            out = self.attn.forward_with_replicated_kv_prefix(
+                q, k_prefix, v_prefix, k_suffix, v_suffix
+            )
+
+        self.assertEqual(len(gathered), 2)
+        for suffix, collected in zip((k_suffix, v_suffix), gathered):
+            self.assertTrue(collected.is_contiguous())
+            torch.testing.assert_close(collected, suffix)
+        expected = _reference_attention(
+            q,
+            torch.cat([k_prefix, k_suffix], dim=1),
+            torch.cat([v_prefix, v_suffix], dim=1),
+            self.attn.softmax_scale,
+        )
+        torch.testing.assert_close(out, expected)
+
 
 class TestUlyssesAttentionKVGather(unittest.TestCase):
     def setUp(self):
@@ -260,6 +310,46 @@ class TestUlyssesAttentionKVGather(unittest.TestCase):
 
         torch.testing.assert_close(out, expected[:, : q.shape[1]])
         torch.testing.assert_close(replicated_out, expected[:, q.shape[1] :])
+
+    def _run_capture(self, q, k, v, gathered):
+        """Run the kv_gather path with all_gather as an identity capture."""
+
+        def identity_all_gather(tensor, dim=-1):
+            gathered.append(tensor)
+            return tensor
+
+        with (
+            patch(
+                f"{_LAYER}.get_forward_context",
+                return_value=SimpleNamespace(attn_metadata=None),
+            ),
+            patch(f"{_LAYER}.get_ring_parallel_world_size", return_value=1),
+            patch(
+                f"{_LAYER}.sequence_model_parallel_all_gather",
+                new=identity_all_gather,
+            ),
+        ):
+            return self.attn.forward(q, k, v)
+
+    def test_strided_kv_shards_are_materialized_before_all_gather(self):
+        # A fused projection chunks Q/K/V out of one packed buffer, so the
+        # shards reach the gather as strided last-dim views, which
+        # all_gather_into_tensor rejects.
+        packed = torch.randn(1, 3, 3 * self.heads * self.head_dim)
+        q, k, v = (
+            part.unflatten(-1, (self.heads, self.head_dim))
+            for part in packed.chunk(3, dim=-1)
+        )
+        self.assertFalse(k.is_contiguous() or v.is_contiguous())
+
+        gathered = []
+        out, _ = self._run_capture(q, k, v, gathered)
+        self.assertEqual(len(gathered), 2)
+        for shard, collected in zip((k, v), gathered):
+            self.assertTrue(collected.is_contiguous())
+            torch.testing.assert_close(collected, shard)
+        expected = _reference_attention(q, k, v, self.attn.softmax_scale)
+        torch.testing.assert_close(out, expected)
 
     def test_varlen_is_rejected(self):
         q = torch.randn(1, 3, self.heads, self.head_dim)

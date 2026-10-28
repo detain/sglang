@@ -474,8 +474,14 @@ class UlyssesAttention(nn.Module):
             if any(x is None for x in (replicated_q, replicated_k, replicated_v)):
                 raise ValueError("Replicated Q, K, and V must be provided together.")
 
-        k = sequence_model_parallel_all_gather(k, dim=1)
-        v = sequence_model_parallel_all_gather(v, dim=1)
+        # same hazard as USPAttention._gather_sharded_sequence: a model may
+        # hand us a strided last-dim chunk view, which all_gather rejects
+        k = sequence_model_parallel_all_gather(
+            k if k.is_contiguous() else k.contiguous(), dim=1
+        )
+        v = sequence_model_parallel_all_gather(
+            v if v.is_contiguous() else v.contiguous(), dim=1
+        )
 
         local_query_len = q.shape[1]
         if replicated_q is not None:
@@ -2246,8 +2252,14 @@ class USPAttention(nn.Module):
             return self.attn_impl.forward(q, k, v, ctx_attn_metadata)
 
         if self.sp_attention_mode == "kv_gather":
-            k_suffix = sequence_model_parallel_all_gather(k_suffix, dim=1)
-            v_suffix = sequence_model_parallel_all_gather(v_suffix, dim=1)
+            # k/v suffixes arrive as dim-1 slices of the packed projection
+            # (see _gather_sharded_sequence); all_gather rejects a strided shard
+            k_suffix = sequence_model_parallel_all_gather(
+                k_suffix if k_suffix.is_contiguous() else k_suffix.contiguous(), dim=1
+            )
+            v_suffix = sequence_model_parallel_all_gather(
+                v_suffix if v_suffix.is_contiguous() else v_suffix.contiguous(), dim=1
+            )
             k = torch.cat([k_prefix, k_suffix], dim=1)
             v = torch.cat([v_prefix, v_suffix], dim=1)
             return self.attn_impl.forward(q, k, v, ctx_attn_metadata)
