@@ -157,8 +157,8 @@ class LoraMergeCache:
             return None
         fname = hashlib.sha1(name.encode()).hexdigest()[:16] + ".safetensors"
         path = os.path.join(self.root, fname)
+        tmp = f"{path}.tmp.{os.getpid()}"
         try:
-            tmp = f"{path}.tmp.{os.getpid()}"
             safetensors_save_file({"weight": merged.contiguous()}, tmp)
             os.replace(tmp, path)
             mapped = load_safetensors_readonly(path)["weight"]
@@ -170,8 +170,8 @@ class LoraMergeCache:
                 exc,
             )
             try:
-                if os.path.exists(path):
-                    os.remove(path)
+                if os.path.exists(tmp):
+                    os.remove(tmp)
             except OSError:
                 pass
             return None
