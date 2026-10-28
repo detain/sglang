@@ -22,6 +22,9 @@ class ForwardContext:
     current_timestep: int
     attn_metadata: "AttentionMetadata"  # set dynamically for each forward pass
     forward_batch: Optional["Req"] = None
+    # Row-level TeaCache plan for packed continuous-batching forwards; models
+    # that set ``supports_packed_teacache`` consume it (see cache/teacache.py).
+    teacache_plan: Optional[object] = None
     # A persistent CFG residual must be anchored to real DiT features.
     force_spectrum_real: bool = False
     _trtllm_gen_sequence_metadata_cache: dict[
@@ -76,6 +79,7 @@ def set_forward_context(
     forward_batch: Optional["Req"] = None,
     *,
     force_spectrum_real: bool = False,
+    teacache_plan: Optional[object] = None,
 ):
     """A context manager that stores the current forward context,
     can be attention metadata, etc.
@@ -88,6 +92,7 @@ def set_forward_context(
         attn_metadata=attn_metadata,
         forward_batch=forward_batch,
         force_spectrum_real=force_spectrum_real,
+        teacache_plan=teacache_plan,
     )
 
     try:

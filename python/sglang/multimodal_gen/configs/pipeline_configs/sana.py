@@ -41,6 +41,8 @@ def sana_postprocess_text(outputs: BaseEncoderOutput, _text_inputs) -> torch.Ten
 
 @dataclass
 class SanaPipelineConfig(SpatialImagePipelineConfig):
+    continuous_batching_supported_tasks = (ModelTaskType.T2I,)
+
     task_type: ModelTaskType = ModelTaskType.T2I
 
     # should_use_guidance=False disables *embedded* guidance (timestep-conditioned

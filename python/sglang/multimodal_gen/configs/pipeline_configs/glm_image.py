@@ -30,6 +30,9 @@ def _decode_scale_and_shift(latents_mean, latents_std, channels, device, dtype):
 class GlmImagePipelineConfig(SpatialImagePipelineConfig):
     """Configuration for the GlmImage pipeline."""
 
+    def supports_continuous_batching(self):
+        return True
+
     vae_precision: str = "bf16"
 
     should_use_guidance: bool = False

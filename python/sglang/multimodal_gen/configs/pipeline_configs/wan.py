@@ -82,6 +82,8 @@ class WanI2VCommonConfig(PipelineConfig):
 class WanT2V480PConfig(PipelineConfig):
     """Base configuration for Wan T2V 1.3B pipeline architecture."""
 
+    continuous_batching_supported_tasks = (ModelTaskType.T2V,)
+
     task_type: ModelTaskType = ModelTaskType.T2V
     # A frozen CFG delta drifts with every reused step and with the guidance
     # scale. Reusing it for the last 5 of 50 steps keeps Wan2.1-T2V-1.3B above
@@ -121,6 +123,11 @@ class WanT2V480PConfig(PipelineConfig):
     def __post_init__(self):
         self.vae_config.load_encoder = False
         self.vae_config.load_decoder = True
+
+    def supports_continuous_batching(self):
+        return (
+            super().supports_continuous_batching() and self.dmd_denoising_steps is None
+        )
 
     def get_model_deployment_config(self) -> ModelDeploymentConfig:
         return ModelDeploymentConfig(

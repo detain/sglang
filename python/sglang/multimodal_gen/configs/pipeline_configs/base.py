@@ -143,6 +143,12 @@ class PipelineConfig:
     """The base configuration class for a generation pipeline."""
 
     native_only_components: ClassVar[tuple[str, ...]] = ()
+    # Tasks that accept continuous batching (batching_mode="continuous").
+    continuous_batching_supported_tasks: ClassVar[tuple[ModelTaskType, ...]] = ()
+    # True when cond/uncond can run as one batched forward (batch 2B).
+    supports_cfg_batch_folding: ClassVar[bool] = False
+    # True when different resolutions can pack along the sequence dim (varlen).
+    supports_varlen_step_packing: ClassVar[bool] = False
     # Default task; supported_task_types is a model capability, not a user knob.
     task_type: ModelTaskType = ModelTaskType.I2I
     supported_task_types: ClassVar[tuple[ModelTaskType, ...] | None] = None
@@ -488,6 +494,10 @@ class PipelineConfig:
     def supports_batching_image_conditioning(self):
         """Return whether image-conditioned requests may join dynamic batches."""
         return False
+
+    def supports_continuous_batching(self):
+        """Return whether this config's task accepts ``batching_mode="continuous"``."""
+        return self.task_type in self.continuous_batching_supported_tasks
 
     def supports_sequential_dit_inference(self):
         """Return whether batched AR is followed by per-request DiT inference."""

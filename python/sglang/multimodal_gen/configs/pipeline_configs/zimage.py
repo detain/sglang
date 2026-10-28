@@ -80,6 +80,8 @@ def zimage_postprocess_text(
 @dataclass
 class ZImagePipelineConfig(ZImageRolloutPipelineMixin, ImagePipelineConfig):
     cfg_policy: CFGPolicy = field(default_factory=ZImageCFGPolicy)
+    continuous_batching_supported_tasks = (ModelTaskType.T2I,)
+
     should_use_guidance: bool = False
     task_type: ModelTaskType = ModelTaskType.T2I
     dit_config: DiTConfig = field(default_factory=ZImageDitConfig)
