@@ -1,4 +1,6 @@
-# stack.txt — diffusion-stack-001-2026-10-28
+# stack.txt — diffusion-stack-002-2026-10-28
+# updated: 2026-10-28 — LANES 1-5 LANDED: entries 1-39 (lane 5 = entries 28-39, cherry-picked
+#   c47e5627a0..01302d4af5 with ZERO conflicts). Remaining to stack: LATE (2 ports) + OPTIONAL tier.
 #
 # branch : diffusion-stack  (fork remote: origin = https://github.com/detain/sglang.git)
 # base   : 3fff5a298a (fork main == upstream sgl-project/sglang main, synced 2026-10-28)
@@ -9,7 +11,12 @@
 #   branches (dlane1..dlane4) that each forked the same base; integrated 2026-10-28 in order
 #   lane1(8) -> lane2(5) -> lane3(9) -> lane4(5). Cross-lane overlap was limited to three dit files
 #   (flux.py, longcat_image.py, wanvideo.py), all auto-merged with disjoint hunks; zero manual conflict
-#   resolutions at integration. Per-lane evidence: /tmp/opencode/dlane{1..4}-report.md.
+#   resolutions at integration. Per-lane evidence: /tmp/opencode/dlane{1..4}-report.md. Entries 28-39 are
+#   LANE 5 (quant infra + per-model perf): 12 commits cherry-picked (no -x) from dlane5 (same base fork,
+#   tip bc65032eb0) ON TOP of the integrated lane-1-4 stack on 2026-10-28; the predicted dits/flux.py
+#   overlap with entry 26 auto-merged disjoint — zero conflicts, per-commit patches identical to the lane
+#   except context-offset/index noise in the three lane-1-4-shifted files. Evidence:
+#   /tmp/opencode/dlane5-report.md + the lane-5 INTEGRATION VERIFICATION block at the bottom.
 #
 # ── WATCH ──
 #   * PRE-EXISTING BASE BUG (found by lane 4, NOT caused or fixed by this stack):
@@ -30,6 +37,15 @@
 #   * Entry 22 (#45782): its replicated-replicas test carried a latent bug (forked pre-#45834, never ran —
 #     lane 3 env-skipped ALL its tests); fixed post-integration in 988a599d41 (1-line test seed, both
 #     intents preserved). Whole LoRA batch green after it: 231 passed / 0 failed.
+#   * Entry 33 (#47090) is an upstream DRAFT — expect revision. It sits second-newest in the stack (only
+#     the docs-only entry 39 follows), so a re-pull/rebase stays cheap; do not stack anything that leans
+#     on the packed gate/up layout inside qwen_image21_dit.py until the PR merges upstream. Its SM120
+#     E2E numbers (-3.16%/-2.63%) were measured at the PR head, not this tip.
+#   * Entries 29+30 (#46319 vs #46303, same author): configs/nunchaku_config.py `_patch_nunchaku_scales`
+#     carries a UNION resolution — #46303's lazy per-key `safe_open` iterated over ALL shards so
+#     #46319's multi-shard correctness intent survives (later-shard-wins replicates the state_dict
+#     `.update` order #46319's merge established). Both PRs are still open upstream; when either (or
+#     both) lands upstream, re-examine these two entries and collapse ours to match the merged shape.
 #
 # ─────────────────────────────────────────────────────────────────────────────
 # STACK ENTRIES (applied in order on top of base; new sha | source sha from commit trailer)
@@ -142,6 +158,61 @@
 #       source: fd2c82c15b | 5-10x faster text encode (324 -> 31 ms); NOT bit-identical (cosine
 #       0.99999994); easy revert. Verify: test_wan_pipeline_config 2 passed incl. new padding-trim test.
 #
+# ── LANE 5 — quant infra + per-model perf (tip bc65032eb0; 12/12 applied, 0 skipped) ──
+# [28] 78740c11a1  PR #42249  Load only the requested quantization backend
+#       source: 6f0ebb2d06 (branch squash net-diff — merge-laden branch; 2 files +137/−44) | quant
+#       exports eagerly imported EVERY optional backend (nunchaku/modelopt/kitchen) at module load.
+#       Verify: test_quantization_imports 17 passed at integration (cold-import subprocess needs the
+#       cv2 stub in the harness — env artifact, see lane-5 verification block).
+# [29] 42585f82b1  PR #46319  Quantization-layer correctness (11 bugs, MXFP4/FP8/W4A4/Nunchaku)
+#       source: squash of 10 content commits bf524efc30..51c4e5d5d2 (15 files +365/−28) | 11 real
+#       correctness bugs incl. nunchaku multi-shard scale loading (union vs #46303 — see WATCH).
+#       Verify: the 5 PR-shipped unit tests 11 passed at integration.
+# [30] 5fbfffef2d  PR #46303  Fix 6 quantization-layer overheads (NVFP4 scale conversion, W8A16,
+#       BnB, Nunchaku)
+#       source: squash of 7 content commits 77ed923a66..38afefa53c (== pr46303 head; 10 files
+#       +277/−71); applied AFTER #46319 (shared files). Verify: modelopt_fp4_backend +
+#       nunchaku_config_skip + transformer_quant pass; cosmos3 ×3 + test_text_encoder_loader nvfp4 ×1
+#       fail — re-verified 1:1 on the UNMERGED pr46303 head under the same stub harness at
+#       integration (real fp8 kernels required; PR-intrinsic, not merge-induced).
+# [31] 4a845a5f14  PR #45930  nunchaku: load FLUX.1 SVDQuant checkpoints again
+#       source: adde015e8f (4 files +71/−2) | FLUX.2's fused to_qkv_mlp_proj mapping had regressed
+#       FLUX.1 int4 single-block qkv/out checkpoint keys. Verify: flux_nunchaku_mapping +
+#       transformer_quant 80 passed / 0 failed at integration (lane saw 79 + 1 pre-existing-base fail
+#       — MagicMock-leak artifact of the lane's stub lineage; class-lineage shim passes it).
+# [32] b55306ba4d  PR #46324  Skip unread text-encoder layers in FLUX.2
+#       source: bbe970efbd (4 files +78/−6) | ~22% faster encode, encoder 42.66 -> 33.34 GiB,
+#       bit-identical — frees VRAM for batching on 96 GB cards. Verify: text_encoder_loader +
+#       qwen3_encoder 57 passed / 3 skipped; sole failure is [30]'s PR-intrinsic env-dependent nvfp4.
+# [33] 4d56b0047c  PR #47090 (DRAFT)  Pack Qwen-Image 2.1 BF16 gate/up projections on SM120
+#       source: efcb88a201 (3 files +114/−7) | measured ON this RTX PRO 6000 box: E2E −3.16%/−2.63%.
+#       Verify: gating test test_qwen21_bf16_mlp_packing_restore_and_lora ran FOR REAL on SM120 at
+#       integration: 2 passed (GPUs held ~94% by prod LLM servers; ample). DRAFT — see WATCH.
+# [34] 0979aab245  PR #47092  Fix colored seams in single-GPU Qwen-Image-2.1-Turbo VAE tiling
+#       source: e31d51acc8 + 4703e596d3 (content commits; mid-branch main merge skipped) (2 files
+#       +259/−0) | attention-barrier seam fix. Verify: test_qwen_image21_attention_barrier 7 passed.
+# [35] 9a9c8c110b  PR #41240  LTX-2.5: balance tile-parallel decode by tile volume (LPT)
+#       source: 6cb2a25543 (2 files +93/−1) | no output change, no extra communication. Verify:
+#       test_ltx2_diffusion_decoder_tile_assign 6 passed.
+# [36] 6bad14d4a7  PORT PR #40493  Honor --vae-slicing in the native decoding stage
+#       source: fbf1a73db9 (closed DRAFT, squash net-diff on the 2 net files; the other 2 commits
+#       cancelled in common.py) (2 files +39/−4) | VRAM control for video/high-res. Port kept base's
+#       on_frames streaming: BOTH sliced and unsliced paths forward **decode_kwargs. Verify:
+#       test_decoding_stage_parallelism 10 passed incl. the ported slicing test.
+# [37] d51a093076  PORT local 611592687a  LTX-Video v1 negative-prompt 128-token T5 overflow
+#       source: 611592687a (origin/qwennext-stack, never upstreamed; 3 files +142/−0, all new) | we
+#       serve Lightricks/LTX-Video today; v1 inherited LTX-2's negative prompt and overflowed its
+#       128-token T5. Verify: test_ltx_video_registry 4 passed — exact-path-before-detector registry
+#       order re-validated against today's registry.
+# [38] 23f1c77c04  PORT local e8cd55441c  Forward max_sequence_length to diffusers pipeline kwargs
+#       source: e8cd55441c (origin/qwennext-stack, never upstreamed; 2 files +147/−0) | the
+#       SD3.5/diffusers-fallback path silently dropped the user's cap. Verify:
+#       test_diffusers_pipeline_kwargs 6 passed.
+# [39] 01302d4af5  PR #46048  [Doc] validate convrot_int8 on Wan2.2 A14B (T2V & I2V), Wan-Animate-2
+#       source: 1706bb9367 (content commit; 2 branch merges irrelevant) (6 files +303/−7) | docs +
+#       b200 perf baselines ONLY; recipe: Wan2.2 1-GPU peak 87.5 -> 60.6 GiB; code already in base
+#       (#38040/#44179). Verify: b200.json parses; test_suite_partitioning 36 passed.
+#
 # ── INTEGRATION VERIFICATION (diffusion-stack @ 988a599d41, 2026-10-28) ──
 #   * 27/27 cherry-picks: commit messages byte-identical to lane commits (plain cherry-pick, no -x);
 #     zero conflicts; non-shared files byte-identical to each lane tip (mechanical per-lane check);
@@ -158,4 +229,34 @@
 #   * OWED (GPU window): entry 9's custom_all_reduce VMM test (never run anywhere); 2-rank
 #     test_usp_sdpa_sharded_heads_2_gpu re-run at final tip (passed at lane tip, file unchanged).
 #   * NOT STACKED HERE: L2.6/#41473 (REJECTED in wanted_stack.txt — superseded by base's #46007/#46221
-#     idle-loop refactor, lane-2 verdict); lane 5 + LATE + OPTIONAL blocks pending.
+#     idle-loop refactor, lane-2 verdict); lane 5 + LATE + OPTIONAL blocks pending. [SUPERSEDED — lane 5
+#     landed below; LATE + OPTIONAL remain.]
+#
+# ── LANE 5 INTEGRATION VERIFICATION (diffusion-stack @ 01302d4af5, 2026-10-28) ──
+#   * 12/12 cherry-picks e97d45cd55..bc65032eb0 -> 78740c11a1..01302d4af5: messages byte-identical to
+#     dlane5 (plain cherry-pick, no -x); ZERO conflicts — the predicted dits/flux.py 3-way vs entry 26
+#     auto-merged disjoint (both #44261's final_real_steps guard and #45930's single-block mapping
+#     verified present at tip; no fixup commit needed). Per-commit patch text identical to the lane
+#     except @@-offset/index-hash noise in flux.py, flux2_dit.py and qwen_image21_dit.py (files lanes
+#     1-4 had shifted).
+#   * python3 -m py_compile: 46/46 changed .py PASS. git diff --check: clean.
+#   * CPU sweep, /home/my/sglang/.venv/bin/python3 + /tmp/opencode/integrate-env stub shim (extended
+#     with cv2 — cold-import tests exec a bare python that imports test_utils; lane-5's own harness had
+#     stubbed cv2 too). Lane-5 targets: quantization_imports 17 + quant correctness 11 = 28/28;
+#     nunchaku_mapping+transformer_quant 80 passed / 0 failed; text_encoder_loader+qwen3_encoder
+#     57 passed / 3 skipped / 1 failed (nvfp4 rowwise — reproduced 1:1 on the unmerged pr46303 head
+#     under the SAME shim, incl. matching 24-pass/17-subtest companion set: PR-intrinsic stub artifact,
+#     passes on pre-pick base); modelopt_fp4_backend+cosmos3 24/3f (≡ pr46303 head, re-run);
+#     attention_barrier 7, tile_assign 6, decoding_stage 10, ltx_video_registry 4, pipeline_kwargs 6,
+#     suite_partitioning 36 = 69/69 batch. GPU: #47090's SM120 gating test ran for real (all 4 RTX PRO
+#     6000 at ~94% by prod LLM servers, ~6 GB headroom sufficed): 2 passed.
+#   * Regression of previously-passing integrated sets at new tip: test_sp_shard + scheduler IPC gate +
+#     sdpa_sharded 29 passed + 81 subtests (≡); lane-4 teacache/spectrum suite (spectrum_lifecycle,
+#     cfg_gating, teacache_calibrate, sampling_params, teacache_lifecycle, wan_pipeline_config) 81
+#     passed + 112 subtests (≡); LoRA cluster (15 test_lora*/weight/comfyui/adapter files) 242 passed,
+#     2 failed (format_adapter all_formats + comfyui pack_zero) — both reproduced 1:1 on a pre-pick
+#     base-control worktree of c47e5627a0 (pre-existing stub artifacts, not lane-5-attributable; the
+#     earlier "231 passed / 0 failed" record used a narrower file glob).
+#   * OWED (unchanged GPU-window items + new): entry 9's custom_all_reduce VMM test; 2-rank
+#     sdpa_sharded re-run at final tip; full uncontended test_model_fast_paths run to re-confirm
+#     entry 33's lane-observed pre-existing-flake set at this tip.

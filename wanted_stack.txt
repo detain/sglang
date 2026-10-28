@@ -11,29 +11,16 @@
 # LANES are parallel worktree branches with disjoint file sets; integrate lanes 1->5 in order,
 # then the LATE serial block. As each entry lands, MOVE it to stack.txt and delete it here.
 #
-# STATUS 2026-10-28: LANES 1-4 HAVE LANDED (entries 1-27 in stack.txt,
-# diffusion-stack bccd8f5443 + integration fixup 988a599d41; lane-2's L2.6 went to REJECTED
-# below). Only LANE 5 + LATE + OPTIONAL remain to stack.
+# STATUS 2026-10-28: LANES 1-5 HAVE LANDED — all 39 entries are in stack.txt.
+# Lanes 1-4 (entries 1-27): bccd8f5443 + integration fixup 988a599d41 + docs.
+# Lane 5 (entries 28-39): cherry-picked clean onto the lane-4 stack at c47e5627a0, 12/12, ZERO
+# conflicts (tip 01302d4af5; see stack.txt lane-5 verification block). Lane-2's L2.6 went to
+# REJECTED below. REMAINING TO STACK: LATE (LT.1, LT.2 — next wave ports them) + OPTIONAL tier.
 #
 # ORDERING RATIONALE: within a lane, entries are ordered by file overlap. LATE items touch
 # scheduler.py AND cache/teacache files (now carrying the landed lane-2 scheduler fixes and
 # lane-4 teacache reworks) and therefore cannot join a parallel lane.
 #
-# ==================== LANE 5 — quant infra + per-model perf ====================
-L5.1  PR #42249 defer quantization implementation imports (lazy exports) [open 6f0ebb2d06 moved 10-22]
-L5.2  PR #46319 fix 11 quant-layer correctness bugs (MXFP4/FP8/W4A4/Nunchaku) [open]
-L5.3  PR #46303 fix 6 quant-layer perf/overhead bugs (NVFP4 scale round-trips etc.) [open]
-L5.4  PR #45930 nunchaku: load FLUX.1 SVDQuant checkpoints again [open] (only matters for int4 SVDQuant use)
-L5.5  PR #46324 skip unread text-encoder layers in FLUX.2 [open] encode ~22% faster, encoder 42.66->33.34 GiB,
-      bit-identical — frees VRAM for batching on 96 GB cards
-L5.6  PR #47090 pack Qwen-Image 2.1 BF16 gate/up on SM120 [DRAFT] measured ON RTX PRO 6000: E2E -3.16%/-2.63%
-L5.7  PR #47092 fix colored seams in single-GPU Qwen-Image-2.1-Turbo VAE tiling [open] quality fix
-L5.8  PR #41240 LTX-2.5: balance tile-parallel decode by volume (LPT) [open] no output change, no extra comm
-L5.9  PORT PR #40493 honor --vae-slicing in native pipelines [closed-draft fbf1a73db9] VRAM control for video/high-res
-L5.10 PORT local 611592687a LTX-Video v1 negative prompt overflow (128-token T5) [serves Lightricks/LTX-Video today]
-L5.11 PORT local e8cd55441c forward max_sequence_length to diffusers pipeline kwargs [SD3.5/diffusers-fallback path]
-L5.12 PR #46048 [Doc] validate convrot_int8 on Wan2.2 A14B (T2V/I2V) [open, docs+test baselines only]
-      recipe: Wan2.2 1-GPU peak 87.5 -> 60.6 GiB; code already in base (#38040/#44179)
 # ==================== LATE (serial, after lanes integrate) ====================
 LT.1  PORT PR #28690 continuous batching v0 [closed unmerged 10-13, b7db4add2f; 34 files, touches
       scheduler.py + teacache packed path + denoising stages -> after all lanes; old-stack squash 1d411e4768 is reference]
@@ -77,5 +64,6 @@ REFUSED (reason): #37460 rework — new LoRA cluster is written against current 
   local patch or upstream PR is warranted.
 * fp8_fa_sm120 (stack.txt entries 1-8, landed) is an explicit --attention-backend fp8_fa_sm120 choice;
   auto still resolves to SDPA/cuDNN on SM120.
-* L4.5 (landed, stack.txt entry 27) and L5.6 are DRAFT — expect upstream revision; L4.5 sits at its lane's
-  tip so a re-pull is cheap.
+* L4.5/#46328 and L5.6/#47090 are DRAFTs — both LANDED as stack.txt entries 27 and 33; expect upstream
+  revision (see stack.txt WATCH). Entry 33 sits second-newest (only docs entry 39 follows) so a re-pull
+  is cheap; entry 27 now sits under lane 5 — re-pulling #46328 walks the 12 lane-5 commits.
