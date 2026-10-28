@@ -1573,6 +1573,7 @@ class Flux2Transformer2DModel(CachableDiT, LayerwiseOffloadableModuleMixin):
     _supported_attention_backends = {
         AttentionBackendEnum.TORCH_SDPA,
         AttentionBackendEnum.FA,
+        AttentionBackendEnum.SAGE_ATTN,
         AttentionBackendEnum.AITER,
         AttentionBackendEnum.AITER_SAGE,
     }
