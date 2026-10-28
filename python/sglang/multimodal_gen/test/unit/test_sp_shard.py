@@ -203,6 +203,21 @@ def test_join_split_roundtrip_no_pad():
     assert torch.equal(txt_back, txt) and torch.equal(img_back, img)
 
 
+def test_split_seqs_returns_contiguous():
+    # narrow over the seq dim is non-contiguous when batch > 1; output
+    # projections requantize via .reshape/.view and need contiguous inputs.
+    joint = torch.randn(2, 8, 3)
+    txt, img = sps.split_seqs(joint, prefix_len=5, local_pad=0)
+    assert txt.is_contiguous() and img.is_contiguous()
+
+    joint_pad = torch.randn(2, 9, 3)
+    txt2, img2 = sps.split_seqs(joint_pad, prefix_len=6, local_pad=2)
+    assert txt2.is_contiguous() and img2.is_contiguous()
+    # values unchanged by the contiguity fix
+    assert torch.equal(txt2, torch.cat([joint_pad[:, :4], joint_pad[:, 7:]], dim=1))
+    assert torch.equal(img2, joint_pad[:, 4:7])
+
+
 def test_shard_seq_prefix_only_touches_prefix():
     # Joint RoPE cache [txt(15); img(4)]: text segment shards, image stays.
     shard = SpShard(orig_len=15, local_len=8, num_pad=1, sp_size=2, sp_rank=1)
