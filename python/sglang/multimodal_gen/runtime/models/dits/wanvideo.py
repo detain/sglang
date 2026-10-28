@@ -1764,6 +1764,12 @@ class WanTransformer3DModel(CachableDiT, LayerwiseOffloadableModuleMixin):
             # if teacache is enabled, we need to cache the original hidden states
             if self.enable_teacache:
                 self.maybe_cache_states(hidden_states, original_hidden_states)
+            # Record the signal the decision diffs (see should_skip).
+            _tp = forward_batch.teacache_params if forward_batch is not None else None
+            _record_inp = (
+                timestep_proj if (_tp is not None and _tp.use_ret_steps) else temb
+            )
+            self.maybe_record_calibration(_record_inp, hidden_states)
             if enable_spectrum:
                 self.spectrum_record_features(hidden_states)
         self.cnt += 1
@@ -1831,13 +1837,14 @@ class WanTransformer3DModel(CachableDiT, LayerwiseOffloadableModuleMixin):
         # Initialize Wan-specific parameters
         teacache_params = ctx.teacache_params
         use_ret_steps = teacache_params.use_ret_steps
-        start_skipping, end_skipping = teacache_params.get_skip_step_range(
-            ctx.num_inference_steps
+        # Boundary on the global step, not the expert-local cnt: the MoE
+        # low-noise expert's cnt starts at 0 mid-schedule, so a cnt-based
+        # boundary would force its early local steps and never force the final
+        # global step. Counted in denoising steps, so the window does not vary
+        # with CFG parallel or CFG gating (#42422 lifecycle).
+        is_boundary_step = teacache_params.is_step_boundary(
+            ctx.current_timestep, ctx.num_inference_steps
         )
-
-        # Count the window in denoising steps: the number of local forwards per
-        # step varies with CFG parallel and CFG gating.
-        is_boundary_step = not start_skipping <= ctx.current_timestep < end_skipping
 
         timestep_proj = kwargs["timestep_proj"]
         temb = kwargs["temb"]
@@ -1845,12 +1852,15 @@ class WanTransformer3DModel(CachableDiT, LayerwiseOffloadableModuleMixin):
 
         self.is_cfg_negative = ctx.is_cfg_negative
 
-        # Use shared helper to compute cache decision
+        # Per-expert for MoE (Wan2.2 high/low); shared values otherwise.
+        coefficients = teacache_params.get_coefficients(self._teacache_expert_tag)
+        teacache_thresh = teacache_params.get_thresh(self._teacache_expert_tag)
+
         should_calc = self._compute_teacache_decision(
             modulated_inp=modulated_inp,
             is_boundary_step=is_boundary_step,
-            coefficients=ctx.coefficients,
-            teacache_thresh=ctx.teacache_thresh,
+            coefficients=coefficients,
+            teacache_thresh=teacache_thresh,
         )
 
         return not should_calc

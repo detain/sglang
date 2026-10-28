@@ -315,7 +315,9 @@ class TestSamplingParamsSubclass(unittest.TestCase):
 
     def test_wan_teacache_skip_step_ranges(self):
         cases = [
-            (WanT2V_1_3B_SamplingParams().teacache_params, (5, 50)),
+            # 1.3B computes the first 6 steps (#36767: step 5 is still
+            # structurally decisive and skipping it breaks the CI fidelity gate).
+            (WanT2V_1_3B_SamplingParams().teacache_params, (6, 50)),
             (WanT2V_14B_SamplingParams().teacache_params, (1, 49)),
             (WanI2V_14B_480P_SamplingParam().teacache_params, (5, 50)),
             (WanI2V_14B_720P_SamplingParam().teacache_params, (5, 50)),
