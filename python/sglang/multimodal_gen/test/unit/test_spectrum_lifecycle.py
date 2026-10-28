@@ -35,7 +35,9 @@ class TestSpectrumLifecycle(CustomTestCase):
         server_args_patch.start()
         self.addCleanup(server_args_patch.stop)
 
-    def _forward(self, model, step, features, *, negative=False, do_cfg=True):
+    def _forward(
+        self, model, step, features, *, negative=False, do_cfg=True, cfg_scale=None
+    ):
         batch = SimpleNamespace(
             enable_spectrum=True,
             spectrum_params=self.params,
@@ -43,6 +45,7 @@ class TestSpectrumLifecycle(CustomTestCase):
             is_cfg_negative=negative,
             num_inference_steps=8,
             debug=True,
+            guidance_scale=cfg_scale,
         )
         with set_forward_context(step, None, forward_batch=batch):
             actual_forward = model.begin_spectrum_step()
@@ -76,6 +79,94 @@ class TestSpectrumLifecycle(CustomTestCase):
                 self.assertIn(False, decisions)
                 # Each rank runs one forward per step, so both wrap after the run.
                 self.assertEqual(negative._get_spectrum_branch_state(), (0, 0, 4.0))
+
+    def test_flux_true_cfg_falls_back_to_real_forwards_through_final_step(self):
+        from sglang.multimodal_gen.runtime.models.dits.flux import (
+            FluxTransformer2DModel,
+        )
+
+        # The real model's cache policy does not need transformer weights.
+        model = FluxTransformer2DModel.__new__(FluxTransformer2DModel)
+        torch.nn.Module.__init__(model)
+        model.prefix = "flux"
+        model._init_spectrum_state()
+        with self.assertLogs(
+            "sglang.multimodal_gen.runtime.models.dits.flux", level="WARNING"
+        ) as logs:
+            for step in range(8):
+                for negative in (False, True):
+                    with self.subTest(step=step, negative=negative):
+                        # Curvature makes even the final local linear forecast
+                        # differ from the real output.
+                        features = torch.full(
+                            (2, 3), float((step + 1) ** 2 + 10 * negative)
+                        )
+                        real, output = self._forward(
+                            model, step, features, negative=negative, cfg_scale=4.0
+                        )
+                        self.assertTrue(real)
+                        torch.testing.assert_close(output, features, atol=0, rtol=0)
+        self.assertEqual(len(logs.records), 1)
+        # The fallback is the uncached path: no forecaster is ever built.
+        self.assertIsNone(model.spectrum_forecaster)
+        self.assertIsNone(model.spectrum_forecaster_negative)
+        # Request-owned parameters must not be rewritten by the model policy.
+        self.assertEqual(self.params.warmup_steps, 2)
+        self.assertEqual(self.params.w, 1.0)
+        self.assertEqual(self.params.history_size, 8)
+
+        # Embedded guidance without true CFG retains the existing schedule.
+        reference = _SpectrumModel("flux")
+        for step in range(8):
+            features = torch.full((2, 3), float(step + 1))
+            actual = self._forward(model, step, features, do_cfg=False)
+            expected = self._forward(reference, step, features, do_cfg=False)
+            self.assertEqual(actual[0], expected[0])
+            torch.testing.assert_close(actual[1], expected[1], atol=0, rtol=0)
+
+    def test_flux_true_cfg_up_to_two_uses_bounded_schedule(self):
+        from sglang.multimodal_gen.runtime.models.dits.flux import (
+            FluxTransformer2DModel,
+        )
+
+        model = FluxTransformer2DModel.__new__(FluxTransformer2DModel)
+        torch.nn.Module.__init__(model)
+        model.prefix = "flux"
+        model._init_spectrum_state()
+        # 8 steps: real for round(0.4 * 8) = 3 warmup steps, then every other
+        # step with the window fixed at 2, and the last 2 steps real.
+        expected = [True, True, True, False, True, False, True, True]
+        for scale in (1.5, 2.0):
+            for negative in (False, True):
+                with self.subTest(scale=scale, negative=negative):
+                    actual = [
+                        self._forward(
+                            model,
+                            step,
+                            torch.full((2, 3), float(step + 1)),
+                            negative=negative,
+                            cfg_scale=scale,
+                        )[0]
+                        for step in range(8)
+                    ]
+                    self.assertEqual(actual, expected)
+        # Request-owned parameters must not be rewritten by the model policy.
+        self.assertEqual(self.params.warmup_steps, 2)
+        self.assertEqual(self.params.window_size, 4.0)
+        self.assertEqual(self.params.final_real_steps, 0)
+
+    def test_final_real_steps_keeps_last_steps_real(self):
+        self.params = SpectrumParams(
+            warmup_steps=2, window_size=4.0, flex_window=0.0, final_real_steps=2
+        )
+        model = _SpectrumModel("wan")
+        actual = [
+            self._forward(model, step, torch.full((2, 3), float(step + 1)))[0]
+            for step in range(8)
+        ]
+        self.assertEqual(actual, [True, True, False, False, False, True, True, True])
+        with self.assertRaises(ValueError):
+            SpectrumParams(final_real_steps=-1)
 
     def test_reused_model_matches_fresh_model_after_request_restart(self):
         """Completed and interrupted requests must not leak forecasts or debug stats."""
