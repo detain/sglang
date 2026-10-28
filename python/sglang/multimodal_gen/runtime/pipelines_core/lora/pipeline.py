@@ -338,7 +338,7 @@ class LoRAPipeline(ComposedPipelineBase):
         elif target is not None:
             if use_module_names_only:
                 if target == "all":
-                    module_names = ["transformer", "transformer_2"]
+                    module_names = ["transformer", "transformer_2", "critic"]
                 elif target in ["transformer", "transformer_2", "critic"]:
                     module_names = [target]
             else:
@@ -502,7 +502,7 @@ class LoRAPipeline(ComposedPipelineBase):
         model half converted, and covers the dynamic ``set_lora`` API as well as
         a startup ``--lora-path``.
         """
-        for module_name in ("transformer", "transformer_2"):
+        for module_name in ("transformer", "transformer_2", "fake_score_transformer"):
             module = self.modules.get(module_name)
             if module is None:
                 continue
@@ -1179,8 +1179,14 @@ class LoRAPipeline(ComposedPipelineBase):
             elif (
                 alpha is not None and self.loaded_adapter_alphas.get(nickname) != alpha
             ):
-                self.loaded_adapter_alphas[nickname] = alpha
+                # Reload: fused GQA groups bake the alpha into lora_B at load time.
                 adapter_updated = True
+                self.load_lora_adapter(
+                    self.loaded_adapter_paths[nickname],
+                    nickname,
+                    rank,
+                    lora_alpha=alpha,
+                )
 
         # Group by target to apply separately
         target_to_indices = {}
@@ -1234,10 +1240,24 @@ class LoRAPipeline(ComposedPipelineBase):
                     module_name,
                     tgt_nicknames,
                     tgt_strengths,
-                    merge_weights_by_module[module_name],
+                    merge_weights_by_module[module_name]
+                    # auto already kept this adapter unmerged; that state matches
+                    and not (
+                        merge_mode == "auto"
+                        and len(tgt_nicknames) == 1
+                        and self._auto_merge_rounds_away(
+                            module_name,
+                            lora_layers_dict,
+                            tgt_nicknames,
+                            tgt_paths,
+                            rank,
+                            tgt_strengths,
+                            measure=False,
+                        )
+                    ),
                     adapter_updated,
                 )
-                for module_name, _ in target_modules
+                for module_name, lora_layers_dict in target_modules
             ):
                 logger.info("LoRA configuration matches exactly, skipping")
                 continue
@@ -1341,9 +1361,11 @@ class LoRAPipeline(ComposedPipelineBase):
         paths: list[str | None],
         rank: int,
         strengths: list[float],
+        measure: bool = True,
     ) -> bool:
         """Whether merge_mode "auto" should keep this adapter unmerged on the
-        module. It is attached unmerged to measure, which is where it stays."""
+        module. It is attached unmerged to measure, which is where it stays.
+        With ``measure=False`` only a cached result is used."""
         key = (
             module_name,
             tuple(paths),
@@ -1351,6 +1373,8 @@ class LoRAPipeline(ComposedPipelineBase):
             tuple(self.loaded_adapter_alphas.get(n) for n in nicknames),
         )
         if key not in self.auto_merge_rounding_loss:
+            if not measure:
+                return False
             self._apply_lora_to_layers(
                 lora_layers,
                 nicknames,
