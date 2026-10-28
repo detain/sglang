@@ -1765,6 +1765,24 @@ class LayerwiseOffloadManager:
         """Which layers are currently held across denoise steps; empty until armed."""
         return self._resident_set if self._residency_active else frozenset()
 
+    @property
+    def resident_bytes(self) -> int:
+        """Total bytes held in this manager's CPU buffers.
+
+        The cost of materialising this manager's layers onto the device.
+        """
+        return sum(
+            tensor.numel() * tensor.element_size()
+            for storage in (
+                self._consolidated_cpu_weights,
+                self._strided_cpu_weights,
+                self._mapped_cpu_weights,
+                self._mps_cpu_weights,
+            )
+            for per_layer in storage.values()
+            for tensor in per_layer.values()
+        )
+
     def _next_streamed(self, *, after: int, count: int) -> List[int]:
         """The next ``count`` streamed layers after ``after``, wrapping around.
 
