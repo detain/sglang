@@ -1054,13 +1054,11 @@ class HunyuanImage3ForCausalMM(CachableDiT):
         if ctx is None:
             return False
         # Cond/uncond rows share one packed forward (same timestep), so skip
-        # boundaries are step-unit based; no CFG doubling.
-        start_skipping, end_skipping = ctx.teacache_params.get_skip_boundaries(
-            ctx.num_inference_steps, do_cfg=False
-        )
-        is_boundary_step = (
-            ctx.current_timestep < start_skipping
-            or ctx.current_timestep >= end_skipping
+        # boundaries are step-unit based; no CFG doubling. is_step_boundary
+        # resolves the [start, end) window exactly as the old
+        # get_skip_boundaries(n, do_cfg=False) did (#42422 API).
+        is_boundary_step = ctx.teacache_params.is_step_boundary(
+            ctx.current_timestep, ctx.num_inference_steps
         )
         # Timestep-conditioned input for the L1 similarity decision.
         modulated_inp = self.time_embed(kwargs["timestep"])

@@ -123,6 +123,9 @@ class TeaCacheMixin:
         accumulated_rel_l1_distance: Accumulated L1 distance for positive branch.
         is_cfg_negative: Whether currently processing negative CFG branch.
         _supports_cfg_cache: Whether this model supports CFG cache separation.
+        _teacache_disabled_for_session: Latch set by
+            ``disable_teacache_for_session``; keeps ``reset_teacache_state``
+            from re-enabling a deliberately disarmed model.
 
     CFG-specific attributes (only when _supports_cfg_cache is True):
         previous_modulated_input_negative: Cached input for negative branch.
@@ -138,6 +141,11 @@ class TeaCacheMixin:
         "zimage",
         "longcat_image",
     }
+    # Opt-in lossy models (minimax_h3) start disarmed and arm per request.
+    # This latch marks a deliberate runtime disable so the request-boundary
+    # and step-0 resets below clear the caches without silently re-arming the
+    # path (which would run decisions on stale, un-armed parameters).
+    _teacache_disabled_for_session: bool = False
     prefix: str
 
     def _init_teacache_state(self) -> None:
@@ -166,6 +174,16 @@ class TeaCacheMixin:
             self.previous_residual_negative: torch.Tensor | None = None
             self.accumulated_rel_l1_distance_negative: float = 0.0
 
+    def disable_teacache_for_session(self) -> None:
+        """Turn TeaCache off; resets keep it off until re-armed explicitly."""
+        self._teacache_disabled_for_session = True
+        self.enable_teacache = False
+
+    def enable_teacache_for_session(self) -> None:
+        """Undo ``disable_teacache_for_session`` (arm the lossy cache path)."""
+        self._teacache_disabled_for_session = False
+        self.enable_teacache = True
+
     def reset_teacache_state(self) -> None:
         """Reset all TeaCache state at the start of each generation task."""
         self.cnt = 0
@@ -175,7 +193,10 @@ class TeaCacheMixin:
         self.previous_residual = None
         self.accumulated_rel_l1_distance = 0.0
         self.is_cfg_negative = False
-        self.enable_teacache = True
+        # Default-enable only when no explicit runtime disable is latched;
+        # a step-0 or per-request reset must not resurrect a disarmed path.
+        if not self._teacache_disabled_for_session:
+            self.enable_teacache = True
         # CFG negative cache fields (always reset, may be unused)
         if self._supports_cfg_cache:
             self.previous_modulated_input_negative = None

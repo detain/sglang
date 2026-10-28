@@ -2379,8 +2379,11 @@ class MiniMaxH3DiTModel(
         # directly (not via _init_teacache_state, which needs self.prefix, here
         # reserved for weight-name mapping); H3 has no CFG so no cfg-cache split.
         self.cnt = 0
-        self.enable_teacache = False
         self._supports_cfg_cache = False
+        # Opt-in lossy path: start disarmed, and latch that disable so the
+        # per-request / step-0 resets cannot resurrect it (the next request's
+        # h3_teacache_configure re-arms or keeps disarmed).
+        self.disable_teacache_for_session()
         self._teacache_expert_tag = SINGLE_EXPERT
         self.previous_modulated_input: torch.Tensor | None = None
         self.previous_residual: torch.Tensor | None = None
@@ -2404,8 +2407,13 @@ class MiniMaxH3DiTModel(
         ``start_skipping``/``end_skipping`` are the resolved boundary steps from
         ``TeaCacheParams.get_skip_step_range`` (first/last steps always compute).
         """
+        # Flip the session latch first so the reset below re-arms (armed
+        # request) or respects (disarmed request) instead of force-enabling.
+        if enabled:
+            self.enable_teacache_for_session()
+        else:
+            self.disable_teacache_for_session()
         self.reset_teacache_state()
-        self.enable_teacache = bool(enabled)
         self._h3_tc_coeffs = coefficients
         self._h3_tc_thresh = float(thresh)
         self._h3_tc_start = int(start_skipping)

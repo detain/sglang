@@ -10,6 +10,7 @@ import torch
 from sglang.multimodal_gen.configs.sample.teacache import TeaCacheParams
 from sglang.multimodal_gen.runtime.cache.teacache import TeaCacheMixin
 from sglang.multimodal_gen.runtime.managers.forward_context import set_forward_context
+from sglang.multimodal_gen.runtime.models.dits.minimax_h3 import MiniMaxH3DiTModel
 from sglang.multimodal_gen.runtime.models.dits.wanvideo import WanTransformer3DModel
 from sglang.test.test_utils import CustomTestCase
 
@@ -180,6 +181,82 @@ class TestTeaCache(CustomTestCase):
             params = TeaCacheParams(start_skipping=start, end_skipping=end)
             with self.subTest(start=start, end=end):
                 self.assertEqual(params.get_skip_step_range(50), expected)
+
+
+class TestResetPreservesRuntimeDisable(CustomTestCase):
+    """A deliberate runtime disable must outlive request/step-0 resets.
+
+    minimax_h3 treats TeaCache as lossy opt-in and leaves it disarmed unless
+    a request arms it; the resets fired per request and at denoising step 0
+    used to force ``enable_teacache`` back on, resurrecting the path with
+    stale, un-armed decision state.
+    """
+
+    def setUp(self):
+        server_args_patch = patch(
+            "sglang.multimodal_gen.runtime.server_args.get_global_server_args",
+            return_value=SimpleNamespace(enable_cfg_parallel=False),
+        )
+        server_args_patch.start()
+        self.addCleanup(server_args_patch.stop)
+
+    def _disabled_for_session(self):
+        cache = TeaCacheMixin()
+        cache.prefix = "minimax_h3"
+        cache._init_teacache_state()
+        cache.disable_teacache_for_session()
+        return cache
+
+    def test_request_reset_keeps_runtime_disable(self):
+        cache = self._disabled_for_session()
+        cache.reset_teacache_state()
+        self.assertFalse(cache.enable_teacache)
+
+    def test_step0_context_reset_keeps_runtime_disable(self):
+        """The resurrection vector: _get_teacache_context resets at step 0."""
+        batch = SimpleNamespace(
+            enable_teacache=True,
+            teacache_params=TeaCacheParams(teacache_thresh=0.5),
+            num_inference_steps=5,
+            do_classifier_free_guidance=False,
+            is_cfg_negative=False,
+        )
+        cache = self._disabled_for_session()
+        with set_forward_context(0, None, batch):
+            self.assertIsNotNone(cache._get_teacache_context())
+        self.assertFalse(cache.enable_teacache)
+
+    def test_enable_undoes_the_disable_for_the_next_request(self):
+        cache = self._disabled_for_session()
+        cache.enable_teacache_for_session()
+        cache.reset_teacache_state()
+        self.assertTrue(cache.enable_teacache)
+
+    def test_batch_driven_models_still_default_enable(self):
+        """Models that never disable keep the pre-reset default arming."""
+        cache = TeaCacheMixin()
+        cache.prefix = "wan"
+        cache._init_teacache_state()
+        cache.enable_teacache = False  # stale from a non-teacache batch
+        cache.reset_teacache_state()
+        self.assertTrue(cache.enable_teacache)
+
+    def test_h3_configure_disarm_survives_later_resets(self):
+        """Arm/disarm via the real model method must flip the reset latch."""
+        host = TeaCacheMixin()
+        host.prefix = "minimax_h3"
+        host._init_teacache_state()
+        configure = MiniMaxH3DiTModel.h3_teacache_configure
+
+        configure(host, False, [1.0, 0.0], 0.5, 1, 4)
+        self.assertFalse(host.enable_teacache)
+        host.reset_teacache_state()  # next request boundary
+        self.assertFalse(host.enable_teacache)
+
+        configure(host, True, [1.0, 0.0], 0.5, 1, 4)
+        self.assertTrue(host.enable_teacache)
+        host.reset_teacache_state()
+        self.assertTrue(host.enable_teacache)
 
 
 if __name__ == "__main__":
