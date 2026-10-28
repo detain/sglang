@@ -90,11 +90,9 @@ def _sync_hicache_ready_counts(rank: int, init_file: str) -> None:
             _sleep_on_idle(False),
             _shm_names(),
         ):
-            # A row holds 6 ready counts, one more per extra host pool, the
-            # storage health bit and the folded digest's 2 words: 9, 10 and 11
-            # values here. The shm table still holds 8 (widened by the PR's
-            # shm-width follow-up), so every storage round takes the gloo
-            # reduce in the meantime.
+            # A row holds 6 ready counts, one more per extra host pool, the storage
+            # health bit and the folded digest's 2 words: 9, 10 and 11 values here.
+            # The shm table holds 9.
             for extra_pools in (0, 1, 2):
                 cache = _hicache_tp_rank(rank, extra_pools)
                 want = list(range(6 + extra_pools))
@@ -105,9 +103,7 @@ def _sync_hicache_ready_counts(rank: int, init_file: str) -> None:
                     got,
                 )
             exchange = cache._shm_count_exchange()
-            assert exchange.seq == 0, (
-                f"{exchange.seq} rows went through shm, expected the gloo fallback"
-            )
+            assert exchange.seq == 1, f"{exchange.seq} rows went through shm, not 1"
             exchange.close()
     finally:
         torch.distributed.destroy_process_group()
