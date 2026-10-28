@@ -1,9 +1,12 @@
 # stack.txt — diffusion-stack-002-2026-10-28
-# updated: 2026-10-28 — LANES 1-5 LANDED: entries 1-39 (lane 5 = entries 28-39, cherry-picked
-#   c47e5627a0..01302d4af5 with ZERO conflicts). Remaining to stack: LATE (2 ports) + OPTIONAL tier.
+# updated: 2026-10-28 — LANES 1-5 + LATE LANDED: entries 1-41 (lane 5 = entries 28-39, cherry-picked
+#   c47e5627a0..01302d4af5 with ZERO conflicts; 40-41 = LATE tier: PORT #28690 continuous batching v0
+#   + LOCAL H3 TeaCache fix, cherry-picked dh3-first — both touch runtime/cache/teacache.py).
+#   Remaining to stack: LT.2 (port analysis underway) + OPTIONAL tier.
 #
 # branch : diffusion-stack  (fork remote: origin = https://github.com/detain/sglang.git)
 # base   : 3fff5a298a (fork main == upstream sgl-project/sglang main, synced 2026-10-28)
+# tip    : 95628d440e (entry 40; entry 41 = 775edafa05 applied first) + docs — 41 entries
 # hardware: 4x NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition, SM120, 96 GB, PCIe-only (no NVLink/P2P)
 # models : FLUX.1-dev, FLUX.2-dev, Qwen-Image, SD3.5-large, Wan2.2-T2V-A14B, LTX-Video, LTX-2.5
 # provenance: entries 1-27 are lanes 1-4 of the wanted_stack.txt plan, cherry-picked (no -x; each commit's
@@ -19,16 +22,18 @@
 #   /tmp/opencode/dlane5-report.md + the lane-5 INTEGRATION VERIFICATION block at the bottom.
 #
 # ── WATCH ──
-#   * PRE-EXISTING BASE BUG (found by lane 4, NOT caused or fixed by this stack):
-#     dits/hunyuan_image3.py:1058 calls ctx.teacache_params.get_skip_boundaries(n, do_cfg=False), but
-#     merged #42422 removed that method (TeaCacheParams now defines only its replacement,
-#     get_skip_step_range). Reaching HunyuanImage3's TeaCache path on base raises AttributeError. File
-#     upstream against #42422; equivalent fix = get_skip_step_range(num_inference_steps) + inline range check.
+#   * RESOLVED by entry [41] (775edafa05): dits/hunyuan_image3.py:1058 called the #42422-removed
+#     get_skip_boundaries; now uses is_step_boundary on the step-unit API, pinned by
+#     test_hunyuan_image3_teacache.py. (Original note: pre-existing base bug found by lane 4.)
 #   * Entry 9 (#44448): its GPU test test/registered/kernels/ops/communication/test_custom_all_reduce_v1_vmm.py
-#     has NEVER been executed (CPU lanes couldn't); owed in a free-GPU window / CI.
+#     has NEVER been executed (CPU lanes couldn't); owed in a free-GPU window / CI. STILL OWED.
 #   * Entry 14 (#33588): Aug-forked PR hand-grafted onto the refactored weights_updater (kept base
 #     restore_weight_snapshot inside the new 3-path dispatch; counts all four CPU stores in resident_bytes).
-#     Two judgment calls documented in the commit message — needs a human review pass.
+#     Two judgment calls documented in the commit message. HUMAN REVIEW VERDICT 2026-10-28: graft is
+#     correct — KEEP. RESOLVED.
+#   * Entry [40] (#28690): GPU E2E of --batching-mode continuous (Qwen/FLUX/Wan) has NEVER run — owed
+#     in a free-GPU window; the path is opt-in and default-inert on CPU until then. Also owed: real-
+#     diffusers execution of the 4 TestBatchedSolver numerics tests (skipTest'd under the stub shim).
 #   * Entry 7 (#43242): the PR's test_causal_and_masked_calls_are_not_padded was REWRITTEN at integration
 #     (lane-internal): its mock.patch on F.scaled_dot_product_attention breaks entry 6's lazy CausalBias
 #     dispatch (bias.py __torch_function__ identity check); replaced with a TorchFunctionMode recorder —
@@ -213,6 +218,34 @@
 #       b200 perf baselines ONLY; recipe: Wan2.2 1-GPU peak 87.5 -> 60.6 GiB; code already in base
 #       (#38040/#44179). Verify: b200.json parses; test_suite_partitioning 36 passed.
 #
+# ── LATE — serial block (applied 2026-10-28; GIT ORDER IS [41] 775edafa05 BEFORE [40] 95628d440e:
+#    both touch runtime/cache/teacache.py and the H3 fix must underlie the packed-varlen port.
+#    Entry numbers follow the wanted_stack plan: LT.1 -> [40], plan-local fix -> [41].) ──
+# [40] 95628d440e  PORT PR #28690  Continuous batching v0 (closed upstream 10-13)
+#       source: pr28690 head b7db4add2f, hand-re-integrated onto this stack via the old-stack
+#       composition map 1d411e4768 + c492b7536c (34 files +6212/−166) | continuous in-flight denoising
+#       for high-concurrency image serving: scheduler coordinator + continuous stage worker + packed
+#       varlen forward + batched solver + per-request TeaCache state (capture/install/A-B-A isolation).
+#       OPT-IN + DEFAULT-INERT: --batching-mode {dynamic,continuous} defaults dynamic (no-flag CLI
+#       parse + ServerArgs() verified at tip; every hook behind == "continuous" or pipeline opt-in).
+#       teacache.py composed with [41] (git auto-merge, disjoint regions; union verified hunk-by-hunk):
+#       [41]'s _teacache_disabled_for_session latch + step-unit is_step_boundary API everywhere,
+#       [40]'s packed varlen decide() — kept BOTH. LiteAttention-era strip excluded; PR-era
+#       get_skip_boundaries shim NOT resurrected (entry-[24] policy). Verify: py_compile 35/35;
+#       83-file consolidated sweep zero new failures vs pristine-base control; 3 PR test files green.
+#       GPU continuous E2E OWED + 4 batched-solver tests skipped pending real diffusers — see WATCH.
+#       Evidence: /tmp/opencode/dlate1-report.md.
+# [41] 775edafa05  LOCAL dh3  HunyuanImage3 TeaCache call site on the #42422 step-boundary API +
+#       reset must not resurrect runtime-disable (5 files +225/−10) | fixes the WATCH pre-existing
+#       base bug (stale get_skip_boundaries call) AND the resurrection vector: new
+#       TeaCacheMixin._teacache_disabled_for_session latch — reset_teacache_state (request, step-0
+#       context, weights_updater paths) clears caches but no longer silently re-arms a runtime-
+#       disarmed model; minimax_h3 start-disarm + h3_teacache_configure flip the latch explicitly.
+#       Review verdict 2026-10-28: correct — control run @5c3b2c7fc7 failed EXACTLY the 6 targeted
+#       tests (2 AttributeError + 4 latch/resurrection), all green post-fix; 64 pre-existing tests
+#       identical on both trees. Verify: 5-file suite 70 passed / 0 failed (51 subtests).
+#       Evidence: /tmp/opencode/dh3-report.md.
+#
 # ── INTEGRATION VERIFICATION (diffusion-stack @ 988a599d41, 2026-10-28) ──
 #   * 27/27 cherry-picks: commit messages byte-identical to lane commits (plain cherry-pick, no -x);
 #     zero conflicts; non-shared files byte-identical to each lane tip (mechanical per-lane check);
@@ -260,3 +293,33 @@
 #   * OWED (unchanged GPU-window items + new): entry 9's custom_all_reduce VMM test; 2-rank
 #     sdpa_sharded re-run at final tip; full uncontended test_model_fast_paths run to re-confirm
 #     entry 33's lane-observed pre-existing-flake set at this tip.
+#
+# ── LATE INTEGRATION VERIFICATION (diffusion-stack code tip 95628d440e, 2026-10-28) ──
+#   * 2/2 cherry-picks: dh3 a5ff603901 -> 775edafa05, dlate1 997950a158 -> 95628d440e (amended once,
+#     message verbatim; see guard-fix note below). Application order dh3 -> dlate1 per plan. Both
+#     predicted conflicts (teacache.py, minimax_h3.py) stayed textual-clean: dlate1 does not touch
+#     minimax_h3.py at all, and teacache.py auto-merged disjoint — composition verified hunk-by-hunk
+#     (merged-vs-dh3 diff == dlate1's teacache changes exactly; merged-vs-dlate1 diff == dh3's latch
+#     exactly; zero live get_skip_boundaries callers tree-wide).
+#   * python3 -m py_compile: 35/35 .py changed by both picks PASS (+2 guard-adapted test files).
+#   * Consolidated CPU sweep (83 files: union of ALL stack-touched test files 3fff5a298a..tip +
+#     dlate1's 27-file regression themes + dh3's 5-file suite + dlate1-touched pipeline-config
+#     coverage + idle_cache_release; GPU-only test_usp_sdpa_sharded_heads_2_gpu.py stays in the
+#     GPU-window owed list, per lane precedent). /home/my/sglang/.venv/bin/python3 +
+#     /tmp/opencode/integrate-env stubs; test files overlaid on pristine 5c3b2c7fc7 control
+#     (/tmp/opencode/l1-base-ctrl; repo code untouched there).
+#     MERGED 64 failed / 1640 passed / 20 skipped / 1 collection error / 547 subtests  vs
+#     CONTROL 69 failed / 1597 passed / 16 skipped / 4 collection errors / 547 subtests.
+#     FAILED-set diff: control-only = the 9 new-feature tests ([41] 2 H3 + 4 lifecycle, [40] 3
+#     collection errors at base) — expected; merged-only = 1 RNG-position flake in
+#     cosmos3_step_mixed_precision::test_install_wraps_hf_quant_config_variant, PROVEN code-
+#     independent (standalone: identical 3-test FAILED set on BOTH trees; unseeded torch.randn
+#     numerics, RNG stream shifted by the newly-RUNNING [40] tests consuming it). => ZERO NEW
+#     FAILURES from the picks. Logs: /tmp/opencode/final-sweep-merged.txt, final-sweep-control.txt.
+#   * Guard fix folded into [40]: event_loop() gained a server_args.batching_mode read, so the two
+#     tests that call it with SimpleNamespace stubs (test_diffusion_metrics, test_idle_cache_release)
+#     got batching_mode added to their stubs (the latter via the real parser — pins the default);
+#     dlate1's own sweep had missed test_diffusion_metrics (caught here: 8 ctrl-pass -> merged-fail).
+#   * Inert-by-default [40]: no-flag FlexibleArgumentParser parse AND ServerArgs() both yield
+#     batching_mode=dynamic at tip; continuous_batching/continuous_stage_worker/batched_solver
+#     import clean; 3 continuous test files + 6 default/event-loop-path tests green in the sweep.
