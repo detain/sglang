@@ -9,6 +9,7 @@ from sglang.srt.runtime_context import (
     get_exec,
     get_memory,
     get_schedule,
+    mamba_cache_chunk_size,
 )
 from sglang.srt.utils import get_bool_env_var, is_gfx95_supported, is_hip
 
@@ -659,6 +660,14 @@ class PrefillAdder:
             (SWATokenToKVPoolAllocator, DeepSeekV4HiSparseTokenToKVPoolAllocator),
         )
         self.is_hybrid_ssm_cache = self.tree_cache.supports_mamba()
+        # One extend tracks a single Mamba state; ending a prefill on the cached
+        # fork lets that chunk donate the fork state and the next one the tail.
+        self.split_prefill_at_mamba_fork = (
+            self.is_hybrid_ssm_cache
+            and dllm_config is None
+            and get_exec().mamba.enable_mamba_extra_buffer
+            and envs.SGLANG_SPLIT_PREFILL_AT_MAMBA_FORK.get()
+        )
         # A new state slot eats shared-gap bytes that `rem_total_tokens` counts
         # as free, so reserve per slot or admission over-commits. Gate on the
         # ALLOCATOR: the reservation holds with the radix cache disabled too.
@@ -880,6 +889,27 @@ class PrefillAdder:
         # physical page boundary. Final, untruncated tails remain unrestricted.
         end = (prefix_len + chunk_len) // self.page_size * self.page_size
         return max(end - prefix_len, 0)
+
+    def _mamba_fork_split_len(
+        self,
+        req: Req,
+        *,
+        prefix_len: int,
+        truncation_align_size: Optional[int] = None,
+    ) -> Optional[int]:
+        if not self.split_prefill_at_mamba_fork:
+            return None
+        branch = req.mamba_branching_seqlen
+        if branch is None:
+            return None
+        split_len = branch - prefix_len
+        if split_len <= 0 or branch >= len(req.full_untruncated_fill_ids):
+            return None
+        if split_len % mamba_cache_chunk_size() or split_len % self.page_size:
+            return None
+        if truncation_align_size is not None and split_len % truncation_align_size:
+            return None
+        return split_len
 
     def budget_state(self):
         no_token = not self.memory_budget.has_capacity()
@@ -1177,7 +1207,7 @@ class PrefillAdder:
         end = (prefix_len + extend_len) // alignment * alignment
         return max(0, end - prefix_len)
 
-    def add_chunked_req(self, req: Req):
+    def add_chunked_req(self, req: Req, *, truncation_align_size: Optional[int] = None):
         if self.dllm_config is not None:
             _rem_tokens = self._get_dllm_remain_tokens(req)
         else:
@@ -1224,6 +1254,14 @@ class PrefillAdder:
             new_len = self._align_truncated_hybrid_chunk(req.prefix_len, new_len)
             if new_len <= 0:
                 return req
+        fork_split_len = self._mamba_fork_split_len(
+            req,
+            prefix_len=req.prefix_len,
+            truncation_align_size=truncation_align_size,
+        )
+        if fork_split_len is not None and fork_split_len < new_len:
+            new_len = fork_split_len
+            truncated = True
         request_slot_reserve = self._request_slot_reserve_for_req(
             req, extend_input_len=new_len
         )
@@ -1572,6 +1610,16 @@ class PrefillAdder:
                         extend_len = min(
                             extend_len, len(req.full_untruncated_fill_ids) - prefix_len
                         )
+                    if admission.is_chunked:
+                        # The larger host hit moved the prefix; the extend must
+                        # still stop at the Mamba fork.
+                        fork_split_len = self._mamba_fork_split_len(
+                            req,
+                            prefix_len=prefix_len,
+                            truncation_align_size=truncation_align_size,
+                        )
+                        if fork_split_len is not None and fork_split_len < extend_len:
+                            extend_len = fork_split_len
                     is_chunked = admission.is_chunked and (
                         prefix_len + extend_len < len(req.full_untruncated_fill_ids)
                     )
@@ -1608,6 +1656,11 @@ class PrefillAdder:
             self._commit_prefill_admission(
                 req, admission, mamba_gap_reserve, required_mamba_slots
             )
+
+            if admission.is_chunked and self.split_prefill_at_mamba_fork:
+                # A chunk cut short at the fork, or by a larger host load-back,
+                # leaves budget behind; no other prefill may take its slot.
+                return AddReqResult.OTHER
 
         # This verdict controls the next candidate, not the committed request.
         return self.budget_state()
@@ -1660,7 +1713,9 @@ class PrefillAdder:
             max_new_tokens = 0
         elif chunk_tokens_limit is not None and chunk_fit_tokens > chunk_tokens_limit:
             if has_chunked_req:
-                # Only one unfinished chunked request can be tracked.
+                # Only one unfinished chunked request can be tracked. (#46643
+                # guards every policy, which subsumes #45789's opt-in: a fork
+                # cut that leaves budget behind also keeps this latch shut.)
                 return AddReqResult.OTHER
             if self.exact_chunk_fill:
                 # Take the remainder, subject to the cache alignment below,
@@ -1689,6 +1744,20 @@ class PrefillAdder:
             is_chunked = True
             max_new_tokens = 0
             tile_tokens = extend_len
+
+        if (
+            chunk_tokens_limit is not None
+            and not has_chunked_req
+            and self.new_chunked_req is None
+        ):
+            fork_split_len = self._mamba_fork_split_len(
+                req, prefix_len=prefix_len, truncation_align_size=truncation_align_size
+            )
+            if fork_split_len is not None and fork_split_len < extend_len:
+                extend_len = fork_split_len
+                is_chunked = True
+                max_new_tokens = 0
+                tile_tokens = extend_len
 
         if (verdict := self._check_prefill_tile_budget(tile_tokens)) is not None:
             return verdict
