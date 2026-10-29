@@ -85,8 +85,6 @@ register_kernel(
     )
 )
 
-# TODO(merge5): re-plant entry 186 semantics (batch B5); fork hunks saved /tmp/opencode/merge5-dossier/replant/python__sglang__kernels__ops__kvcache____init__.py.fork-hunks.patch
-
 
 register_kernel(
     KernelSpec(

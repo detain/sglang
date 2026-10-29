@@ -618,12 +618,30 @@ class FusedMoE(torch.nn.Module):
             and self.runner_backend.is_flashinfer_trtllm()
             and (nvfp4_deferred or qwen35_fp8_deferred or qwen4_bf16_deferred)
         ) or packed_nvfp4_routed_deferred
+        # Entry-206 fork arm, re-planted: the routed kernel defers the same
+        # way; the standard dispatcher passes the deferred triple through, an
+        # A2A combine cannot. Upstream's packed_nvfp4_routed_deferred covers
+        # the TRTLLM runner only -- trtllm_routed stays fork contract.
+        self.supports_routed_deferred_finalize = (
+            self.runner_backend is not None
+            and self.runner_backend.is_flashinfer_trtllm_routed()
+            and nvfp4_deferred
+            and get_moe_a2a_backend().is_none()
+            # No deferred consumer rescales, so the top-k weights must carry it.
+            and _fuses_routed_scaling_factor_in_topk(
+                self.quant_method, self.runner_backend
+            )
+        )
         global _deferred_finalize_info_logged
         if not _deferred_finalize_info_logged:
             _deferred_finalize_info_logged = True
+            deferred_finalize_supported = (
+                self.supports_deferred_finalize
+                or self.supports_routed_deferred_finalize
+            )
             logging.getLogger(__name__).debug(
                 "FlashInfer TRTLLM MoE deferred finalize is "
-                f"{'enabled' if self.supports_deferred_finalize else 'disabled'} "
+                f"{'enabled' if deferred_finalize_supported else 'disabled'} "
                 f"(moe_runner_backend={self.runner_backend}, "
                 f"quant_method={type(self.quant_method).__name__})."
             )
@@ -2055,5 +2073,3 @@ def fused_moe_bypassed_piecewise_cuda_graph_impl(
     forward_context = get_tc_piecewise_forward_context()
     moe_layer = forward_context.moe_layers[layer_id]
     return moe_layer.forward_impl(hidden_states, topk_output)
-
-# TODO(merge5): re-plant entry 165,206,239 semantics (batch B5); fork hunks saved /tmp/opencode/merge5-dossier/replant/python__sglang__srt__layers__moe__fused_moe_triton__layer.py.fork-hunks.patch

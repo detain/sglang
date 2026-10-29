@@ -172,5 +172,3 @@ def assert_buffer_fits(used: int, capacity: int, what: str, **context) -> None:
     assert used <= capacity, f"{what}: used {used} > capacity {capacity}" + (
         f" ({', '.join(f'{k}={v}' for k, v in context.items())})" if context else ""
     )
-
-# TODO(merge5): re-plant entry 194 semantics (batch B5); fork hunks saved /tmp/opencode/merge5-dossier/replant/python__sglang__kernels__ops__attention__utils.py.fork-hunks.patch

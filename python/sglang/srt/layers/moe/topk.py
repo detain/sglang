@@ -3202,5 +3202,3 @@ def build_precomputed_topk_output(
 # ops (and their torch.compile fake impls) were retired here — both CUDA gate
 # paths now route through the unified Triton router (kernels/ops/moe/moe_fused_gate.py),
 # whose Python impl is traceable directly, so no register_fake shim is needed.
-
-# TODO(merge5): re-plant entry 296,297,299,300 semantics (batch B5); fork hunks saved /tmp/opencode/merge5-dossier/replant/python__sglang__srt__layers__moe__topk.py.fork-hunks.patch

@@ -651,7 +651,10 @@ def build_mega_moe_experts_weights(experts) -> None:
         build_flydsl_mega_moe_weights(experts)
         return
 
-    from deep_gemm import (
+    # Entry-296 adaptation, re-planted: the guarded wrapper, not raw deep_gemm
+    # -- this module is importable on seats without the wheel (the CPU test
+    # surface), and the wrapper shims the layout transform when absent.
+    from sglang.srt.layers.deep_gemm_wrapper import (
         transform_sf_into_required_layout,
     )
 
@@ -763,5 +766,3 @@ def _transform_mega_moe_shared_sf(linear) -> torch.Tensor:
         num_groups=1,
         disable_ue8m0_cast=False,
     ).squeeze(0)
-
-# TODO(merge5): re-plant entry 296 semantics (batch B5); fork hunks saved /tmp/opencode/merge5-dossier/replant/python__sglang__srt__layers__moe__mega_moe.py.fork-hunks.patch

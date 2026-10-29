@@ -334,5 +334,3 @@ class HashTopK(nn.Module):
                 topk_output.topk_weights, num_token_non_padded
             )
         return topk_output
-
-# TODO(merge5): re-plant entry 296,297,299,300 semantics (batch B5); fork hunks saved /tmp/opencode/merge5-dossier/replant/python__sglang__srt__layers__moe__hash_topk.py.fork-hunks.patch

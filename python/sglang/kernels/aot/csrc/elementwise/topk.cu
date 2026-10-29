@@ -376,4 +376,3 @@ void fast_topk_transform_ragged_interface(
   TORCH_CHECK(result == cudaSuccess, "topk kernel failed:", ::cudaGetErrorString(result));
 }
 
-// TODO(merge5): re-plant entry 28 semantics (batch B5); fork hunks saved /tmp/opencode/merge5-dossier/replant/python__sglang__kernels__aot__csrc__elementwise__topk.cu.fork-hunks.patch

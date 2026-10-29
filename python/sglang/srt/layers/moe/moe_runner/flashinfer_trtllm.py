@@ -1957,5 +1957,3 @@ def fused_experts_flashinfer_to_flashinfer_trtllm(
 # build time even for LoRA); gated by the master switch so the upstream path is untouched.
 if _SGLANG_EXPERIMENTAL_LORA_OPTI:
     from sglang.srt.lora.trtllm_lora_temp import sgl_backend  # noqa: E402,F401
-
-# TODO(merge5): re-plant entry 165 semantics (batch B5); fork hunks saved /tmp/opencode/merge5-dossier/replant/python__sglang__srt__layers__moe__moe_runner__flashinfer_trtllm.py.fork-hunks.patch

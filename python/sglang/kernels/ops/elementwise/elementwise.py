@@ -284,5 +284,3 @@ def fused_gate_sigmoid_mul_add(
         final_hidden_states,
         do_add=True,
     )
-
-# TODO(merge5): re-plant entry 166 semantics (batch B5); fork hunks saved /tmp/opencode/merge5-dossier/replant/python__sglang__kernels__ops__elementwise__elementwise.py.fork-hunks.patch

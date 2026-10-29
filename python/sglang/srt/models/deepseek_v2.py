@@ -1210,8 +1210,14 @@ class DeepseekV2MoE(nn.Module):
         deferred_finalize = (
             has_shared_output
             and not self._shared_expert_tp1
-            and topk_output.format == TopKOutputFormat.BYPASSED
-            and self.experts.supports_deferred_finalize
+            # Entry-206 fork arm, re-planted: a BYPASSED topk needs the
+            # trtllm deferred contract; a routed topk rides the
+            # trtllm_routed deferral through the standard dispatcher instead.
+            and (
+                self.experts.supports_deferred_finalize
+                if topk_output.format == TopKOutputFormat.BYPASSED
+                else self.experts.supports_routed_deferred_finalize
+            )
             and (
                 self._deferred_finalize_max_tokens <= 0
                 or hidden_states.shape[0] <= self._deferred_finalize_max_tokens
@@ -3609,5 +3615,3 @@ def _run_dsv4_dual_stream_outputs(
 
 
 EntryClass = [DeepseekV2ForCausalLM, DeepseekV3ForCausalLM, DeepseekV32ForCausalLM]
-
-# TODO(merge5): re-plant entry 296,297,300,236 semantics (batch B5); fork hunks saved /tmp/opencode/merge5-dossier/replant/python__sglang__srt__models__deepseek_v2.py.fork-hunks.patch
