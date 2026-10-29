@@ -3573,3 +3573,6 @@ __all__ = [
     "QwenSparseMultiStepDraftBackend",
     "is_qwen_qsa",
 ]
+
+# TODO(merge5): fold upstream changes dropped here (batch B5) -- file is fork-owned
+# (entries 1..210 QSA zone); #46970x-side hunks: replant/*qwen_sparse_attn_backend.py.upstream-side.patch

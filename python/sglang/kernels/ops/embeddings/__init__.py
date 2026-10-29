@@ -1,7 +1,7 @@
 """Embedding kernels."""
 
 from sglang.kernels.registry import register_kernel
-from sglang.kernels.spec import CapabilityRequirement, KernelBackend, KernelSpec
+from sglang.kernels.spec import CUDA_ONLY, KernelBackend, KernelSpec
 
 register_kernel(
     KernelSpec(
@@ -19,6 +19,24 @@ register_kernel(
         op="embeddings.engram_gather",
         backend=KernelBackend.TRITON,
         target="sglang.kernels.ops.embeddings.engram_gather:engram_gather",
+    )
+)
+
+register_kernel(
+    KernelSpec(
+        op="embeddings.engram_gather_peer",
+        backend=KernelBackend.TRITON,
+        target="sglang.kernels.ops.embeddings.engram_gather:engram_gather_peer",
+    )
+)
+
+register_kernel(
+    KernelSpec(
+        op="embeddings.engram_rows_to_token_major",
+        backend=KernelBackend.TRITON,
+        target=(
+            "sglang.kernels.ops.embeddings.engram_gather:engram_rows_to_token_major"
+        ),
     )
 )
 
@@ -63,7 +81,7 @@ register_kernel(
         op="embeddings.fused_qwen4_ngram_hash",
         backend=KernelBackend.TRITON,
         target="sglang.kernels.ops.embeddings.qwen4_ngram:fused_qwen4_ngram_hash",
-        capabilities=frozenset({CapabilityRequirement.CUDA}),
+        capabilities=CUDA_ONLY,
     )
 )
 
@@ -72,7 +90,7 @@ register_kernel(
         op="embeddings.fused_qwen4_packed_ngram_hash",
         backend=KernelBackend.TRITON,
         target="sglang.kernels.ops.embeddings.qwen4_ngram:fused_qwen4_packed_ngram_hash",
-        capabilities=frozenset({CapabilityRequirement.CUDA}),
+        capabilities=CUDA_ONLY,
     )
 )
 
@@ -81,6 +99,6 @@ register_kernel(
         op="embeddings.fused_qwen4_packed_ngram_update",
         backend=KernelBackend.TRITON,
         target="sglang.kernels.ops.embeddings.qwen4_ngram:fused_qwen4_packed_ngram_update",
-        capabilities=frozenset({CapabilityRequirement.CUDA}),
+        capabilities=CUDA_ONLY,
     )
 )

@@ -14,7 +14,7 @@ Run with:
 
 from sglang.test.ci.ci_register import register_cpu_ci
 
-register_cpu_ci(est_time=11, suite="base-a-test-cpu")
+register_cpu_ci(est_time=12, suite="base-a-test-cpu")
 
 import concurrent.futures
 import os
@@ -23,20 +23,34 @@ import tempfile
 import threading
 import time
 import unittest
+from contextlib import ExitStack
+from dataclasses import replace
+from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import torch
 
 from sglang.srt.environ import envs
+from sglang.srt.managers.cache_controller import HiCacheController
+from sglang.srt.mem_cache.base_prefix_cache import CacheRequestHandle
 from sglang.srt.mem_cache.hicache_storage import (
     HiCacheFile,
     HiCacheStorageConfig,
     MetadataCache,
+    PoolHitPolicy,
     PoolName,
     PoolTransfer,
     count_pool_hits,
 )
+from sglang.srt.mem_cache.hybrid_cache.hybrid_cache_controller import (
+    HybridCacheController,
+    PrefetchOperation,
+)
+from sglang.srt.mem_cache.pool_host.mamba import MambaPoolHost
+from sglang.srt.mem_cache.pool_host.mla import MLATokenToKVPoolHost
 from sglang.srt.mem_cache.storage.file.lru_file_evictor import _parse_size_to_bytes
+from sglang.srt.mem_cache.utils import get_storage_hash_str
 from sglang.test.test_utils import CustomTestCase
 
 
@@ -405,18 +419,26 @@ class TestCPSuffix(HiCacheFileLRUTestBase):
 class TestMLAOwnerGating(HiCacheFileLRUTestBase):
     def test_mla_rank0_owns_eviction(self):
         b = self.make_backend(max_size="200", is_mla=True, tp_rank=0, tp_size=2)
-        self.assertTrue(b._evictor.is_storage_owner)
         self.assertTrue(b._evictor.enabled)
 
-    def test_mla_rank1_skips_eviction(self):
+    def test_mla_rank1_only_creates_its_mamba_files(self):
         b = self.make_backend(max_size="200", is_mla=True, tp_rank=1, tp_size=2)
-        self.assertFalse(b._evictor.is_storage_owner)
-        self.assertFalse(b._evictor.enabled)
-        # Non-owner MLA ranks must not create new files when eviction is on.
+        # Replicated MLA files are created by rank 0 only.
         self.assertFalse(b.set("a", _t(50)))
         self.assertFalse(b.exists("a"))
-        self.assertEqual(len(b._evictor._lru), 0)
-        self.assertEqual(b._evictor._total_bytes, 0)
+        self.assertTrue(b.set("a.mamba", _t(50)))
+        self.assertEqual(b._evictor._total_bytes, 50)
+
+    def test_mla_mamba_round_trip_keeps_each_tp_rank(self):
+        """MLA shares KV files, but Mamba pages must not overwrite another rank's."""
+        ranks = [
+            self.make_backend(is_mla=True, tp_rank=rank, tp_size=2, subdir="shared")
+            for rank in range(2)
+        ]
+        for rank, b in enumerate(ranks):
+            self.assertTrue(b.set("a.mamba", _t(16, rank + 1)))
+        for rank, b in enumerate(ranks):
+            self.assertTrue(torch.equal(b.get("a.mamba", _t(16)), _t(16, rank + 1)))
 
     def test_mla_rank1_can_touch_existing_file(self):
         # Non-owner ranks may still touch existing files, just not create new ones.
@@ -431,7 +453,6 @@ class TestMLAOwnerGating(HiCacheFileLRUTestBase):
     def test_non_mla_each_rank_owns_its_files(self):
         # Non-MLA: even rank > 0 is its own owner because suffix isolates files.
         b = self.make_backend(max_size="200", is_mla=False, tp_rank=3, tp_size=4)
-        self.assertTrue(b._evictor.is_storage_owner)
         self.assertTrue(b._evictor.enabled)
 
 
@@ -643,136 +664,351 @@ class TestHiCacheFileMetadataIntegration(HiCacheFileLRUTestBase):
             mock_exists.assert_called_once()
 
 
-class _FakeHostPool:
-    """Minimal host pool implementing the v2 storage page interface on CPU.
-
-    Mirrors the contract of HostKVCache subclasses used by
-    HiCacheFile._read_page/_write_page (dummy flat page buffer,
-    set/get_from_flat_data_page).  `reject_set` simulates a legacy page whose
-    payload is incompatible with the current pool layout, which real pools
-    reject with ValueError from set_from_flat_data_page (e.g. MambaPoolHost
-    slot-side-state pages written before #39862, or INDEXER sidecar pages
-    written before #39893).
-    """
-
-    def __init__(self, page_bytes: int, reject_set: bool = False):
-        self.page_size = 1
-        self.page_bytes = page_bytes
-        self.reject_set = reject_set
-        self.pages = {}
-
-    def get_dummy_flat_data_page(self):
-        return torch.zeros(self.page_bytes, dtype=torch.uint8)
-
-    def set_from_flat_data_page(self, page_offset, data_page):
-        if self.reject_set:
-            raise ValueError(f"incompatible legacy page at {page_offset}")
-        self.pages[page_offset] = data_page.clone()
-
-    def get_data_page(self, page_offset, flat=True):
-        return self.pages[page_offset]
+def _dcp_config(rank=0, tp=4, dcp=2, **overrides):
+    cfg = replace(
+        _make_config(
+            tp_rank=rank,
+            tp_size=tp,
+            is_mla=True,
+            model="test/model",
+            extra_config={
+                "max_size": "2",
+                "min_free_space": "0",
+                "eviction_ratio": 1.0,
+            },
+        ),
+        dcp_size=dcp,
+        dcp_rank=rank % dcp,
+        logical_page_size=64 * dcp,
+    )
+    return replace(cfg, **overrides)
 
 
-class TestCorruptPageDegradesToMiss(HiCacheFileLRUTestBase):
-    """A page that exists on disk but cannot be read/loaded must degrade to a
-    per-page miss (sgl-project/sglang#39830): an exception escaping here would
-    unwind _batch_io_v2 and kill the daemon prefetch/backup threads,
-    permanently disabling the tier for the rest of the serve."""
-
-    PAGE_BYTES = 64
-
-    def _write_raw_page(self, backend: HiCacheFile, storage_key: str, n_bytes: int):
-        path = os.path.join(
-            backend.file_path, f"{backend._get_suffixed_key(storage_key)}.bin"
-        )
-        with open(path, "wb") as f:
-            f.write(b"z" * n_bytes)
-
-    def test_get_truncated_file_returns_none(self):
-        # Short read (IOError raised inside get) must come back as the
-        # tensor-or-None miss contract, not an exception.
-        b = self.make_backend()
-        self._write_raw_page(b, "k0", self.PAGE_BYTES - 8)
-        out = b.get("k0", target_location=_t(self.PAGE_BYTES))
-        self.assertIsNone(out)
-
-    def test_read_page_truncated_file_returns_false(self):
-        b = self.make_backend()
-        pool = _FakeHostPool(self.PAGE_BYTES)
-        self._write_raw_page(b, "k0", self.PAGE_BYTES - 8)
-        self.assertFalse(b._read_page(PoolName.KV, "k0", pool, 0))
-
-    def test_read_page_missing_file_returns_false(self):
-        b = self.make_backend()
-        pool = _FakeHostPool(self.PAGE_BYTES)
-        self.assertFalse(b._read_page(PoolName.KV, "absent", pool, 0))
-
-    def test_read_page_value_error_becomes_false(self):
-        # Full-size file (get succeeds) but the pool rejects the legacy page
-        # layout with ValueError from set_from_flat_data_page.
-        b = self.make_backend()
-        self._write_raw_page(b, "k0", self.PAGE_BYTES)
-        pool = _FakeHostPool(self.PAGE_BYTES, reject_set=True)
-        self.assertFalse(b._read_page(PoolName.KV, "k0", pool, 0))
-
-    def test_write_page_error_becomes_false(self):
-        b = self.make_backend()
-
-        class _BoomPool(_FakeHostPool):
-            def get_data_page(self, page_offset, flat=True):
-                raise RuntimeError("page extraction failed")
-
-        self.assertFalse(
-            b._write_page(PoolName.KV, "k0", _BoomPool(self.PAGE_BYTES), 0)
+class TestDcpStorage(unittest.TestCase):
+    def setUp(self):
+        self.stack = ExitStack()
+        self.addCleanup(self.stack.close)
+        self.directory = self.stack.enter_context(tempfile.TemporaryDirectory())
+        self.stack.enter_context(
+            envs.SGLANG_HICACHE_FILE_BACKEND_STORAGE_DIR.override(self.directory)
         )
 
-    def test_batch_get_v2_flags_bad_page_per_page(self):
-        # One corrupt (truncated) sidecar page among good ones: good pages
-        # load, the bad page is flagged False per page, and count_pool_hits
-        # truncates the hit to the contiguous leading prefix of successes.
-        b = self.make_backend()
-        pool = _FakeHostPool(self.PAGE_BYTES)
-        b.register_mem_host_pool_v2(pool, PoolName.INDEXER)
-        keys = ["h0", "h1", "h2"]
-        for i, k in enumerate(keys):
-            storage_key = b._log_key(PoolName.INDEXER, k)
-            if i == 1:
-                self._write_raw_page(b, storage_key, self.PAGE_BYTES // 2)  # corrupt
-            else:
-                self.assertTrue(b.set(storage_key, _t(self.PAGE_BYTES, fill=i)))
+    def test_shard_keys_and_writer_selection(self):
+        for tp, dcp, mla in (
+            (2, 2, True),
+            (4, 2, True),
+            (4, 4, True),
+            (4, 1, True),
+            (4, 1, False),
+        ):
+            with self.subTest(tp=tp, dcp=dcp, mla=mla):
+                keys = []
+                for rank in range(tp):
+                    cfg = _dcp_config(rank, tp, dcp, is_mla_model=mla)
+                    backend = HiCacheFile(cfg)
+                    controller = HiCacheController.__new__(HiCacheController)
+                    controller.storage_config = cfg
+                    owner = not mla or rank < dcp
+                    self.assertEqual(cfg.is_storage_writer, owner)
+                    self.assertEqual(controller.backup_skip, not owner)
+                    self.assertEqual(
+                        backend._evictor._owns(backend._get_suffixed_key("page")), owner
+                    )
+                    key = backend._get_suffixed_key("page")
+                    keys.append(key)
+                    if dcp == 1:
+                        self.assertEqual(
+                            key, "page_test-model" + ("" if mla else f"_{rank}_{tp}")
+                        )
+                    elif rank >= dcp:
+                        self.assertEqual(key, keys[rank % dcp])
+                self.assertEqual(len(set(keys)), dcp if mla else tp)
 
+    def test_key_separation_and_invalid_identity(self):
+        variants = (
+            {},
+            {"tp_size": 2},
+            {"dcp_size": 4},
+            {"logical_page_size": 256},
+            {"model_name": "other"},
+            {"pp_size": 2, "pp_rank": 1},
+            {"attn_cp_size": 2, "attn_cp_rank": 1},
+        )
+        keys = [
+            HiCacheFile(_dcp_config(**v))._get_suffixed_key("page") for v in variants
+        ]
+        self.assertEqual(len(set(keys)), len(variants))
+        for invalid in (
+            {"dcp_size": 0},
+            {"dcp_rank": 2},
+            {"tp_rank": 1},
+            {"tp_rank": 4},
+            {"tp_size": 3},
+            {"is_mla_model": False},
+            {"logical_page_size": None},
+            {"logical_page_size": 127},
+        ):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                _dcp_config(**invalid)
+
+    def test_file_reload_and_owner_eviction(self):
+        for rank in range(4):
+            backend = HiCacheFile(_dcp_config(rank))
+            self.assertEqual(
+                backend.set(
+                    "page" if rank < 2 else "unowned",
+                    torch.full((2,), rank, dtype=torch.uint8),
+                ),
+                rank < 2,
+            )
+        self.assertEqual(len(list(Path(self.directory).glob("*.bin"))), 2)
+        # Independent backends model fresh engines, including replica readers.
+        readers = [HiCacheFile(_dcp_config(rank)) for rank in range(4)]
+        for rank, backend in enumerate(readers):
+            torch.testing.assert_close(
+                backend.get("page", torch.empty(2, dtype=torch.uint8)),
+                torch.full((2,), rank % 2, dtype=torch.uint8),
+            )
+        self.assertTrue(readers[0].set("next", torch.zeros(2, dtype=torch.uint8)))
+        self.assertFalse(readers[0].exists("page"))
+        self.assertTrue(readers[1].exists("page"))
+        self.assertEqual([b._evictor._total_bytes for b in readers], [2, 2, 0, 0])
+
+    def _hybrid_backend(self, rank, dcp=2, max_size=0):
+        cfg = _dcp_config(
+            rank,
+            dcp=dcp,
+            extra_config={
+                "max_size": max_size,
+                "min_free_space": 0,
+                "eviction_ratio": 1,
+                "enable_metadata_cache": False,
+            },
+        )
+        backend = HiCacheFile(cfg)
+        data = torch.tensor([[rank, 10], [rank, 20]], dtype=torch.uint8)
+        backend.register_mem_host_pool_v2(
+            SimpleNamespace(
+                page_size=1,
+                data=data,
+                get_data_page=lambda index, flat=False: data[index].clone(),
+                get_dummy_flat_data_page=lambda: torch.empty(2, dtype=torch.uint8),
+                set_from_flat_data_page=lambda index, value: data[index].copy_(value),
+            ),
+            PoolName.MAMBA,
+        )
+        return backend
+
+    def test_kda_keys_and_state_slots(self):
+        for dcp in (1, 2):
+            with self.subTest(dcp=dcp):
+                backends = [self._hybrid_backend(rank, dcp) for rank in range(4)]
+                self.assertEqual(
+                    len({b._get_component_key("page") for b in backends}), dcp
+                )
+                self.assertEqual(
+                    len(
+                        {b._get_component_key("page", PoolName.MAMBA) for b in backends}
+                    ),
+                    4,
+                )
+                transfer = PoolTransfer(
+                    name=PoolName.MAMBA,
+                    host_indices=torch.tensor([1]),
+                    keys=["page"],
+                    hit_policy=PoolHitPolicy.TRAILING_PAGES,
+                )
+                for rank, backend in enumerate(backends):
+                    cc = HybridCacheController.__new__(HybridCacheController)
+                    cc.storage_config = _dcp_config(rank, dcp=dcp)
+                    self.assertTrue(cc.should_backup(transfer))
+                    self.assertEqual(cc.backup_skip, rank >= dcp)
+                    # Old MLA state keys must miss, even when KV exists.
+                    backend.set("page", _t(2))
+                    legacy_path = Path(self.directory) / (
+                        f"page.mamba{backend.config_suffix}.bin"
+                    )
+                    legacy_path.write_bytes(bytes([99, 99]))
+                    self.assertEqual(
+                        backend.batch_exists_v2(["page"], [transfer]).kv_hit_pages, 0
+                    )
+                    self.assertEqual(
+                        backend.batch_set_v2([transfer]), {PoolName.MAMBA: [True]}
+                    )
+                    reader = self._hybrid_backend(rank, dcp)
+                    state = reader.registered_pools[PoolName.MAMBA].data
+                    state.zero_()
+                    self.assertEqual(
+                        reader.batch_get_v2([transfer]), {PoolName.MAMBA: [True]}
+                    )
+                    torch.testing.assert_close(
+                        state, torch.tensor([[0, 0], [rank, 20]], dtype=torch.uint8)
+                    )
+
+    def test_sparse_checkpoint_intersection_and_cancelled_rank(self):
+        tokens = list(range(1024))
+        keys = get_storage_hash_str(tokens, None, page_size=128)
         transfer = PoolTransfer(
-            name=PoolName.INDEXER,
-            host_indices=torch.tensor([0, 8, 16]),
-            keys=keys,
+            name=PoolName.MAMBA,
+            keys=["__placeholder__"],
+            hit_policy=PoolHitPolicy.TRAILING_PAGES,
         )
-        results = b.batch_get_v2([transfer])
-        self.assertEqual(results[PoolName.INDEXER], [True, False, True])
-        # Consumers clamp with the leading-run count.
-        self.assertEqual(count_pool_hits(results)[PoolName.INDEXER], 1)
-        # The good first page was actually loaded; the failing one was not.
-        self.assertIn(0, pool.pages)
-        self.assertNotIn(8, pool.pages)
-        # And the thread survived to load pages after the bad one.
-        self.assertIn(16, pool.pages)
+        controllers, operations = [], []
+        for rank, checkpoints in enumerate(([4, 8], [4, 6])):
+            backend = self._hybrid_backend(rank)
+            for key in keys:
+                self.assertTrue(backend.set(key, _t(2)))
+            for page in checkpoints:
+                key = backend._log_key(PoolName.MAMBA, keys[page - 1])
+                self.assertTrue(backend.set(key, _t(2)))
+            result = backend.batch_exists_v2(keys, [transfer])
+            self.assertEqual(result.restorable_prefix_pages, checkpoints)
+            cc = HybridCacheController.__new__(HybridCacheController)
+            cc.storage_backend = backend
+            cc.page_size = 128
+            cc.prefetch_hits_sync_groups = []
+            op = PrefetchOperation(
+                CacheRequestHandle("test", 0), tokens, pool_transfers=[transfer]
+            )
+            _, hit = cc._storage_hit_query(op)
+            self.assertEqual(hit, checkpoints[-1] * 128)
+            controllers.append(cc)
+            operations.append(op)
 
-    def test_batch_set_v2_with_raising_pool_returns_false_not_raise(self):
-        b = self.make_backend()
+        for rank, cc in enumerate(controllers):
+            other = operations[1 - rank]
+            peer = torch.zeros(9, dtype=torch.int)
+            peer[0] = 1
+            peer[other.pool_storage_result.restorable_prefix_pages] = 1
 
-        class _BoomPool(_FakeHostPool):
-            def get_data_page(self, page_offset, flat=True):
-                raise ValueError("legacy layout")
+            def reduce(tensor, op, groups, peer=peer):
+                # Restorable flags lead; per-pool verdicts trail them.
+                self.assertEqual(tensor.numel(), peer.numel() + len(PoolName))
+                self.assertEqual(op, torch.distributed.ReduceOp.MIN)
+                tensor[: peer.numel()] = torch.minimum(tensor[: peer.numel()], peer)
 
-        pool = _BoomPool(self.PAGE_BYTES)
-        b.register_mem_host_pool_v2(pool, PoolName.INDEXER)
-        transfer = PoolTransfer(
-            name=PoolName.INDEXER,
-            host_indices=torch.tensor([0, 8]),
-            keys=["h0", "h1"],
+            cc._all_reduce = mock.Mock(side_effect=reduce)
+            local = operations[rank]
+            self.assertEqual(
+                cc._sync_prefetch_hit_query(
+                    local, local.pool_storage_result.kv_hit_pages * 128
+                ),
+                512,
+            )
+            local.mark_terminate()
+            self.assertEqual(cc._sync_prefetch_hit_query(local, 0), 0)
+            self.assertEqual(cc._all_reduce.call_count, 2)
+
+    def test_eviction_owns_only_local_state_and_selected_mla(self):
+        # Ranks 0 and 2 share MLA keys. Both still own their distinct KDA files.
+        writer = self._hybrid_backend(0)
+        peer = self._hybrid_backend(2)
+        self.assertTrue(writer.set("kv", _t(2)))
+        self.assertTrue(
+            writer.set(
+                writer._log_key(PoolName.MAMBA, "state0"),
+                _t(2),
+            )
         )
-        results = b.batch_set_v2([transfer])
-        self.assertEqual(results[PoolName.INDEXER], [False, False])
-        self.assertEqual(count_pool_hits(results)[PoolName.INDEXER], 0)
+        self.assertTrue(
+            peer.set(
+                peer._log_key(PoolName.MAMBA, "state2"),
+                _t(2),
+            )
+        )
+        backend = self._hybrid_backend(2, max_size=2)
+        owned = backend._get_component_key("state2", PoolName.MAMBA)
+        self.assertEqual(list(backend._evictor._lru), [owned])
+        # A read of shared MLA must not adopt it into rank 2's eviction ledger.
+        self.assertIsNotNone(backend.get("kv", torch.empty(2, dtype=torch.uint8)))
+        self.assertEqual(list(backend._evictor._lru), [owned])
+        self.assertFalse(backend.set("new-kv", _t(2)))
+        self.assertTrue(
+            backend.set(
+                backend._log_key(PoolName.MAMBA, "new-state"),
+                _t(2, 1),
+            )
+        )
+        self.assertFalse((Path(self.directory) / f"{owned}.bin").exists())
+        self.assertTrue(writer.exists("kv"))
+        self.assertTrue(writer.exists(writer._log_key(PoolName.MAMBA, "state0")))
+        self.assertEqual(backend._evictor._total_bytes, 2)
+        # The selected MLA writer shares one cap between its MLA and KDA files.
+        selected = self._hybrid_backend(0, max_size=4)
+        self.assertEqual(selected._evictor._total_bytes, 4)
+        self.assertTrue(
+            selected.set(
+                selected._log_key(PoolName.MAMBA, "next"),
+                _t(2, 1),
+            )
+        )
+        self.assertLessEqual(selected._evictor._total_bytes, 4)
+        self.assertTrue(backend.exists(backend._log_key(PoolName.MAMBA, "new-state")))
+
+    def test_attachment_guards(self):
+        for case in (
+            "backend",
+            "non_mla",
+            "dummy",
+            "split",
+            "extra_pool",
+            "file",
+            "mooncake",
+            "file_kda",
+            "mooncake_kda",
+            "wrong_pool",
+        ):
+            host = MLATokenToKVPoolHost.__new__(MLATokenToKVPoolHost)
+            host.kv_buffer = None if case == "dummy" else object()
+            host.layout = "page_first"
+            if case == "split":
+                host.layout = "page_first_kv_split"
+            cc = HiCacheController.__new__(HiCacheController)
+            cc.enable_storage = False
+            cc.host_memory_mode = "cache"
+            cc.storage_host_pool = (
+                SimpleNamespace(layout=host.layout) if case == "non_mla" else host
+            )
+            entries = [SimpleNamespace(name=PoolName.KV, host_pool=host)]
+            if case in ("extra_pool", "wrong_pool", "file_kda", "mooncake_kda"):
+                entries.append(
+                    SimpleNamespace(
+                        name=PoolName.SWA if case == "extra_pool" else PoolName.MAMBA,
+                        host_pool=object()
+                        if case == "wrong_pool"
+                        else MambaPoolHost.__new__(MambaPoolHost),
+                    )
+                )
+            cc.mem_pool_host = SimpleNamespace(entries=entries)
+            accepted = case in ("file", "mooncake", "file_kda", "mooncake_kda")
+            cc._stop_storage_threads = mock.Mock(
+                side_effect=RuntimeError("past validation") if accepted else None
+            )
+            with (
+                self.subTest(case=case),
+                mock.patch(
+                    "sglang.srt.managers.cache_controller.get_memory",
+                    return_value=SimpleNamespace(
+                        hicache_storage_key_scheme="rank-suffix"
+                    ),
+                ),
+                mock.patch(
+                    "sglang.srt.managers.cache_controller.get_parallel",
+                    return_value=SimpleNamespace(attn_dcp_size=2),
+                ),
+                self.assertRaisesRegex(RuntimeError, "previous detach")
+                if accepted
+                else self.assertRaises(NotImplementedError),
+            ):
+                cc.attach_storage_backend(
+                    "nixl"
+                    if case == "backend"
+                    else "mooncake"
+                    if case.startswith("mooncake")
+                    else "file"
+                )
+            self.assertEqual(cc._stop_storage_threads.call_count, int(accepted))
+            self.assertFalse(cc.enable_storage)
 
 
 class TestUncachedBatchExists(HiCacheFileLRUTestBase):
@@ -795,3 +1031,5 @@ class TestUncachedBatchExists(HiCacheFileLRUTestBase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+# TODO(merge5): re-plant entry 24,250,251 semantics (batch B2); fork hunks in /tmp/opencode/merge5-dossier/replant/test__registered__unit__mem_cache__test_hicache_file_lru_unit.py.fork-hunks.patch

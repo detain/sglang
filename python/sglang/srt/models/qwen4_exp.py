@@ -68,6 +68,7 @@ from sglang.srt.layers.quantization.unquant import UnquantizedEmbeddingMethod
 from sglang.srt.layers.utils import PPMissingLayer, get_layer_id
 from sglang.srt.layers.vocab_parallel_embedding import VocabParallelEmbedding
 from sglang.srt.model_executor.cuda_graph_config import Backend
+from sglang.srt.mem_cache.ple_state_pool import NGRAM_PART, SHORT_CONV_PART
 from sglang.srt.model_executor.forward_batch_info import (
     ForwardBatch,
     ForwardMode,
@@ -76,6 +77,7 @@ from sglang.srt.model_executor.forward_batch_info import (
 from sglang.srt.model_executor.forward_context import (
     get_attn_backend,
     get_req_to_token_pool,
+    get_token_to_kv_pool,
 )
 from sglang.srt.model_executor.runner import get_is_capture_mode
 from sglang.srt.model_executor.runner_backend_utils.breakable_cuda_graph import (
@@ -83,6 +85,7 @@ from sglang.srt.model_executor.runner_backend_utils.breakable_cuda_graph import 
     is_in_breakable_cuda_graph,
 )
 from sglang.srt.model_executor.runner_backend_utils.breakable_cuda_graph.breakable_cuda_graph import (
+    _current_capture_var,
     _is_stream_capturing,
 )
 from sglang.srt.model_executor.runner_backend_utils.tc_piecewise_cuda_graph import (
@@ -157,25 +160,24 @@ def _should_interleave_ple_table() -> bool:
 
 
 @eager_on_graph(True)
-def _breakable_qsa_indexer(layer, hidden_states, positions):
+def _breakable_qsa_indexer(layer, hidden_states, positions, output):
+    """Writes the top-k into ``output``, the caller's rows of the layer's bridge;
+    allocates a new bridge when ``output`` is None."""
     # Read the live batch on every replay of this eager break.
     forward_batch = get_tc_piecewise_forward_context().forward_batch
     topk = layer._compute_qsa_topk_indices_eager(
         hidden_states=hidden_states,
         positions=positions,
         forward_batch=forward_batch,
-        use_host_prefill_lengths=True,
     )
-    # Separate buffers cost up to buckets * max_tokens * block_topk * 4B * QSA layers.
-    # For 8 buckets / 16K tokens / topk512 / 12 layers: 3 GiB -> 384 MiB shared.
-    bridge = layer._qsa_prefill_topk_bridge
-    if bridge is None or bridge.shape[0] < hidden_states.shape[0]:
-        bridge = topk.new_empty((hidden_states.shape[0], topk.shape[1]))
-        layer._qsa_prefill_topk_bridge = bridge
-    output = bridge[: hidden_states.shape[0]]
+    if output is None:
+        # Separate buffers cost up to buckets * max_tokens * block_topk * 4B * QSA
+        # layers. For 8 buckets / 16K tokens / topk512 / 12 layers: 3 GiB -> 384 MiB
+        # shared. Graphs captured on a smaller bridge keep writing and reading it.
+        output = topk.new_empty((hidden_states.shape[0], topk.shape[1]))
+        layer._qsa_prefill_topk_bridges.insert(0, output)
     output.fill_(0)
     output[: topk.shape[0]].copy_(topk)
-    return output
 
 
 def _get_ple_forward_mode(forward_batch: ForwardBatch) -> ForwardMode:
@@ -242,8 +244,11 @@ def _ple_padding_is_wasteful(batch: _PLEBatch) -> bool:
 
 
 class _BreakablePLEBatch:
-    # _copy_output needs __dict__ to replace batch on replay; Struct uses slots.
-    def __init__(self, batch: Optional[_PLEBatch]):
+    """The live batch's PLE layout for the PLE breaks of one forward. A capture
+    records this holder, and ``_breakable_prepare_ple_batch`` refills it at every
+    replay."""
+
+    def __init__(self, batch: Optional[_PLEBatch] = None):
         self.batch = batch
 
 
@@ -255,6 +260,7 @@ def _breakable_prepare_ple_batch(
     ngram_eos_token_id,
     prepare_rows=None,
     use_packed_ngram=False,
+    holder: Optional[_BreakablePLEBatch] = None,
 ):
     forward_batch = get_tc_piecewise_forward_context().forward_batch
     batch = _prepare_ple_batch(
@@ -269,6 +275,9 @@ def _breakable_prepare_ple_batch(
         # prefetch; eager breaks re-run on every replay, so the pinned
         # staging buffer stays fed just like on the plain eager path.
         prepare_rows(forward_batch, ple_batch=batch)
+    if holder is not None:
+        holder.batch = batch
+        return holder
     return _BreakablePLEBatch(batch=batch)
 
 
@@ -462,6 +471,11 @@ def _prepare_ple_batch(
                     tokens,
                     tokens.new_full((), ngram_eos_token_id),
                 )
+        # Read once, before the layer loop: wait for the layer whose host
+        # load-back restores the context.
+        router = get_token_to_kv_pool().layer_router
+        router.wait_for_part(NGRAM_PART)
+        history = router.part_view(NGRAM_PART).get_context(state_indices)
         if history.shape[1] != ngram_size - 1:
             raise RuntimeError(
                 "Qwen4 PLE N-gram cache has the wrong context width: "
@@ -516,6 +530,7 @@ def _commit_ple_batch(batch: Optional[_PLEBatch], forward_batch: ForwardBatch) -
 
     if batch.ngram_context is None:
         return
+    ngram = get_token_to_kv_pool().layer_router.part_view(NGRAM_PART)
     context = batch.ngram_context
     context_len = context.shape[1] - batch.row_width
     if batch.mode.is_target_verify():
@@ -529,7 +544,7 @@ def _commit_ple_batch(batch: Optional[_PLEBatch], forward_batch: ForwardBatch) -
             batch.lengths.ne(0),
             pool.size,
         )
-        pool.set_ngram_intermediate_context(
+        ngram.set_intermediate_context(
             torch.where(
                 valid_steps.unsqueeze(-1),
                 step_contexts,
@@ -543,23 +558,23 @@ def _commit_ple_batch(batch: Optional[_PLEBatch], forward_batch: ForwardBatch) -
         # Decode advances every two-token history by exactly one column.  Slicing
         # preserves the int64 values while avoiding arange + gather launches.
         next_context = context[:, batch.row_width :]
-        pool.set_ngram_context(batch.state_indices, next_context)
+        ngram.set_context(batch.state_indices, next_context)
         track = _ple_track_targets(forward_batch, batch)
         if track is not None:
             track_indices, _ = track
-            pool.set_ngram_context(track_indices, next_context)
+            ngram.set_context(track_indices, next_context)
         return
 
     context_cols = torch.arange(context_len, device=context.device, dtype=torch.long)
     next_context = context.gather(
         1, batch.lengths.unsqueeze(1) + context_cols.unsqueeze(0)
     )
-    pool.set_ngram_context(batch.state_indices, next_context)
+    ngram.set_context(batch.state_indices, next_context)
 
     track = _ple_track_targets(forward_batch, batch)
     if track is not None:
         track_indices, track_offsets = track
-        pool.set_ngram_context(
+        ngram.set_context(
             track_indices,
             context.gather(1, track_offsets.unsqueeze(1) + context_cols.unsqueeze(0)),
         )
@@ -1554,8 +1569,10 @@ class Qwen4ExpPLELayer(nn.Module):
     ) -> torch.Tensor:
         if x.shape[0] == 0:
             return x
-        pool = get_req_to_token_pool()
-        conv_state = pool.short_conv_layer_cache(self.layer_id)
+        short_conv = get_token_to_kv_pool().layer_router.read(
+            self.layer_id, SHORT_CONV_PART
+        )
+        conv_state = short_conv.view.layer_cache(short_conv.view_layer_id)
 
         if _use_qwen4_varlen_prefill(
             batch.mode,
@@ -1646,7 +1663,9 @@ class Qwen4ExpPLELayer(nn.Module):
         ).transpose(1, 2)
 
         if batch.mode.is_target_verify():
-            intermediate_cache = pool.short_conv_layer_intermediate_cache(self.layer_id)
+            intermediate_cache = short_conv.view.layer_intermediate_cache(
+                short_conv.view_layer_id
+            )
             if intermediate_cache is not None:
                 if self.short_conv_state_len:
                     intermediate_state = (
@@ -2037,17 +2056,19 @@ class Qwen4ExpPLELayer(nn.Module):
                 fused_qwen4_verify_conv,
             )
 
-            pool = get_req_to_token_pool()
+            short_conv = get_token_to_kv_pool().layer_router.read(
+                self.layer_id, SHORT_CONV_PART
+            )
             conv_args = (
                 gated_value_normed,
                 gated_value,
                 self.conv1d.weight,
-                pool.short_conv_layer_cache(self.layer_id),
+                short_conv.view.layer_cache(short_conv.view_layer_id),
                 batch.state_indices,
                 batch.valid_tokens,
                 batch.row_width,
                 self.short_conv_dilation,
-                pool.short_conv_layer_intermediate_cache(self.layer_id),
+                short_conv.view.layer_intermediate_cache(short_conv.view_layer_id),
             )
             if can_fuse_qwen4_verify_conv(*conv_args):
                 output = fused_qwen4_verify_conv(*conv_args)
@@ -2449,7 +2470,8 @@ class Qwen4ExpAttentionDecoderLayer(
         from sglang.srt.layers.attention.qsa.glue import build_qsa_indexer
 
         self.is_qsa = is_qwen_qsa(config)
-        self._qsa_prefill_topk_bridge = None
+        # The prefill graphs' top-k bridges, newest first. Buckets share the newest.
+        self._qsa_prefill_topk_bridges: list = []
         if self.is_qsa:
             self.indexer = build_qsa_indexer(
                 config=config,
@@ -2467,9 +2489,25 @@ class Qwen4ExpAttentionDecoderLayer(
         forward_batch: ForwardBatch,
     ) -> torch.Tensor:
         if is_in_breakable_cuda_graph() and forward_batch.forward_mode.is_extend():
-            return _breakable_qsa_indexer(
-                layer=self, hidden_states=hidden_states, positions=positions
+            rows = hidden_states.shape[0]
+            bridges = self._qsa_prefill_topk_bridges
+            output = (
+                bridges[0][:rows] if bridges and bridges[0].shape[0] >= rows else None
             )
+            # A capture records the bridge it is given; the warmup before it
+            # allocates one.
+            assert output is not None or _current_capture_var.get() is None, (
+                "qsa top-k bridge not allocated before capture"
+            )
+            _breakable_qsa_indexer(
+                layer=self,
+                hidden_states=hidden_states,
+                positions=positions,
+                output=output,
+            )
+            if output is None:  # first run: the break allocated the bridge
+                output = bridges[0][:rows]
+            return output
         return self._compute_qsa_topk_indices_eager(
             hidden_states=hidden_states,
             positions=positions,
@@ -2481,8 +2519,6 @@ class Qwen4ExpAttentionDecoderLayer(
         hidden_states: torch.Tensor,
         positions: torch.Tensor,
         forward_batch: ForwardBatch,
-        *,
-        use_host_prefill_lengths: bool = False,
     ) -> torch.Tensor:
         from sglang.srt.layers.attention.qsa.glue import (
             get_qsa_indexer_metadata,
@@ -2501,13 +2537,6 @@ class Qwen4ExpAttentionDecoderLayer(
         indexer_metadata = get_qsa_indexer_metadata(
             backend, self.layer_id, forward_batch
         )
-        if use_host_prefill_lengths:
-            indexer_metadata = msgspec.structs.replace(
-                indexer_metadata,
-                prefill_sequence_lengths_cpu=tuple(
-                    forward_batch.seq_lens_cpu[: forward_batch.batch_size].tolist()
-                ),
-            )
         indexer_kwargs = {}
         if _shards_rows_over_cp(forward_batch):
             # Prefill CP: this rank's rows select against the index keys of the
@@ -2572,6 +2601,16 @@ class Qwen4ExpAttentionDecoderLayer(
             topk_indices.record_stream(current_stream)
             attention_kwargs["topk_indices"] = topk_indices
         elif self.is_qsa:
+            if _shards_rows_over_cp(forward_batch) and not get_is_capture_mode():
+                from sglang.srt.layers.attention.qsa.glue import (
+                    resolve_qsa_sparse_backend,
+                )
+
+                # Every CP rank issues the K/V gather before the index-key
+                # gather, overlapping it with the indexer's local computation.
+                resolve_qsa_sparse_backend(get_attn_backend()).prefetch_cp_kv(
+                    self.attn, k, v, forward_batch
+                )
             attention_kwargs["topk_indices"] = self._compute_qsa_topk_indices(
                 hidden_states, positions, forward_batch
             )
@@ -2888,12 +2927,14 @@ class Qwen4ExpModel(Qwen3_5ForCausalLM):
         )
         ple_batch = None
         if breakable_ple:
-            ple_batch = _breakable_prepare_ple_batch(
+            ple_batch = _BreakablePLEBatch()
+            _breakable_prepare_ple_batch(
                 input_ids=input_ids,
                 ngram_size=self.ple_ngram_size,
                 ngram_eos_token_id=self.ple_ngram_eos_token_id,
                 prepare_rows=self.prepare_ple_rows,
                 use_packed_ngram=self.use_packed_ple_ngram,
+                holder=ple_batch,
             )
         elif self.has_ple:
             ple_batch = _prepare_ple_batch(
@@ -3579,3 +3620,12 @@ class Qwen4ExpForConditionalGeneration(Qwen3VLForConditionalGeneration):
 
 
 EntryClass = [Qwen4ExpForConditionalGeneration]
+
+# TODO(merge5): re-plant entry 167/238-era PLE router-API reads (batch B5) --
+# merge-#5 union fused #46543's holder contract with the fork prepare_rows /
+# use_packed_ngram path, but TWO fork lines still call the pre-rewrite API:
+# get_req_to_token_pool().get_ngram_context(...) (fork-only method, deleted
+# from memory_pool.py with #46970..#46991; see replant/...qwen4_exp.py.
+# fork-hunks.patch) and fused_qwen4_packed_ngram_update's
+# pool.ngram_pool.context argument; re-home both onto layer_router.
+# NGRAM_PART.

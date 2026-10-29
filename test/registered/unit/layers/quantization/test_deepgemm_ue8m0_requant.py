@@ -2,7 +2,7 @@
 
 from sglang.test.ci.ci_register import register_cpu_ci
 
-register_cpu_ci(est_time=10, suite="base-a-test-cpu")
+register_cpu_ci(est_time=11, suite="base-a-test-cpu")
 
 import unittest
 from unittest.mock import call, patch
@@ -202,14 +202,11 @@ class TestDeepGemmUE8M0Requant(CustomTestCase):
         requant.assert_called_once()
 
     def test_fp8_moe_requants_standard_layer_for_deepgemm(self):
-        method = fp8_quant.Fp8MoEMethod.__new__(fp8_quant.Fp8MoEMethod)
-        method.convert_mxfp8_to_block = False
-        method.use_mxfp8 = False
-        method.is_fp4_expert = False
-        method.dequant_fp4_to_fp8 = False
-        method.quant_config = unittest.mock.Mock(weight_block_size=BLOCK_SIZE)
-        method.weight_block_size = BLOCK_SIZE
-        method.w2_weight_block_size = None
+        method = fp8_quant.Fp8MoEMethod(
+            fp8_quant.Fp8Config(
+                is_checkpoint_fp8_serialized=True, weight_block_size=BLOCK_SIZE
+            )
+        )
 
         layer = torch.nn.Module()
         layer.w13_weight, layer.w13_weight_scale_inv = _make_params()
@@ -266,3 +263,5 @@ class TestDeepGemmUE8M0Requant(CustomTestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=3)
+
+# TODO(merge5): re-plant entry 163 semantics (batch B2); fork hunks saved /tmp/opencode/merge5-dossier/replant/test__registered__unit__layers__quantization__test_deepgemm_ue8m0_requant.py.fork-hunks.patch

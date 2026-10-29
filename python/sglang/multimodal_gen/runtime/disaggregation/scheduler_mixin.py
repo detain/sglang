@@ -75,6 +75,8 @@ if TYPE_CHECKING:
     from sglang.multimodal_gen.runtime.managers.scheduler import Scheduler
 
 logger = init_logger(__name__)
+
+
 def _advertised_pool_work_endpoint(server_args) -> str:
     host = server_args.disagg_p2p_hostname or server_args.host or "127.0.0.1"
     if host == "0.0.0.0":
@@ -110,6 +112,7 @@ def _expand_glm_distributed_outputs(req: Req) -> list[Req]:
         if usage_by_output is not None and output_index < len(usage_by_output):
             output_req.usage = usage_by_output[output_index]
     return output_reqs
+
 
 # ---------------------------------------------------------------------------
 # Field extraction: split Req into tensors (transfer buffer) and scalars (JSON)
@@ -215,6 +218,7 @@ def _is_default(value, field_info) -> bool:
         if isinstance(value, (list, dict)) and len(value) == 0:
             return True
     return False
+
 
 def _init_request_scheduler(scheduler: Any, req: Req, device: torch.device) -> None:
     extra_kwargs = {}
@@ -1198,7 +1202,7 @@ class SchedulerDisaggMixin:
         )
         use_prefetch = self._compute_ready_queue is not None
         logger.info(
-            "Pool mode %s rank %d event loop started " "(multi_rank=%s, prefetch=%s)",
+            "Pool mode %s rank %d event loop started (multi_rank=%s, prefetch=%s)",
             role_name,
             self.gpu_id,
             is_multi_rank,
@@ -1833,3 +1837,6 @@ class SchedulerDisaggMixin:
                 )
 
         logger.debug("Pool %s: processed %s", self._dag_node, request_id)
+
+
+# TODO(merge5): fold upstream changes dropped for entries 139 (batch B1); upstream hunks: /tmp/opencode/merge5-dossier/replant/python__sglang__multimodal_gen__runtime__disaggregation__scheduler_mixin.py.upstream-side.patch

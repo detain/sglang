@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING, NamedTuple, Optional, Tuple
 
 import torch
@@ -25,7 +24,6 @@ from sglang.srt.layers.moe.token_dispatcher.base import (
 )
 from sglang.srt.layers.moe.topk import StandardTopKOutput, TopKOutput, TopKOutputChecker
 from sglang.srt.layers.moe.utils import (
-    get_moe_a2a_backend,
     get_moe_runner_backend,
     should_use_flashinfer_cutlass_moe_fp4_allgather,
 )
@@ -38,11 +36,6 @@ from sglang.srt.utils.common import (
 
 _is_hip = is_hip()
 _use_aiter = get_bool_env_var("SGLANG_USE_AITER") and _is_hip
-
-logger = logging.getLogger(__name__)
-# Expert-id space mismatches are reported once per (published, built) pair:
-# every MoE layer of an affected model would otherwise log the same line.
-_warned_id_space_mismatch: set[Tuple[str, str]] = set()
 
 from sglang.srt.environ import envs as _envs
 
@@ -109,19 +102,11 @@ def _map_topk_ids_to_local_experts(
     )
 
 
-def _keeps_global_expert_ids(backend: MoeRunnerBackendLike) -> bool:
-    # These runners handle EP with global expert IDs:
-    # - cutlass / cutedsl / trtllm_routed handle EP internally
-    # - mxfp4 dispatcher mapping is already global
-    # - hpc_ops consumes global ids together with rank_ep / num_expert_total
-    # - flashinfer_megamoe routes by global expert ID inside the mega kernel
-    # - b12x_w4a16 translates global ids through its own per-call expert_map
-    return (
+def _keeps_global_expert_ids(backend: Optional[MoeRunnerBackendLike]) -> bool:
+    return backend is not None and (
         backend.is_flashinfer_cutlass()
-        or backend.is_flashinfer_b12x_w4a16()
         or backend.is_flashinfer_cutedsl()
         or backend.is_flashinfer_trtllm()
-        or backend.is_experimental_sgl_trtllm()
         or backend.is_flashinfer_trtllm_routed()
         or backend.is_hpc_ops()
         or backend.is_flashinfer_megamoe()
@@ -130,88 +115,34 @@ def _keeps_global_expert_ids(backend: MoeRunnerBackendLike) -> bool:
 
 
 class StandardDispatcher(BaseDispatcher):
-    def __init__(
-        self,
-        moe_runner_config: MoeRunnerConfig,
-        runner_backend: Optional[MoeRunnerBackendLike] = None,
-    ):
+    def __init__(self, moe_runner_config: MoeRunnerConfig):
         super().__init__()
         self.moe_ep_size = get_parallel().moe_ep_size
-        backend = get_moe_runner_backend()
-        self.enable_flashinfer_cutlass_moe = backend.is_flashinfer_cutlass()
-        self.enable_flashinfer_mxfp4_moe = backend.is_flashinfer_mxfp4()
-        self.enable_flashinfer_trtllm_routed_moe = backend.is_flashinfer_trtllm_routed()
-        # AITER fast paths can be on while the MoE runner stays Triton; only the
-        # AITER runner keeps global expert IDs, so Triton must remap to local range.
-        self.use_aiter_moe_runner = backend.is_aiter() or (
-            backend.is_auto() and _use_aiter and get_moe_a2a_backend().supports_aiter()
+        backend = moe_runner_config.runner_backend
+        self.runner_backend = backend
+        self.enable_flashinfer_cutlass_moe = (
+            backend is not None and backend.is_flashinfer_cutlass()
         )
+        self.enable_flashinfer_mxfp4_moe = (
+            backend is not None and backend.is_flashinfer_mxfp4()
+        )
+        self.enable_flashinfer_trtllm_routed_moe = (
+            backend is not None and backend.is_flashinfer_trtllm_routed()
+        )
+        self.use_aiter_moe_runner = backend is not None and backend.is_aiter()
         self.skip_local_expert_mapping = _keeps_global_expert_ids(backend)
-        # A quant method can run its experts on a runner that needs local ids
-        # while --moe-runner-backend keeps global ones (Fp8MoEMethod runs fp8
-        # experts on triton under a flashinfer_cutlass pin). Without local ids,
-        # EP ranks index experts they do not hold. The runner only ever turns
-        # the mapping on (ownership: the built runner may only widen it); every
-        # other flag above follows the requested global backend.
-        if (
-            self.skip_local_expert_mapping
-            and runner_backend is not None
-            and not _keeps_global_expert_ids(runner_backend)
-        ):
-            # The LoRA pool keys experts by the global backend's convention, so
-            # it would read the wrong adapters for this layer under EP.
-            if self.moe_ep_size > 1 and (
-                get_lora().enable_lora or get_lora().lora_paths
-            ):
-                raise ValueError(
-                    "LoRA with expert parallelism is not supported on this MoE "
-                    f"layer: --moe-runner-backend {backend.value} keeps global "
-                    f"expert ids, but the layer's quantization method runs the "
-                    f"'{runner_backend.value}' runner, which needs local ids."
-                )
-            self.skip_local_expert_mapping = False
-        # The mirror image of the rescue above, and deliberately a warning rather
-        # than a raise: the layer's runner keeps GLOBAL ids while the published
-        # backend maps to local ones, so every EP rank but the first hands that
-        # runner ids outside its expert range (the cutlass kernels derive
-        # start_expert = num_experts_per_node * ep_rank from the global id) --
-        # wrong output with no exception. Startup resolution is supposed to make
-        # the two agree (arg_groups/overrides.py
-        # _moe_runner_backend_quant_constraints publishes flashinfer_cutlass for
-        # modelopt fp4/mixed on SM110/SM120, where the per-layer runner is built
-        # that way because the trtllm-gen MoE kernels are SM100-only). Reaching
-        # here means some other combination, and the inputs come from per-layer
-        # quant methods this host cannot enumerate, so a hard failure here could
-        # break a config that works; warn once per distinct pair instead. One
-        # known caller that will see the line: --quantization modelopt_fp4 with
-        # `auto` on SM100, where create_moe_runner resolves FLASHINFER_TRTLLM
-        # (also listed as global-keeping) while the global stays `auto` -- which
-        # is exactly the unresolved half of this contract, not a false alarm.
         if (
             self.moe_ep_size > 1
-            and runner_backend is not None
-            and not self.skip_local_expert_mapping
-            and _keeps_global_expert_ids(runner_backend)
-        ):
-            pair = (
-                str(getattr(backend, "value", backend)),
-                str(getattr(runner_backend, "value", runner_backend)),
+            and (
+                _keeps_global_expert_ids(get_moe_runner_backend())
+                != self.skip_local_expert_mapping
             )
-            if pair not in _warned_id_space_mismatch:
-                _warned_id_space_mismatch.add(pair)
-                logger.warning(
-                    "MoE expert-id space mismatch: --moe-runner-backend %s makes "
-                    "the dispatcher remap expert ids to the local range, but this "
-                    "layer builds the %s runner, which _keeps_global_expert_ids() "
-                    "classifies as consuming GLOBAL ids. Under EP > 1 that "
-                    "combination is a correctness hazard unless the runner "
-                    "re-derives global ids itself: the cutlass kernels, for one, "
-                    "compute start_expert from the id (num_experts_per_node * "
-                    "ep_rank), so every rank but the first would misroute. Pass a "
-                    "matching backend explicitly, e.g. --moe-runner-backend %s.",
-                    *pair,
-                    pair[1],
-                )
+            and (get_lora().enable_lora or get_lora().lora_paths)
+        ):
+            raise ValueError(
+                "LoRA with expert parallelism requires the layer's MoE runner "
+                "to use the requested runner's expert-ID convention."
+            )
         self.num_experts = moe_runner_config.num_experts
         self.num_local_experts = moe_runner_config.num_local_experts
         self.num_local_shared_experts = moe_runner_config.num_fused_shared_experts
@@ -226,7 +157,24 @@ class StandardDispatcher(BaseDispatcher):
         self, hidden_states: torch.Tensor, topk_output: TopKOutput
     ) -> StandardDispatchOutput:
 
-        if should_use_flashinfer_cutlass_moe_fp4_allgather():
+        needs_dp_allgather = should_use_flashinfer_cutlass_moe_fp4_allgather()
+        use_fp4_payload = (
+            needs_dp_allgather
+            and self.enable_flashinfer_cutlass_moe
+            and self.quant_config.get("input_global_scale") is not None
+        )
+        if needs_dp_allgather and not use_fp4_payload:
+            if TopKOutputChecker.format_is_bypassed(topk_output):
+                topk_output = topk_output.to_standard()
+            topk_weights, topk_ids, hidden_states = get_parallel().tp_group.all_gatherv(
+                [topk_output.topk_weights, topk_output.topk_ids, hidden_states],
+                sizes=get_dp_global_num_tokens(),
+            )
+            topk_output = StandardTopKOutput(
+                topk_weights, topk_ids, topk_output.router_logits
+            )
+            hidden_states_scale = None
+        elif needs_dp_allgather:
             # all-gather fp4 hidden states
             if (
                 fp4_quantize_flashinfer is None
@@ -350,3 +298,13 @@ class StandardDispatcher(BaseDispatcher):
                 sizes=get_dp_global_num_tokens(),
             )
         return hidden_states
+
+
+# TODO(merge5): re-plant entry 230 semantics (batch B5) -- published-value
+# MISMATCH WARNING + entry-225 sentinel gate dropped for upstream #44993's
+# effective-backend structure (upstream keeps the published-value CONTRACT
+# via get_moe_runner_backend() in the LoRA-EP guard, but not the warn-once
+# diagnostic). Fork hunks:
+# /tmp/opencode/merge5-dossier/replant/python__sglang__srt__layers__moe__token_dispatcher__standard.py.fork-hunks.patch
+# UNION GATE (dispatch): standard_dispatcher 12P + model_overrides
+# 112P/1S/181sub + fold probe 8P must pass before B5 sign-off.

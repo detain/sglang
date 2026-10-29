@@ -7,7 +7,7 @@ from sglang.srt.models.registry import ModelRegistry
 from sglang.test.ci.ci_register import register_cpu_ci
 from sglang.test.test_utils import CustomTestCase
 
-register_cpu_ci(est_time=14, suite="base-a-test-cpu")
+register_cpu_ci(est_time=15, suite="base-a-test-cpu")
 
 # The hooks the loader resolves on the entry class where a draft/target
 # disagreement is a defect rather than a difference. Weight-name maps
@@ -44,6 +44,11 @@ DRAFT_SUFFIX = re.compile(r"(NextN|MTP|DSpark|DFlash|Standalone)$")
 
 def _target_of(arch: str, archs: dict):
     """The arch a draft entry class drafts for, if it is named after it."""
+    # Bailing shares its NextN entry class across generations. Its loader
+    # fusion hooks belong to V3; legacy checkpoints return a fused count of 0
+    # (covered by TestBailingMoeV3Gate in test_shared_experts_fusion_gates.py).
+    if arch == "BailingMoeForCausalLMNextN":
+        return "BailingMoeV3ForCausalLM"
     match = DRAFT_SUFFIX.search(arch)
     if not match:
         return None
@@ -117,17 +122,14 @@ class TestFusionHookPairing(CustomTestCase):
             "the count (delegating like the gate), or list the class in "
             "GATE_WITHOUT_COUNT with the reason it never fuses routed slots",
         )
-        # NOTE(fork): the exemption list carries entry classes this fork's arch
-        # registry does not hold (upstream added them after merge #4, e.g.
-        # MiniCPMV4_7ForConditionalGeneration), so the lost-gate sweep is scoped
-        # to classes the tree actually carries. The missing-count assertion
-        # above already validates every registered gate.
         self.assertEqual(
             [],
-            sorted(a for a in (GATE_WITHOUT_COUNT - gated) if a in archs),
+            sorted(GATE_WITHOUT_COUNT - gated),
             "GATE_WITHOUT_COUNT names entry classes that are gone or lost their gate",
         )
 
 
 if __name__ == "__main__":
     unittest.main()
+
+# TODO(merge5): re-plant entry 300 semantics (batch B2); fork hunks in /tmp/opencode/merge5-dossier/replant/test__registered__unit__models__test_draft_entry_hook_parity.py.fork-hunks.patch

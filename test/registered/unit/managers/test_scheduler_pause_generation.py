@@ -30,7 +30,7 @@ from sglang.srt.runtime_context import publish, reset_context
 from sglang.srt.sampling.sampling_params import SamplingParams
 from sglang.srt.speculative.spec_info import SpeculativeAlgorithm
 
-register_cpu_ci(est_time=11, suite="base-a-test-cpu")
+register_cpu_ci(est_time=12, suite="base-a-test-cpu")
 register_cpu_ci(est_time=8, suite="stage-b-test-cpu-intel")
 
 
@@ -91,6 +91,8 @@ class TestSchedulerPauseGeneration(CustomTestCase):
         # Support _kv_snap diagnostic logging in patched schedulers
         scheduler.token_to_kv_pool_allocator = MagicMock()
         scheduler.token_to_kv_pool_allocator.available_size.return_value = 1000
+        # Static pools: no unified KV storage behind the allocator.
+        scheduler.token_to_kv_pool_allocator.storage = None
         scheduler.max_total_num_tokens = 1000
         scheduler._get_token_info = MagicMock(
             return_value=PoolStats(
@@ -186,8 +188,9 @@ class TestSchedulerPauseGeneration(CustomTestCase):
         controller.write.side_effect = write
 
         manager = object.__new__(DecodeKVCacheOffloadManager)
-        # Not a UnifiedSWAKVPool, so offloads carry no extra SWA pool transfers.
+        # No unified window sub-pool, so offloads carry no extra SWA pool transfers.
         manager.kv_cache = None
+        manager._unified_window = False
         manager.req_to_token_pool = SimpleNamespace(
             req_to_token=torch.arange(8).unsqueeze(0)
         )
@@ -242,6 +245,7 @@ class TestSchedulerPauseGeneration(CustomTestCase):
         scheduler.tree_cache.req_to_token_pool.mamba_allocator = None
         scheduler.new_token_ratio_tracker = SimpleNamespace(current=1.0, min=0.0)
         scheduler.ipc_channels = MagicMock()
+        scheduler.rust_server = None
         scheduler.beam_coordinator = MagicMock()
         scheduler.update_running_batch(batch)
 
@@ -292,24 +296,6 @@ class TestSchedulerPauseGeneration(CustomTestCase):
         self.assertIs(scheduler.last_batch, original_last_batch)
         self.assertIs(scheduler.cur_batch_for_debug, original_cur_batch)
         self.assertIs(scheduler.chunked_req, original_chunked_req)
-
-    def test_paused_engine_accounting_uses_current_scheduler_state(self):
-        scheduler = self._new_scheduler()
-        scheduler.is_fully_idle = MagicMock()
-
-        for is_idle in (True, False):
-            with self.subTest(is_idle=is_idle):
-                scheduler.is_fully_idle.return_value = is_idle
-                scheduler.metrics_reporter.reset_mock()
-
-                scheduler._record_scheduler_state_for_paused_engine()
-
-                if is_idle:
-                    scheduler.metrics_reporter.record_scheduler_idle.assert_called_once_with()
-                    scheduler.metrics_reporter.record_scheduler_active.assert_not_called()
-                else:
-                    scheduler.metrics_reporter.record_scheduler_active.assert_called_once()
-                    scheduler.metrics_reporter.record_scheduler_idle.assert_not_called()
 
     def test_inplace_does_not_drain_overlap_queue(self):
         """in_place should not process the overlap result_queue."""

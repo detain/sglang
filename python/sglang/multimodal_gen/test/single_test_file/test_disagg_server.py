@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import base64
 import os
-import signal
 import subprocess
 import time
 import unittest
@@ -43,7 +42,7 @@ from sglang.multimodal_gen.test.test_utils import (
     find_free_port,
     wait_for_server_health,
 )
-from sglang.test.test_utils import CustomTestCase
+from sglang.test.test_utils import CustomTestCase, terminate_and_kill_process_tree
 
 HOST = "127.0.0.1"
 _LOG_DIR = Path(os.environ.get("SGLANG_TEST_LOG_DIR", "/tmp"))
@@ -57,14 +56,7 @@ _STARTUP_TIMEOUT_S = float(os.environ.get("SGLANG_DISAGG_STARTUP_TIMEOUT", "600"
 # ---------------------------------------------------------------------------
 
 
-def _kill_tree(pid: int) -> None:
-    try:
-        os.killpg(os.getpgid(pid), signal.SIGKILL)
-    except (ProcessLookupError, PermissionError):
-        pass
-
-
-def _wait_for_log(path: Path, message: str, timeout: float) -> bool:
+def _wait_for_log(path: Path, message: str, timeout: float, process=None) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
         if path.exists():
@@ -73,6 +65,8 @@ def _wait_for_log(path: Path, message: str, timeout: float) -> bool:
                     return True
             except OSError:
                 pass
+        if process is not None and process.poll() is not None:
+            return False
         time.sleep(2)
     return False
 
@@ -339,6 +333,8 @@ class DisaggCluster:
             "info",
             *server_extra,
         ]
+        for role, port in self._role_ports.items():
+            cmd.extend([f"--{role.replace('_', '-')}-urls", f"tcp://{HOST}:{port}"])
         self._start_proc(cmd, log)
         try:
             wait_for_server_health(
@@ -367,7 +363,7 @@ class DisaggCluster:
 
     def stop(self) -> None:
         for proc in self._procs:
-            _kill_tree(proc.pid)
+            terminate_and_kill_process_tree(proc)
         for fh in self._fhs:
             try:
                 fh.close()
@@ -384,7 +380,7 @@ class DisaggCluster:
 # ---------------------------------------------------------------------------
 
 
-def _generate_image(api_port: int, model: str) -> bytes:
+def _generate_image(api_port: int, model: str, **overrides) -> bytes:
     # Use raw requests (openai SDK pulls in a lot and complicates CI deps).
     resp = requests.post(
         f"http://{HOST}:{api_port}/v1/images/generations",
@@ -394,6 +390,7 @@ def _generate_image(api_port: int, model: str) -> bytes:
             "n": 1,
             "size": "1024x1024",
             "response_format": "b64_json",
+            **overrides,
         },
         timeout=600,
     )
@@ -710,3 +707,5 @@ class TestDisaggZImageTracing(_DisaggTestBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+# TODO(merge5): fold upstream changes dropped here (entries 139 own this file; batch B1)

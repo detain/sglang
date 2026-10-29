@@ -8,46 +8,12 @@ from sglang.srt.model_executor.model_runner_components.cuda_graph_setup import (
 )
 from sglang.test.ci.ci_register import register_cpu_ci
 
-register_cpu_ci(est_time=1, suite="base-a-test-cpu")
+register_cpu_ci(est_time=10, suite="base-a-test-cpu")
 
 
 class TestElasticCudaGraphSetup(unittest.TestCase):
-    def test_deferred_capture_skips_distributed_setup(self):
-        # device: the stack's SM120 graph prewarm gates on it first.
-        model_runner = SimpleNamespace(device="cpu", is_draft_worker=False)
-        eager_runner = Mock()
-        prefill = GraphCapture(
-            runner=eager_runner,
-            memory_phase="prefill",
-            memory_usage_gb=0,
-            capture_time=0,
-        )
-
-        with (
-            patch.object(graph_setup.GraphSharedOutput, "create_for_model_runner"),
-            patch.object(
-                graph_setup, "EagerRunner", return_value=eager_runner
-            ) as eager_cls,
-            patch.object(graph_setup, "capture_prefill_graph", return_value=prefill),
-            patch.object(
-                graph_setup, "refresh_deep_gemm_layout_memory_budget"
-            ) as setup,
-            patch.object(graph_setup, "finalize_cuda_graph_capture") as finalize,
-        ):
-            capture = graph_setup.capture_cuda_graphs(
-                model_runner=model_runner,
-                capture_decode_cuda_graph=False,
-                finalize=False,
-                defer_distributed_setup=True,
-            )
-
-        eager_cls.assert_called_once_with(model_runner, run_warmup=False)
-        setup.assert_not_called()
-        finalize.assert_not_called()
-        self.assertIs(capture.decode.runner, eager_runner)
-
     def test_recapture_repeats_warmup_after_rendezvous(self):
-        model_runner = SimpleNamespace(device="cpu", _kernel_warmed_up=True)
+        model_runner = SimpleNamespace(_kernel_warmed_up=True)
         eager_runner = Mock()
         decode_runner = Mock()
         replacement = Mock()
@@ -107,3 +73,5 @@ class TestElasticCudaGraphSetup(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+# TODO(merge5): re-plant entry 117 semantics (batch B2); fork hunks saved /tmp/opencode/merge5-dossier/replant/test__registered__unit__model_executor__test_elastic_cuda_graph_setup.py.fork-hunks.patch

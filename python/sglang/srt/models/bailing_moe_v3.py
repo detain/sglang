@@ -10,7 +10,7 @@ import torch.nn.functional as F
 from torch import nn
 from transformers import PretrainedConfig
 
-from sglang.kernels.ops.moe.router import (
+from sglang.kernels.ops.gemm.router_gate_matvec import (
     ROUTER_GATE_MATVEC_MAX_M,
     router_gate_matvec,
 )
@@ -21,7 +21,6 @@ from sglang.srt.configs import KimiLinearConfig
 from sglang.srt.configs.bailing_hybrid import is_bailing_multi_gate_enabled
 from sglang.srt.environ import envs
 from sglang.srt.eplb.expert_distribution import get_global_expert_distribution_recorder
-from sglang.srt.eplb.expert_location_dispatch import ExpertLocationDispatchInfo
 from sglang.srt.layers import deep_gemm_wrapper
 from sglang.srt.layers.activation import SiluAndMul
 from sglang.srt.layers.aux_hidden_states import AuxHiddenStateList
@@ -478,13 +477,13 @@ class BailingMoE(nn.Module):
             share_expert_swiglu_limit_list, layer_id
         )
 
-        # Run the MoE gate in bf16. ling-v3's config sets router_dtype="fp32",
-        # but on Hopper that fp32 gate GEMM falls back to a slow sm80 (Ampere)
-        # no-tensor-core path (~7% of decode GPU time). bf16 uses Hopper tensor
-        # cores; the top-k selection re-casts gating logits back to fp32
-        # (see layers/moe/topk.py), so routing stays fp32-stable. Validated on
-        # ling-v3 TP4: accuracy-neutral (greedy), ~17% bs=1 TPOT improvement.
-        self.router_dtype = torch.bfloat16
+        # bf16 here perturbs routing enough to cause output variance, so the
+        # gate dtype follows the checkpoint config; absent means fp32.
+        router_dtype = getattr(config, "router_dtype", None)
+        if router_dtype is None or router_dtype == "fp32":
+            self.router_dtype = torch.float32
+        else:
+            self.router_dtype = torch.bfloat16
 
         self.num_expert_group = getattr(config, "n_group", 0)
         self.topk_group = getattr(config, "topk_group", 0)
@@ -597,6 +596,10 @@ class BailingMoE(nn.Module):
                 quant_config is not None
                 and getattr(quant_config, "is_fp4_experts", False)
             ),
+        )
+        self.topk.bind_runner_backend(
+            self.experts.runner_backend,
+            routing_method_type=self.experts.routing_method_type,
         )
 
         # Whether to apply routed_scaling_factor at model layer.
@@ -831,10 +834,6 @@ class BailingMoE(nn.Module):
                 hidden_states,
                 router_logits,
                 dynamic_expert_bias=dynamic_expert_bias,
-                num_token_non_padded=forward_batch.moe_num_token_non_padded(),
-                expert_location_dispatch_info=ExpertLocationDispatchInfo.init_new(
-                    layer_id=self.layer_id,
-                ),
             )
         final_hidden_states = self.experts(hidden_states, topk_output)
 

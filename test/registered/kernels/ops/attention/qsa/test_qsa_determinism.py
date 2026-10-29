@@ -1,3 +1,4 @@
+import sys
 from collections.abc import Iterator
 from types import SimpleNamespace
 
@@ -57,7 +58,12 @@ def test_qsa_topk_ragged_ties_and_graph(topk: int) -> None:
 def test_qsa_decode_topk_repeatability(monkeypatch: pytest.MonkeyPatch) -> None:
     torch.manual_seed(42)
     logits = torch.randn(16, 2048, device="cuda").round()
-    monkeypatch.setattr(qsa_indexer_module, "qsa_mqa_decode", lambda *args: logits)
+
+    def mock_mqa_decode(*args: object, min_scored_len: int) -> torch.Tensor:
+        assert min_scored_len == 0
+        return logits
+
+    monkeypatch.setattr(qsa_indexer_module, "qsa_mqa_decode", mock_mqa_decode)
     indexer = SimpleNamespace(block_topk=512)
     lengths = torch.full((16,), 2048, dtype=torch.int32, device="cuda")
     results = [
@@ -100,3 +106,7 @@ def test_qsa_prefill_batch_invariance() -> None:
             dim**-0.5,
         )
         torch.testing.assert_close(actual[:seq], reference, rtol=0, atol=0)
+
+
+if __name__ == "__main__":
+    sys.exit(pytest.main([__file__, "-v"]))

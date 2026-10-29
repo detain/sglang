@@ -16,7 +16,7 @@ Usage:
 from sglang.test.ci.ci_register import register_cpu_ci
 
 # CPU-only unit test; no CUDA/distributed dependencies.
-register_cpu_ci(est_time=8, suite="base-a-test-cpu")
+register_cpu_ci(est_time=7, suite="base-a-test-cpu")
 
 import ast
 import types
@@ -176,6 +176,7 @@ def _load_standard_dispatcher(get_parallel, get_backend):
         "Optional": typing.Optional,
         "get_parallel": get_parallel,
         "get_moe_runner_backend": get_backend,
+        "get_lora": lambda: types.SimpleNamespace(enable_lora=False, lora_paths=None),
         "_use_aiter": False,
         "get_moe_a2a_backend": lambda: types.SimpleNamespace(
             supports_aiter=lambda: False
@@ -945,6 +946,7 @@ class TestModuleLevelHelpers(unittest.TestCase):
         moe_utils.get_moe_runner_backend = lambda: state.backend
         for backend in backends:
             state.backend = backend
+            config.runner_backend = backend
             with mock.patch.dict(
                 "sys.modules", {"sglang.srt.layers.moe.utils": moe_utils}
             ):

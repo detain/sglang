@@ -7,9 +7,11 @@ import torch
 
 from sglang.multimodal_gen.runtime.distributed.parallel_state import (
     get_cfg_group,
+    get_cfg_sequence_parallel_group,
     get_classifier_free_guidance_rank,
     get_world_group,
     get_world_rank,
+    use_sequence_parallel_group,
 )
 from sglang.multimodal_gen.runtime.distributed.utils import broadcast_pyobj
 from sglang.multimodal_gen.runtime.pipelines_core import Req
@@ -425,3 +427,5 @@ class ParallelExecutor(PipelineExecutor):
             server_args,
             lambda stage, current: stage.run_grouped_requests(current, server_args),
         )
+
+# TODO(merge5): fold upstream changes dropped here (entries 140 own this file; batch B1)

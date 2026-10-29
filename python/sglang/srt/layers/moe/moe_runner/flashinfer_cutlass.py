@@ -1282,3 +1282,9 @@ def _fused_experts_flashinfer_mxfp4_cutlass(
         out = out[:, :origin_hidden].contiguous()
 
     return StandardCombineInput(hidden_states=out)
+
+# TODO(merge5): fold upstream changes dropped here (entries 9,174,244,247 own this file; batch B5) --
+# merge-#5 flipped flashinfer_cutlass.py from take-upstream to fork-owned: the b12x W4A16 route
+# (entry 247, 67P/46sub pinned) is fork-only (origin/main has ZERO b12x refs) and #44993/#44994's
+# 95-line effective-backend delta must be re-woven over it (patch: replant/python__sglang__srt__layers__moe__moe_runner__flashinfer_cutlass.py.upstream-side.patch). D-3 re-verify: 534x/415x alpha-fold + w13_layout + source_format
+# spelling vs flashinfer 0.7.2 are IN the fork version taken here.

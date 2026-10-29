@@ -144,6 +144,11 @@ class SchedulerStats:
     kv_transfer_speed_gb_s: float = 0.0
     kv_transfer_latency_ms: float = 0.0
     pending_prealloc_token_usage: float = 0.0
+    # Share of the full / SWA KV pool held by decode requests whose KV transfer
+    # is still pending (preallocated, not yet running), on the capacity basis of
+    # full_token_usage / swa_token_usage; the difference is the running batch's share.
+    prealloc_full_token_usage: float = 0.0
+    prealloc_swa_token_usage: float = 0.0
 
     # Utilization
     utilization: float = 0.0
@@ -163,13 +168,15 @@ class SchedulerStats:
     # HiCache metrics
     hicache_host_used_tokens: int = 0
     hicache_host_total_tokens: int = 0
-    # Per host pool of a hybrid model's HostPoolGroup (kv, mamba, swa, ...):
-    # {pool label: tokens}; for the mamba pool a token is a checkpoint slot.
-    # Empty when the tree cache has no host pool group. Sidecar pools that
-    # borrow another pool's host indices (DeepSeek V4 C4 / indexer / state,
-    # DSA indexer) have no occupancy of their own and are not listed.
+    # Host Mamba state pool of hybrid-SSM models; stays 0/0 when there is none.
+    # Per-pool occupancy keyed by pool name (kv, mamba, swa, ...) -- the
+    # serving schema (entry 219): one series per pool with a {pool} label.
     hicache_host_pool_used_tokens: Dict[str, int] = field(default_factory=dict)
     hicache_host_pool_total_tokens: Dict[str, int] = field(default_factory=dict)
+    # Compat source for upstream's per-model mamba series; the pool dict is
+    # authoritative (metrics_reporter fills both).
+    hicache_host_mamba_used_states: int = 0
+    hicache_host_mamba_total_states: int = 0
 
     # Streaming session metrics
     num_streaming_sessions: int = 0
@@ -651,6 +658,18 @@ class SchedulerMetricsCollector(_StatLoggerDIMixin):
             labelnames=labels.keys(),
             multiprocess_mode="mostrecent",
         )
+        self.prealloc_full_token_usage = Gauge(
+            name="sglang:prealloc_full_token_usage",
+            documentation="Share of the full-attention KV pool held by decode requests whose KV transfer is pending (preallocated, not yet running); same capacity basis as sglang:full_token_usage.",
+            labelnames=labels.keys(),
+            multiprocess_mode="mostrecent",
+        )
+        self.prealloc_swa_token_usage = Gauge(
+            name="sglang:prealloc_swa_token_usage",
+            documentation="Share of the SWA KV pool held by decode requests whose KV transfer is pending; same capacity basis as sglang:swa_token_usage.",
+            labelnames=labels.keys(),
+            multiprocess_mode="mostrecent",
+        )
         self.num_bootstrap_failed_reqs = Counter(
             name="sglang:num_bootstrap_failed_reqs_total",
             documentation="The number of bootstrap failed requests.",
@@ -766,8 +785,6 @@ class SchedulerMetricsCollector(_StatLoggerDIMixin):
                 labelnames=labels.keys(),
                 multiprocess_mode="mostrecent",
             )
-            # Per-pool view of a hybrid model's host tier (HostPoolGroup):
-            # the anchor gauges above cover the KV pool only, while the
             # mamba/swa host pools have their own capacity and eviction
             # pressure. Sidecar pools reuse another pool's indices; no series.
             self.hicache_host_pool_used_tokens = Gauge(
@@ -1355,7 +1372,9 @@ class SchedulerMetricsCollector(_StatLoggerDIMixin):
     ) -> SchedulerMetricsCollectorContext:
         enable_metrics = get_observability().enable_metrics
         parallel = get_parallel()
-        is_stats_logging_rank = parallel.attn_tp_rank == 0
+        is_stats_logging_rank = (
+            parallel.attn_tp_rank == 0 and parallel.attn_cp_rank == 0
+        )
         current_scheduler_metrics_enabled = enable_metrics and (
             is_stats_logging_rank
             or get_observability().enable_metrics_for_all_schedulers
@@ -1702,6 +1721,8 @@ class SchedulerMetricsCollector(_StatLoggerDIMixin):
         self._log_gauge(
             self.pending_prealloc_token_usage, stats.pending_prealloc_token_usage
         )
+        self._log_gauge(self.prealloc_full_token_usage, stats.prealloc_full_token_usage)
+        self._log_gauge(self.prealloc_swa_token_usage, stats.prealloc_swa_token_usage)
 
         # Utilization
         self._log_gauge(self.utilization, stats.utilization)
@@ -1789,6 +1810,24 @@ class SchedulerMetricsCollector(_StatLoggerDIMixin):
         self._log_gauge(
             self.startup_available_gpu_memory_gb, startup_available_gpu_memory_gb
         )
+
+
+def tokenizer_metric_labels() -> Dict[str, str]:
+    """The labels on every ``TokenizerMetricsCollector`` metric. The priority
+    and custom labels start empty; each request fills them in."""
+    labels = {
+        "model_name": get_serving().served_model_name,
+        "engine_type": DisaggregationMode.to_engine_type(
+            get_disagg().disaggregation_mode
+        ),
+    }
+    if get_schedule().enable_priority_scheduling:
+        labels["priority"] = ""
+    for label in get_observability().tokenizer_metrics_allowed_custom_labels or ():
+        labels[label] = ""
+    if get_observability().extra_metric_labels:
+        labels.update(get_observability().extra_metric_labels)
+    return labels
 
 
 class TokenizerMetricsCollector(_StatLoggerDIMixin):
@@ -2877,3 +2916,6 @@ def get_histogram_conf_from_env(env_var_name: str) -> Optional[List[float]]:
     if not env_var_value:
         return None
     return [float(x) for x in env_var_value.split(",")]
+
+
+# TODO(merge5): re-plant entry 219 PRODUCER semantics (batch B3) -- per-pool hicache_host_pool_{used,total}_tokens serving schema RESTORED at merge resolution (D-3); what remains re-plant: the {pool: -> dict} producer detail against #4697x pool-stats in cache-controller/hybrid controllers.

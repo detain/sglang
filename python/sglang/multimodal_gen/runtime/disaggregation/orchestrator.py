@@ -783,3 +783,6 @@ def _request_id_from_frames(frames: list) -> str | None:
         return metadata.get("scalar_fields", {}).get("request_id")
     except (json.JSONDecodeError, IndexError, TypeError):
         return None
+
+
+# TODO(merge5): fold upstream changes dropped for entries 139 (batch B1); upstream hunks: /tmp/opencode/merge5-dossier/replant/python__sglang__multimodal_gen__runtime__disaggregation__orchestrator.py.upstream-side.patch

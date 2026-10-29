@@ -4579,3 +4579,6 @@ class DenoisingStage(PipelineStage, RolloutDenoisingMixin):
         result = VerificationResult()
         # result.add_check("latents", batch.latents, [V.is_tensor, V.with_dims(5)])
         return result
+
+
+# TODO(merge5): fold upstream changes dropped for entries 136,137,143 (batch B1); upstream hunks: /tmp/opencode/merge5-dossier/replant/python__sglang__multimodal_gen__runtime__pipelines_core__stages__denoising.py.upstream-side.patch

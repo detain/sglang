@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from typing import Tuple
+from typing import Optional, Tuple
 
 import torch
 
@@ -28,7 +28,12 @@ from sglang.srt.layers.attention.qsa.metadata import (
     build_pending_ring_slots,
     build_rope_position_matrix,
 )
-from sglang.srt.layers.attention.qsa.mqa import qsa_mqa_decode, qsa_mqa_prefill
+from sglang.srt.layers.attention.qsa.mqa import (
+    HAS_TILELANG,
+    qsa_mqa_decode,
+    qsa_mqa_prefill,
+    qsa_mqa_prefill_relative,
+)
 from sglang.srt.layers.cp.utils import (
     ContextParallelStrategyKind,
     cp_materialize_global_token_order,
@@ -635,7 +640,12 @@ class QSAIndexer(MultiPlatformOp):
             return positions[0]
         return positions
 
-    def apply_rope(self, positions: torch.Tensor, tensor: torch.Tensor) -> torch.Tensor:
+    def apply_rope(
+        self,
+        positions: torch.Tensor,
+        tensor: torch.Tensor,
+        ensure_cos_sin_cache: bool = True,
+    ) -> torch.Tensor:
         if tensor.numel() == 0:
             return tensor
         positions = positions.long()
@@ -784,7 +794,17 @@ class QSAIndexer(MultiPlatformOp):
         static_buffers=None,
         collective_keys: int | None = None,
         collective_world_size: int = 1,
+        max_row_keys: Optional[int] = None,
     ) -> torch.Tensor:
+        """Top-k token selection for packed prefill rows.
+
+        ``max_row_keys`` (host int, the longest request's compressed-block count)
+        switches scoring to request-relative logits: [rows, max_row_keys] instead
+        of [rows, all compressed keys of the batch]. The latter caps a chunk at
+        a few dozen rows once a batch holds many long prefixes, so the scoring
+        kernel ran as thousands of one-CTA launches. Selection is unchanged: the
+        top-k reads only each row's own section and returns indices relative to
+        the row's start either way."""
         rows = q.shape[0]
         output = torch.empty(
             (rows, self.token_topk + self.compress_ratio - 1),
@@ -794,6 +814,9 @@ class QSAIndexer(MultiPlatformOp):
         if rows == 0:
             return output
 
+        relative = (
+            max_row_keys is not None and max_row_keys > 0 and q.is_cuda and HAS_TILELANG
+        )
         row_chunk_size = _qsa_prefill_row_chunk_size(
             rows,
             compressed_keys.shape[0],
@@ -812,6 +835,22 @@ class QSAIndexer(MultiPlatformOp):
                     device=q.device,
                 )
                 logits = None
+            elif relative:
+                chunk_starts = row_starts[chunk_slice]
+                chunk_lengths = row_ends[chunk_slice] - chunk_starts
+                logits = qsa_mqa_prefill_relative(
+                    q[chunk_slice],
+                    compressed_keys,
+                    chunk_starts,
+                    row_ends[chunk_slice],
+                    max_row_keys,
+                )
+                block_indices = qsa_fast_topk(
+                    logits,
+                    torch.zeros_like(chunk_starts),
+                    chunk_lengths,
+                    topk=self.block_topk,
+                )
             else:
                 logits = qsa_mqa_prefill(
                     q[chunk_slice],
@@ -934,7 +973,8 @@ class QSAIndexer(MultiPlatformOp):
         exactly as without CP (every rank ends up with the complete compressed-K
         cache). Selection then scores the local rows against all compressed
         blocks of their request, position-driven, so the output rows line up
-        with the local query rows the sparse attention consumes."""
+        with the local query rows the sparse attention consumes.
+        """
         strategy = get_cp_strategy()
         if strategy is None or strategy.kind != ContextParallelStrategyKind.ZIGZAG:
             strategy_name = strategy.name if strategy is not None else "none"
@@ -960,8 +1000,13 @@ class QSAIndexer(MultiPlatformOp):
         )
         # Use the compressed-cache dtype for Q. Leaving cache_loc unset defers
         # the ring store until raw local K has been gathered into global order.
+        # The load-time RoPE reservation covers these positions, as this layer's
+        # attention already assumed; re-checking costs a device sync per layer.
         q, token_k, _ = self.project_qk(
-            hidden_states, positions, pool=indexer_metadata.token_to_kv_pool
+            hidden_states,
+            positions,
+            pool=indexer_metadata.token_to_kv_pool,
+            ensure_cos_sin_cache=False,
         )
         # Raw keys of all new tokens in global packed order: the ring store
         # and compression use the global write plan unchanged. Cached prefix
@@ -998,6 +1043,9 @@ class QSAIndexer(MultiPlatformOp):
             row_ends,
             local_logical,
             row_sequence_lengths,
+            max_row_keys=indexer_metadata.prefill_max_row_keys(
+                getattr(forward_batch, "seq_lens_cpu", None)
+            ),
         )
 
     def _forward_impl(
@@ -1182,6 +1230,9 @@ class QSAIndexer(MultiPlatformOp):
             row_sequence_lengths,
             **prefill_kwargs,
             static_buffers=static_buffers,
+            max_row_keys=indexer_metadata.prefill_max_row_keys(
+                getattr(forward_batch, "seq_lens_cpu", None)
+            ),
         )
 
     def forward_cuda(
@@ -1215,3 +1266,5 @@ class QSAIndexer(MultiPlatformOp):
 __all__ = [
     "QSAIndexer",
 ]
+
+# TODO(merge5): fold upstream changes dropped here (entries 15,32,34,35,118,125,166,184,200 own this file; batch B5)

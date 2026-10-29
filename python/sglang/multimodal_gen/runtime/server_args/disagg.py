@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from dataclasses import fields
 from typing import ClassVar
 
 from sglang.multimodal_gen.runtime.disaggregation.roles import RoleType
@@ -18,6 +19,8 @@ class DisaggServerArgsMixin:
         RoleType.ENCODER: 1,
         RoleType.DENOISER: 2,
         RoleType.DECODER: 3,
+        RoleType.PROMPT_ENCODER: 4,
+        RoleType.IMAGE_ENCODER: 5,
     }
 
     def get_role_parallelism(self, role_type: RoleType) -> dict[str, int | None]:
@@ -27,7 +30,7 @@ class DisaggServerArgsMixin:
             "ulysses_degree": None,
             "ring_degree": None,
         }
-        if role_type == RoleType.ENCODER:
+        if role_type.is_input_encoder or role_type == RoleType.IMAGE_ENCODER:
             return {**_none, "tp_size": self.encoder_tp}
         if role_type == RoleType.DENOISER:
             return {
@@ -39,6 +42,40 @@ class DisaggServerArgsMixin:
         if role_type == RoleType.DECODER:
             return {**_none, "sp_degree": self.decoder_sp}
         return _none
+
+    def for_disagg_role(self, role_type: RoleType, **overrides):
+        """Derive a worker's arguments without inheriting resolved parent topology."""
+        values = vars(self)
+        kwargs = {
+            f.name: values[f.name]
+            for f in fields(self)
+            if f.init and f.name != "pipeline_config"
+        }
+        explicit = self._explicit_arg_names.copy()
+        # re-run automatic choices for this role's device count, not the parent's
+        for name in (
+            "tp_size",
+            "sp_degree",
+            "ulysses_degree",
+            "ring_degree",
+            "kv_gather_degree",
+            "enable_cfg_parallel",
+            "cfg_parallel_degree",
+            "hsdp_shard_dim",
+        ):
+            if name not in explicit:
+                kwargs.pop(name)
+        kwargs["sp_split_auto"] = False
+        # role-specific flags override explicit generic flags; validation stays shared
+        for name, value in self.get_role_parallelism(role_type).items():
+            if value is not None:
+                kwargs[name] = value
+                explicit.add(name)
+        kwargs.update(overrides)
+        kwargs.update(
+            disagg_role=role_type, disagg_mode=True, _explicit_arg_names=explicit
+        )
+        return type(self).from_kwargs(**kwargs)
 
     def derive_pool_result_endpoint(self) -> str:
         host, base_port = parse_tcp_host_port(
@@ -53,76 +90,12 @@ class DisaggServerArgsMixin:
             offset = self.DISAGG_RESULT_PORT_OFFSETS[role]
         except KeyError as exc:
             raise ValueError(
-                "pool result endpoints are only defined for encoder, denoiser, "
-                f"and decoder roles, got {role.value!r}"
+                f"pool result endpoints are only defined for worker roles, got {role.value!r}"
             ) from exc
         return format_tcp_endpoint(host, base_port + offset, "pool_result_endpoint")
 
     def derive_pool_work_endpoint(self) -> str:
         return format_tcp_endpoint("0.0.0.0", self.scheduler_port, "pool_work_endpoint")
-
-    def derive_pool_control_endpoint(self) -> str:
-        return format_tcp_endpoint(
-            "0.0.0.0", self.scheduler_port + 1, "pool_control_endpoint"
-        )
-
-    def derive_pool_control_advertised_endpoint(self) -> str:
-        host = self.host or self.disagg_p2p_hostname or "127.0.0.1"
-        if host == "0.0.0.0":
-            host = self.disagg_p2p_hostname or "127.0.0.1"
-        return format_tcp_endpoint(
-            host, self.scheduler_port + 1, "pool_control_advertised_endpoint"
-        )
-
-    def dag_result_endpoint(self, node_index: int) -> str:
-        """Result endpoint for the ``node_index``-th node of a custom DAG.
-
-        Mirrors ``DISAGG_RESULT_PORT_OFFSETS`` for classic roles: node ``i``
-        gets ``base_port + i + 1``, leaving the base port for the frontend.
-
-        Workers learn the base address from ``--disagg-server-addr``; the head
-        node is that address, so it falls back to its own host and scheduler
-        port and both sides derive the same endpoints.
-        """
-        if self.disagg_server_addr:
-            host, base_port = parse_tcp_host_port(
-                self.disagg_server_addr, "disagg_server_addr"
-            )
-        else:
-            host = self.host or "127.0.0.1"
-            base_port = self.scheduler_port
-        return format_tcp_endpoint(
-            host, base_port + node_index + 1, "dag_result_endpoint"
-        )
-
-    def resolve_execution_plan(self):
-        """Compile ``--disagg-dag`` into an ``ExecutionPlan``, or None.
-
-        Returns None for classic three-role deployments, which the runtime
-        treats as an implicit linear DAG.  The compiled plan is cached because
-        both the scheduler and the pipeline builder ask for it.
-        """
-        from sglang.multimodal_gen.runtime.disaggregation.dag import (
-            DagSpec,
-            ExecutionPlan,
-        )
-
-        if not getattr(self, "disagg_dag", None):
-            return None
-
-        cached = getattr(self, "_execution_plan", None)
-        if cached is not None:
-            return cached
-
-        spec = DagSpec.load(self.disagg_dag)
-        for index, role in enumerate(spec.roles):
-            pool = spec.get_pool(role.name)
-            if pool is not None and not pool.result_endpoint:
-                pool.result_endpoint = self.dag_result_endpoint(index)
-
-        plan = ExecutionPlan.compile(spec)
-        self._execution_plan = plan
-        return plan
 
     @classmethod
     def add_disagg_cli_args(cls, parser: FlexibleArgumentParser) -> None:
@@ -137,33 +110,6 @@ class DisaggServerArgsMixin:
             default=role_default,
             choices=RoleType.choices(),
             help="Role for disaggregated pipeline.",
-        )
-        parser.add_argument(
-            "--disagg-dag",
-            type=str,
-            default=cls.disagg_dag,
-            help=(
-                "Path to a JSON/YAML DAG topology, or an inline JSON object. "
-                "Replaces the fixed encoder/denoiser/decoder roles with named "
-                "nodes, conditional routes, and independently scaled pools."
-            ),
-        )
-        parser.add_argument(
-            "--dag-node",
-            type=str,
-            default=cls.dag_node,
-            help="Which node of --disagg-dag this worker process serves.",
-        )
-        parser.add_argument(
-            "--dag-validate",
-            action="store_true",
-            default=cls.dag_validate,
-            help=(
-                "Compile --disagg-dag, print the execution plan JSON, and exit "
-                "without loading model weights. Plan structure is validated at "
-                "compile time; stage coverage vs the live pipeline is checked "
-                "in unit/E2E tests."
-            ),
         )
         parser.add_argument(
             "--disagg-timeout",
@@ -259,6 +205,18 @@ class DisaggServerArgsMixin:
             help="Encoder instance work endpoints for DiffusionServer head mode.",
         )
         parser.add_argument(
+            "--prompt-encoder-urls",
+            type=str,
+            default=cls.prompt_encoder_urls,
+            help="Semicolon-separated prompt encoder endpoints; use with --image-encoder-urls instead of --encoder-urls.",
+        )
+        parser.add_argument(
+            "--image-encoder-urls",
+            type=str,
+            default=cls.image_encoder_urls,
+            help="Semicolon-separated image encoder endpoints for split encoding.",
+        )
+        parser.add_argument(
             "--denoiser-urls",
             type=str,
             default=cls.denoiser_urls,
@@ -306,3 +264,5 @@ class DisaggServerArgsMixin:
             default=cls.decoder_sp,
             help="Sequence parallelism for decoder role.",
         )
+
+# TODO(merge5): re-plant entry 139 semantics (batch B1); fork hunks saved /tmp/opencode/merge5-dossier/replant/python__sglang__multimodal_gen__runtime__server_args__disagg.py.fork-hunks.patch

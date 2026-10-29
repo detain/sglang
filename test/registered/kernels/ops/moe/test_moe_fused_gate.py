@@ -1,5 +1,4 @@
-"""
-Triton routing must match independent math and supported production routes."""
+"""Triton routing must match independent math and supported production routes."""
 
 from __future__ import annotations
 
@@ -10,7 +9,7 @@ import pytest
 import torch
 
 from sglang.kernels.jit.utils import get_ci_test_range
-from sglang.kernels.ops.moe.moe_fused_gate import moe_fused_gate, moe_fused_gate_jit
+from sglang.kernels.ops.moe.moe_fused_gate import moe_fused_gate
 from sglang.test.ci.ci_register import register_cuda_ci
 
 register_cuda_ci(est_time=8, stage="base-b-kernel-unit", runner_config="1-gpu-large")
@@ -43,7 +42,7 @@ def _reference_gate(
     routed_scaling_factor: float,
     apply_routed_scaling_factor_on_output: bool,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Definition-based eager reference matching the CUDA fused-gate semantics."""
+    """Definition-based eager reference for the fused-gate semantics."""
     if scoring_func == "sigmoid":
         activated = scores.sigmoid()
     else:
@@ -168,10 +167,9 @@ def test_moe_fused_gate_matches_reference(
         (8192, 512, 8, 1, "sigmoid"),
     ],
 )
-def test_moe_fused_gate_matches_cuda_jit(
+def test_moe_fused_gate_matches_reference_at_model_shapes(
     M: int, num_experts: int, topk: int, num_shared: int, scoring_func: str
 ) -> None:
-    """Triton output must match the CUDA JIT kernel it reimplements."""
     scores, bias = _make_inputs(M, num_experts, seed=123)
 
     kwargs = dict(
@@ -183,13 +181,13 @@ def test_moe_fused_gate_matches_cuda_jit(
         apply_routed_scaling_factor_on_output=True,
     )
     triton_w, triton_i = moe_fused_gate(scores, bias, **kwargs)
-    cuda_w, cuda_i = moe_fused_gate_jit(scores, bias, **kwargs)
+    ref_w, ref_i = _reference_gate(scores, bias, **kwargs)
     torch.cuda.synchronize()
 
     num_columns = num_experts + num_shared
     torch.testing.assert_close(
         _scatter_by_expert(triton_w, triton_i, num_columns),
-        _scatter_by_expert(cuda_w, cuda_i, num_columns),
+        _scatter_by_expert(ref_w, ref_i, num_columns),
         rtol=1e-4,
         atol=1e-5,
     )
@@ -567,3 +565,5 @@ def test_moe_fused_gate_accepts_non_fp32_bias(
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
+
+# TODO(merge5): re-plant entry 297 semantics (batch B2); fork hunks saved /tmp/opencode/merge5-dossier/replant/test__registered__kernels__ops__moe__test_moe_fused_gate.py.fork-hunks.patch

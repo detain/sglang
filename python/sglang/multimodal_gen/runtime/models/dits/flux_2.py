@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
 from typing import Any, Dict, Optional, Tuple
 
 import torch
@@ -23,21 +22,20 @@ from diffusers.models.embeddings import TimestepEmbedding, Timesteps
 from diffusers.models.normalization import AdaLayerNormContinuous
 
 from sglang.kernels.ops.diffusion import (
+    FLUX2_NVFP4_SWIGLU_QUANT,
     BitExactFusionGate,
     can_defer_flux2_gated_residual,
+    can_defer_xpu_gated_residual,
     can_use_flux2_gated_resnorm,
     can_use_flux2_strided_qknorm_rope,
     can_use_fused_layernorm_modulate,
-    can_use_xpu_gated_resnorm,
     can_use_xpu_layernorm_modulate,
     flux2_gated_resnorm_raw,
-    flux2_nvfp4_swiglu_quant_active,
     flux2_strided_qknorm_rope,
     fused_layernorm_modulate_fp8_quant_raw,
     fused_layernorm_modulate_raw,
     fused_packed_silu_mul_bitexact,
     is_plain_layer_norm,
-    mark_flux2_nvfp4_swiglu_quant_site,
     residual_gate_add,
     tensors_equal,
     try_flux2_token_cat_fp8,
@@ -47,6 +45,7 @@ from sglang.kernels.ops.diffusion import (
     xpu_layernorm_modulate,
 )
 from sglang.kernels.ops.quantization.fp8_kernel import static_quant_fp8
+from sglang.multimodal_gen import envs
 from sglang.multimodal_gen.configs.models.dits.flux import FluxConfig
 from sglang.multimodal_gen.runtime.distributed import (
     divide,
@@ -136,10 +135,8 @@ def _flux2_single_qk_rope(q, k, q_norm, k_norm, head_dim, cache, complex_freqs):
             allow_strided_qk=current_platform.is_rocm(),
         )
 
-    gate = _FLUX2_STRIDED_QK_ROPE
     if (
-        gate.disabled
-        or head_dim != 128
+        head_dim != 128
         or type(q_norm) is not RMSNorm
         or type(k_norm) is not RMSNorm
         or q_norm.variance_epsilon != k_norm.variance_epsilon
@@ -149,30 +146,18 @@ def _flux2_single_qk_rope(q, k, q_norm, k_norm, head_dim, cache, complex_freqs):
             is not RMSNorm.forward_cuda
             for norm in (q_norm, k_norm)
         )
-        or os.getenv("SGLANG_ENABLE_FUSED_QKNORM_ROPE", "1").lower()
-        in {"0", "false", "off", "no"}
+        or not envs.SGLANG_ENABLE_FUSED_QKNORM_ROPE
         or not can_use_flux2_strided_qknorm_rope(
             q, k, q_norm.weight, k_norm.weight, cache
         )
     ):
         return reference()
-    sig = (q.device, q.shape, q.stride(), cache.stride(), q_norm.variance_epsilon)
-    verified = gate.is_verified(sig)
-    if not verified and torch.cuda.is_current_stream_capturing():
-        return reference()
-    try:
-        out = flux2_strided_qknorm_rope(
+    return _FLUX2_STRIDED_QK_ROPE.run(
+        lambda: flux2_strided_qknorm_rope(
             q, k, q_norm.weight, k_norm.weight, cache, q_norm.variance_epsilon
-        )
-    except Exception as exc:
-        gate.on_exception(exc, logger=logger)
-        return reference()
-    if verified:
-        return out
-    return gate.accept_or_fallback(
-        out,
-        reference(),
-        sig=sig,
+        ),
+        reference,
+        sig=(q.device, q.shape, q.stride(), cache.stride(), q_norm.variance_epsilon),
         equal=lambda a, b: all(
             torch.equal(x.view(torch.int16), y.view(torch.int16)) for x, y in zip(a, b)
         ),
@@ -255,10 +240,6 @@ def _try_flux2_norm_modulate_fp8(
         reference,
         sig=sig,
         logger=logger,
-        mismatch_msg=(
-            "FLUX.2 fused LN+modulate+FP8 quant fast path is not bit-exact "
-            "on this platform; falling back to the split path"
-        ),
     )
 
 
@@ -283,13 +264,10 @@ def _defer_gated_residual(
 def _can_defer_xpu(
     residual: torch.Tensor, update: torch.Tensor, gate: torch.Tensor
 ) -> bool:
-    # The consuming norm's scale/shift are not known yet; the gate row stands in
-    # for their layout, and _flux2_gated_resnorm falls back if they differ.
     return (
         residual.is_xpu
-        and not torch.compiler.is_compiling()
         and not _FLUX2_XPU_GATED_RESNORM.disabled
-        and can_use_xpu_gated_resnorm(residual, update, gate, gate, gate)
+        and can_defer_xpu_gated_residual(residual, update, gate)
     )
 
 
@@ -353,7 +331,7 @@ def _xpu_gated_resnorm(
     if (
         torch.compiler.is_compiling()
         or _FLUX2_XPU_GATED_RESNORM.disabled
-        or not can_use_xpu_gated_resnorm(residual, update, gate, scale, shift)
+        or not can_use_xpu_layernorm_modulate(residual.dtype, residual.shape[-1])
     ):
         return None
     # Exactness depends on the reduction width and row layouts, not on row count.
@@ -376,10 +354,6 @@ def _xpu_gated_resnorm(
         sig=sig,
         equal=tensors_equal,
         logger=logger,
-        mismatch_msg=(
-            "FLUX.2 fused XPU gated residual+LN+modulate fast path is not "
-            "bit-exact on this platform; falling back to eager"
-        ),
     )
 
 
@@ -443,14 +417,12 @@ def _flux2_norm_modulate(
 
     scale_row = scale.squeeze(1) if scale.dim() == 3 and scale.shape[1] == 1 else scale
     shift_row = shift.squeeze(1) if shift.dim() == 3 and shift.shape[1] == 1 else shift
-    use_xpu = x.is_xpu and can_use_xpu_layernorm_modulate(x, scale_row, shift_row)
+    use_xpu = x.is_xpu and can_use_xpu_layernorm_modulate(x.dtype, x.shape[-1])
+    use_cuda = x.is_cuda and can_use_fused_layernorm_modulate(x.dtype, x.shape[-1])
     if (
         _FLUX2_LN_MOD.disabled
         or not is_plain_layer_norm(norm, x.shape[-1])
-        or not (
-            use_xpu
-            or (x.is_cuda and can_use_fused_layernorm_modulate(x.dtype, x.shape[-1]))
-        )
+        or not (use_xpu or use_cuda)
     ):
         return norm(x) * (1 + scale) + shift
 
@@ -485,10 +457,6 @@ def _flux2_norm_modulate(
         ref,
         sig=sig,
         logger=logger,
-        mismatch_msg=(
-            "FLUX.2 fused LN+modulate fast path is not bit-exact on this "
-            "platform; falling back to eager"
-        ),
     )
 
 
@@ -548,10 +516,6 @@ def _flux2_swiglu_impl(x: torch.Tensor, out: Optional[torch.Tensor]) -> torch.Te
                 F.silu(x[..., :half]) * x[..., half:],
                 sig=sig,
                 logger=logger,
-                mismatch_msg=(
-                    "FLUX.2 fused SwiGLU fast path is not bit-exact on this "
-                    "platform; falling back to eager"
-                ),
             )
     return F.silu(x[..., :half]) * x[..., half:]
 
@@ -618,11 +582,11 @@ class Flux2FeedForward(nn.Module):
             # available.
             self.linear_in._interleave_for_swiglu_fusion = True
             self.linear_out._accepts_prequantized_fp4 = True
-            mark_flux2_nvfp4_swiglu_quant_site(self)
+            FLUX2_NVFP4_SWIGLU_QUANT.mark(self)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if (
-            flux2_nvfp4_swiglu_quant_active(self)
+            FLUX2_NVFP4_SWIGLU_QUANT.is_enabled(self)
             and getattr(self.linear_in, "_swiglu_fusion_ready", False)
             and not torch.compiler.is_compiling()
             and not torch.cuda.is_current_stream_capturing()
@@ -1016,13 +980,11 @@ class Flux2ParallelSelfAttention(torch.nn.Module, AttentionModuleMixin):
         self.norm_q = RMSNorm(dim_head, eps=eps)
         self.norm_k = RMSNorm(dim_head, eps=eps)
 
-        # Fused attention output + MLP output projection.
-        # Input is [attn_shard | mlp_shard] (independently sharded by
-        # MergedColumnParallelLinear), so patch weight loader to pick the
-        # correct non-contiguous columns per rank.
+        # each rank consumes independently sharded attention and MLP inputs
         self.to_out = RowParallelLinear(
             self.inner_dim + self.mlp_hidden_dim,
             self.out_dim,
+            input_sizes=[self.inner_dim, self.mlp_hidden_dim],
             bias=out_bias,
             input_is_parallel=True,
             quant_config=quant_config,
@@ -1040,8 +1002,6 @@ class Flux2ParallelSelfAttention(torch.nn.Module, AttentionModuleMixin):
             and isinstance(self.to_out.quant_method, ModelOptFp4LinearMethod)
         ):
             self._enable_nvfp4_token_cat = True
-        if self.tp_size > 1:
-            self._patch_to_out_weight_loader()
 
         self.attn = USPAttention(
             num_heads=self.local_heads,
@@ -1073,27 +1033,6 @@ class Flux2ParallelSelfAttention(torch.nn.Module, AttentionModuleMixin):
                 getattr(self.to_out, "quant_method", None), ModelOptFp4LinearMethod
             )
         )
-
-    def _patch_to_out_weight_loader(self) -> None:
-        inner_dim, mlp_dim = self.inner_dim, self.mlp_hidden_dim
-        tp_size, tp_rank = self.tp_size, self.to_out.tp_rank
-
-        def _loader(param, loaded_weight):
-            input_dim = getattr(param, "input_dim", None)
-            if input_dim is not None:
-                a = inner_dim // tp_size
-                m = mlp_dim // tp_size
-                attn_cols = loaded_weight.narrow(input_dim, tp_rank * a, a)
-                mlp_cols = loaded_weight.narrow(input_dim, inner_dim + tp_rank * m, m)
-                param.data.copy_(torch.cat([attn_cols, mlp_cols], dim=input_dim))
-            else:
-                param.data.copy_(loaded_weight)
-
-        self.to_out.weight_loader = _loader
-        if hasattr(self.to_out.weight, "_weight_loader"):
-            self.to_out.weight._weight_loader = _loader
-        else:
-            self.to_out.weight.weight_loader = _loader
 
     def forward(
         self,
@@ -1632,7 +1571,6 @@ class Flux2Transformer2DModel(CachableDiT, LayerwiseOffloadableModuleMixin):
     _supported_attention_backends = {
         AttentionBackendEnum.TORCH_SDPA,
         AttentionBackendEnum.FA,
-        AttentionBackendEnum.SAGE_ATTN,
         AttentionBackendEnum.AITER,
         AttentionBackendEnum.AITER_SAGE,
     }
@@ -1946,3 +1884,5 @@ class Flux2Transformer2DModel(CachableDiT, LayerwiseOffloadableModuleMixin):
 
 
 EntryClass = Flux2Transformer2DModel
+
+# TODO(merge5): re-plant entry 146,151,183 semantics (batch B1); fork hunks saved /tmp/opencode/merge5-dossier/replant/python__sglang__multimodal_gen__runtime__models__dits__flux_2.py.fork-hunks.patch

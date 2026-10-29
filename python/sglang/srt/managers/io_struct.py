@@ -63,6 +63,7 @@ from sglang.srt.managers.schedule_batch import (
     get_return_hidden_states_mode,
 )
 from sglang.srt.multimodal.mm_utils import has_valid_data
+from sglang.srt.observability.req_time_stats import SchedulerOutputTimeStats
 from sglang.srt.sampling.sampling_mask import SamplingMaskChunk
 from sglang.srt.sampling.sampling_params import SamplingParams, validate_sample_count
 from sglang.srt.utils import ImageData, VideoData
@@ -355,6 +356,7 @@ class GenerateReqInput:
 
     # For Unlimited-OCR
     images_config: Optional[dict] = None
+    mm_processor_kwargs: Optional[dict] = None
 
     # Pre-computed delimiter indices for multi-item scoring.
     # Batch-level: List[List[int]] (one per request). After __getitem__: List[int].
@@ -1019,6 +1021,7 @@ class GenerateReqInput:
                 if self.custom_logit_processor is not None
                 else None
             ),
+            mm_processor_kwargs=self.mm_processor_kwargs,
             positional_embed_overrides=self._get_positional_embed_overrides_item(i),
             # If `__getitem__` is called, these bootstrap fields must be lists.
             bootstrap_host=(
@@ -1704,9 +1707,8 @@ class BatchTokenIDOutput(BaseBatchReq, kw_only=True):
     # DP rank of the scheduler that processed each request
     dp_ranks: Optional[List[Optional[int]]] = None
 
-    # For observability
-    # Pickled Optional[List[SchedulerReqTimeStats]]
-    time_stats: Optional[PickleWrapper] = None
+    # For observability; None when metrics are off.
+    time_stats: Optional[List[Optional[SchedulerOutputTimeStats]]] = None
 
     # Multimodal prompt token counts (image/audio/video). None when not applicable.
     image_tokens: Optional[List[int]] = None
@@ -1798,9 +1800,8 @@ class BatchStrOutput(BaseBatchReq, kw_only=True):
     # DP rank of the scheduler that processed each request
     dp_ranks: Optional[List[Optional[int]]] = None
 
-    # For observability
-    # Pickled Optional[List[SchedulerReqTimeStats]]
-    time_stats: Optional[PickleWrapper] = None
+    # For observability; None when metrics are off.
+    time_stats: Optional[List[Optional[SchedulerOutputTimeStats]]] = None
 
     # Multimodal prompt token counts (image/audio/video). None when not applicable.
     image_tokens: Optional[List[int]] = None
@@ -1840,10 +1841,6 @@ class BatchEmbeddingOutput(BaseBatchReq, kw_only=True):
     retraction_counts: Optional[List[int]] = None
     # Detailed breakdown of cached tokens by source (device/host/storage)
     cached_tokens_details: Optional[List[Optional[CachedTokensDetails]]] = None
-
-    # For observability
-    # Pickled Optional[List[SchedulerReqTimeStats]]
-    time_stats: Optional[PickleWrapper] = None
 
     # Optional pooled hidden states (pre-head transformer output).
     # Two IPC formats, disambiguated by len vs len(rids):
@@ -2278,6 +2275,8 @@ class PdRoleSwitchReqInput(BaseReq, kw_only=True):
     decode_cuda_graph_bs: Optional[List[int]] = None
     # Measured graph footprint from a matching decode peer.
     decode_cuda_graph_memory_gb: Optional[float] = None
+    # Internal preflight across DP workers; does not change roles.
+    prepare_only: bool = False
 
 
 class PdRoleSwitchReqOutput(BaseReq, kw_only=True):
@@ -2360,6 +2359,18 @@ class SetInternalStateReqOutput(BaseReq, kw_only=True):
     updated: bool
 
 
+class GetHiCacheL3LayoutReq(BaseReq, kw_only=True):
+    pass
+
+
+class GetHiCacheL3LayoutReqOutput(BaseReq, kw_only=True):
+    """Carry the L3 availability envelope, including explicit disabled replies."""
+
+    # Untyped on purpose, like GetInternalStateReqOutput: the layout dict is
+    # sanitized with msgspec_to_builtins and can evolve without a migration.
+    layout: Dict[str, Any]
+
+
 class ProfileReqType(Enum):
     START_PROFILE = 1
     STOP_PROFILE = 2
@@ -2400,7 +2411,7 @@ class ProfileReqOutput(BaseReq, kw_only=True):
 
 
 class FreezeGCReq(BaseReq, kw_only=True):
-    pass
+    gc_threshold: Optional[List[int]] = None
 
 
 class ShutdownReq(BaseReq, kw_only=True):

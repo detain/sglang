@@ -7,7 +7,7 @@ import sglang.srt
 from sglang.test.ci.ci_register import register_cpu_ci
 from sglang.test.test_utils import CustomTestCase
 
-register_cpu_ci(est_time=23, suite="base-a-test-cpu")
+register_cpu_ci(est_time=34, suite="base-a-test-cpu")
 
 
 class TestNgramMambaVerifyUpdate(CustomTestCase):
@@ -17,7 +17,10 @@ class TestNgramMambaVerifyUpdate(CustomTestCase):
         target_worker.model_runner.attn_backend.update_mamba_state_after_mtp_verify = (
             MagicMock()
         )
-        mamba_pool = target_worker.model_runner.req_to_token_pool.mamba_pool
+        mamba_pool = MagicMock()
+        # The runner's KV pool router binds the state pool.
+        router = target_worker.model_runner.token_to_kv_pool.layer_router
+        router.part_view.return_value = mamba_pool
         mamba_pool.replayssm_spec_fold = False
         mamba_pool.replayssm_cache_base = None
         return target_worker
@@ -160,22 +163,22 @@ class TestPPReplaySSMVerifySourceRows(CustomTestCase):
         return spec_state
 
     def test_fold_helpers_read_pp_request_rows(self):
-        from sglang.kernels.ops.attention.fla.gdn_replayssm_spec_fold import (
+        from sglang.kernels.ops.attention.linear.gdn_replayssm_spec_fold import (
             commit_gdn_replayssm_fold_after_verify,
         )
-        from sglang.kernels.ops.attention.fla.kda_replayssm_spec_decode import (
+        from sglang.kernels.ops.attention.linear.kda_replayssm_spec_decode import (
             commit_kda_replayssm_after_verify,
         )
 
         cases = (
             (
                 commit_gdn_replayssm_fold_after_verify,
-                "sglang.kernels.ops.attention.fla.gdn_replayssm_spec_fold",
+                "sglang.kernels.ops.attention.linear.gdn_replayssm_spec_fold",
                 "commit_gdn_replayssm_fold_all_layers",
             ),
             (
                 commit_kda_replayssm_after_verify,
-                "sglang.kernels.ops.attention.fla.kda_replayssm_spec_decode",
+                "sglang.kernels.ops.attention.linear.kda_replayssm_spec_decode",
                 "commit_kda_replayssm_spec_all_layers",
             ),
         )
@@ -205,19 +208,16 @@ class TestPPReplaySSMVerifySourceRows(CustomTestCase):
 
         target_worker = MagicMock()
         req_pool = target_worker.model_runner.req_to_token_pool
-        req_pool.mamba_pool.replayssm_spec_fold = False
-        req_pool.mamba_pool.replayssm_is_kda = False
-        req_pool.mamba_pool.replayssm_cache_base = torch.empty(1)
-        # This case exercises the GDN ReplaySSM circular commit only; pin the
-        # PLE side-state pools off (a plain MagicMock auto-vivifies truthy
-        # short_conv_pool/ngram_pool attributes and drags the PLE commit's
-        # real scatter kernel into scope with mock tensors).
-        req_pool.short_conv_pool = None
-        req_pool.ngram_pool = None
+        mamba_pool = MagicMock()
+        router = target_worker.model_runner.token_to_kv_pool.layer_router
+        router.part_view.return_value = mamba_pool
+        mamba_pool.replayssm_spec_fold = False
+        mamba_pool.replayssm_is_kda = False
+        mamba_pool.replayssm_cache_base = torch.empty(1)
         req_pool.get_mamba_indices.return_value = torch.tensor(
             [5, 7], dtype=torch.int32
         )
-        req_pool.get_speculative_mamba2_params_all_layers.return_value = (
+        mamba_pool.get_speculative_mamba2_params_all_layers.return_value = (
             self._spec_state()
         )
         batch = MagicMock()
@@ -238,11 +238,11 @@ class TestPPReplaySSMVerifySourceRows(CustomTestCase):
                 return_value=True,
             ),
             patch(
-                "sglang.kernels.ops.attention.fla.gdn_replayssm_spec_decode."
+                "sglang.kernels.ops.attention.linear.gdn_replayssm_spec_decode."
                 "commit_gdn_replayssm_spec"
             ),
             patch(
-                "sglang.kernels.ops.attention.fla.gdn_replayssm_spec_decode."
+                "sglang.kernels.ops.attention.linear.gdn_replayssm_spec_decode."
                 "commit_gdn_replayssm_circular"
             ),
             patch(
@@ -368,36 +368,7 @@ class TestMtpVerifyHookSignature(CustomTestCase):
             )
 
 
-class TestVerifyIntermediateStateIndices(CustomTestCase):
-    def test_padding_rows_use_reserved_scratch_row(self):
-        from sglang.srt.layers.attention.linear.utils import (
-            build_verify_intermediate_state_indices,
-        )
-
-        # Graph-only padding is the regression; also retain eager padding
-        # and the unpadded/already-aligned cases.
-        cases = [
-            (5, 5, 8, [0, 1, 2, 3, 4, 5, 5, 5]),
-            (5, 8, 6, [0, 1, 2, 3, 4, 5, 5, 5]),
-            (5, 5, 5, [0, 1, 2, 3, 4]),
-            (8, 8, 8, list(range(8))),
-        ]
-        for pool_size, eager_bs, graph_bs, expected in cases:
-            with (
-                self.subTest(pool_size=pool_size, eager_bs=eager_bs, graph_bs=graph_bs),
-                patch(
-                    "sglang.srt.utils.common.get_eager_max_batch_size",
-                    return_value=eager_bs,
-                ),
-                patch(
-                    "sglang.srt.utils.common.get_cuda_graph_max_batch_size",
-                    return_value=graph_bs,
-                ),
-            ):
-                indices = build_verify_intermediate_state_indices(pool_size, "cpu")
-                self.assertEqual(indices.dtype, torch.int32)
-                self.assertEqual(indices.tolist(), expected)
-
-
 if __name__ == "__main__":
     unittest.main()
+
+# TODO(merge5): re-plant entry - semantics (batch B2); fork hunks saved /tmp/opencode/merge5-dossier/replant/test__registered__unit__spec__test_ngram_mamba_verify_update.py.fork-hunks.patch

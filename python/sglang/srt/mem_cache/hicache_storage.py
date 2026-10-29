@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import logging
 import os
+import random
 import threading
 import time
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Iterable, List, Optional, Set
+from typing import TYPE_CHECKING, Any, List, Optional, Sequence, Set
 
 import torch
 
@@ -21,12 +22,6 @@ logger = logging.getLogger(__name__)
 
 # Max pages per batched storage IO call.
 STORAGE_BATCH_SIZE = 128
-
-# Number of unreadable/corrupt pages to report at warning level before falling
-# back to debug logging. A storage dir written by an older build (pre sidecar /
-# slot-side-state layout changes) can contain thousands of incompatible pages;
-# one warning per page would drown the log, but silence would hide the problem.
-_BAD_PAGE_WARN_BUDGET = 8
 
 
 @dataclass
@@ -46,6 +41,49 @@ class HiCacheStorageConfig:
     # with dp-attention, tp_rank is attention-group-local; dp_rank disambiguates
     dp_rank: int = 0
     extra_config: Optional[dict] = None
+    # Unified key scheme: the topology-free chunk coordinates this rank owns,
+    # layer-major / head-minor. When set, backends MUST key objects by these
+    # instead of by the writer's rank.
+    unified_suffixes: Optional[List[str]] = None
+    dcp_size: int = 1
+    dcp_rank: int = 0
+    logical_page_size: Optional[int] = None
+    # Byte ranges in a local page, paired with unified_suffixes in the same
+    # order. The key grid is layer-major, whereas page bytes are head-major.
+    unified_chunk_spans: Optional[List[tuple[int, int]]] = None
+
+    def __post_init__(self):
+        if self.dcp_size < 1 or not 0 <= self.dcp_rank < self.dcp_size:
+            raise ValueError("Invalid DCP size or rank for HiCache storage.")
+        if self.dcp_size == 1:
+            return
+        if not self.is_mla_model:
+            raise ValueError("DCP storage shard identity currently requires MLA.")
+        if (
+            self.tp_size % self.dcp_size != 0
+            or not 0 <= self.tp_rank < self.tp_size
+            or self.tp_rank % self.dcp_size != self.dcp_rank
+        ):
+            raise ValueError("DCP storage requires contiguous DCP groups within TP.")
+        if (
+            self.logical_page_size is None
+            or self.logical_page_size <= 0
+            or self.logical_page_size % self.dcp_size != 0
+        ):
+            raise ValueError("DCP storage requires a DCP-aligned logical page size.")
+
+    @property
+    def is_storage_writer(self) -> bool:
+        """Select one writer for each shared storage object.
+
+        Unified full-page CP replicas share keys and use CP rank 0. Legacy
+        keys include the CP rank, so every CP copy retains its own writer.
+        MLA uses one writer per DCP shard in the first DCP group; with DCP
+        disabled, MLA uses TP rank 0 and non-MLA uses every TP rank.
+        """
+        if self.unified_suffixes is not None and self.attn_cp_rank != 0:
+            return False
+        return not self.is_mla_model or self.tp_rank == self.dcp_rank
 
 
 @dataclass
@@ -62,6 +100,7 @@ class PoolName(str, Enum):
     KV = "kv"
     MAMBA = "mamba"
     SWA = "swa"
+    AUXILIARY_SWA = "auxiliary_swa"
     INDEXER = "indexer"
     # TODO(hzh0425): Current DeepSeek V4 pool naming is verbose; will be normalized to
     # 'COMPRESSED_KV / COMPRESSED_INDEXER / COMPRESSED_STATE' in the next PR.
@@ -92,13 +131,6 @@ class PoolName(str, Enum):
 
     def __str__(self) -> str:
         return self.value
-
-
-# Sidecar keys are ``<page hash>.<pool>``, so these are the markers
-# ``HiCacheFile._component_of`` can read back out of a key. KV has no marker.
-_POOL_COMPONENT_MARKERS = frozenset(
-    pool.value for pool in PoolName if pool is not PoolName.KV
-)
 
 
 class PoolHitPolicy(str, Enum):
@@ -136,34 +168,6 @@ class PoolTransfer:
     # BLOCK_GROUPS geometry: FULL pages per block and keys (pages) per group.
     block_pages: int = 0
     group_pages: int = 0
-
-
-def merge_source_transfers(
-    transfers: Iterable[PoolTransfer], pool: PoolName
-) -> Optional[PoolTransfer]:
-    """Every independent transfer of ``pool`` as one span, in transfer order.
-
-    A pool may be staged in several transfers; a sidecar deriving its indices
-    from that pool must cover all of them. A lone transfer is returned as is,
-    so a sidecar keeps aliasing its tensors. Returns None when ``pool`` has no
-    independent transfer.
-    """
-    sources = [t for t in transfers if t.indices_from_pool is None and t.name == pool]
-    if len(sources) <= 1:
-        return sources[0] if sources else None
-
-    def cat(parts):
-        parts = list(parts)
-        return None if any(part is None for part in parts) else torch.cat(parts)
-
-    keys = [t.keys for t in sources]
-    return PoolTransfer(
-        name=pool,
-        host_indices=cat(t.host_indices for t in sources),
-        device_indices=cat(t.device_indices for t in sources),
-        keys=None if any(k is None for k in keys) else [k for ks in keys for k in ks],
-        hit_policy=sources[0].hit_policy,
-    )
 
 
 @dataclass(frozen=True)
@@ -213,6 +217,91 @@ def count_pool_hits(results: dict[str, List[bool]]) -> dict[str, int]:
     }
 
 
+def disabled_l3_layout(
+    reason: str, *, backend: Optional[str] = None, page_size: Optional[int] = None
+) -> dict:
+    return {
+        "enabled": False,
+        "backend": backend,
+        "page_size": page_size,
+        "hicache_object_layout": {"pools": []},
+        "reason": reason,
+    }
+
+
+def _l3_layout_pp_rank(layout: dict) -> Optional[int]:
+    inner = layout.get("hicache_object_layout")
+    return inner.get("pp_rank") if isinstance(inner, dict) else None
+
+
+def _l3_layout_stage_independent(layout: dict) -> dict:
+    """The part of a reply that must agree across pipeline stages."""
+    inner = layout.get("hicache_object_layout")
+    if not isinstance(inner, dict):
+        return layout
+    rest = {k: v for k, v in inner.items() if k not in ("pp_rank", "pools")}
+    return {**layout, "hicache_object_layout": rest}
+
+
+def _l3_layout_unavailable(layout: dict, reason: str) -> dict:
+    inner = {**layout["hicache_object_layout"], "pools": []}
+    return {
+        **layout,
+        "enabled": False,
+        "hicache_object_layout": inner,
+        "reason": reason,
+    }
+
+
+def merge_l3_layouts(layouts: Sequence[Optional[dict]]) -> Optional[dict]:
+    """Merge scheduler replies: replicas must match, PP stages are concatenated."""
+    if not layouts or all(layout is None for layout in layouts):
+        # Absence is reserved for older engines, not an explicitly disabled L3.
+        return None
+    inconsistent = "Inconsistent HiCache L3 layouts across schedulers"
+    if any(layout is None for layout in layouts):
+        return disabled_l3_layout(inconsistent)
+    stages = {}
+    for layout in layouts:
+        if stages.setdefault(_l3_layout_pp_rank(layout), layout) != layout:
+            return disabled_l3_layout(inconsistent)
+    if None in stages:
+        return layouts[0] if len(stages) == 1 else disabled_l3_layout(inconsistent)
+    ordered = [stages[rank] for rank in sorted(stages)]
+    first = ordered[0]
+    if any(
+        _l3_layout_stage_independent(s) != _l3_layout_stage_independent(first)
+        for s in ordered[1:]
+    ):
+        return disabled_l3_layout(inconsistent)
+    if not first.get("enabled"):
+        return first
+    inner = first["hicache_object_layout"]
+    pp_size = inner.get("pp_size", 1)
+    if type(pp_size) is not int:
+        return disabled_l3_layout(inconsistent)
+    if sorted(stages) != list(range(pp_size)):
+        return _l3_layout_unavailable(
+            first, "Incomplete pipeline-parallel stage layouts"
+        )
+    if pp_size == 1:
+        return first
+    # A layout spanning several stages belongs to none of them: pp_rank is null.
+    pools = [p for s in ordered for p in s["hicache_object_layout"]["pools"]]
+    return {
+        **first,
+        "hicache_object_layout": {**inner, "pools": pools, "pp_rank": None},
+    }
+
+
+def merge_scheduler_info_layouts(infos: Sequence[dict]) -> None:
+    """Give every startup info the merged layout, so any entry is representative."""
+    if any("hicache_object_layout" in info for info in infos):
+        layout = merge_l3_layouts([info.get("hicache_object_layout") for info in infos])
+        for info in infos:
+            info["hicache_object_layout"] = layout
+
+
 class HiCacheStorage(ABC):
     """
     HiCacheStorage is a class that provides a generic key-value interface for storing and retrieving KV cache.
@@ -227,6 +316,16 @@ class HiCacheStorage(ABC):
         if not hasattr(self, "registered_pools"):
             self.registered_pools = {}
         self.registered_pools[host_pool_name] = host_pool
+
+    def on_host_pools_registered(self) -> None:
+        """The initial host-pool registration burst is over: the anchor pool
+        (``register_mem_pool_host``) and every host pool group entry
+        (``register_mem_host_pool_v2``). Fires once per attach; pools
+        registered later (dynamic sidecars) arrive through v2 alone and do
+        not re-fire it. Backends that must finalize once the pool set is
+        known -- e.g. register with a remote cache manager whose spec cannot
+        be amended -- should do so here; raising fails the attach.
+        """
 
     def batch_exists_v2(
         self,
@@ -424,47 +523,320 @@ class MetadataCache:
             self.cache.clear()
 
 
-class HiCacheFile(HiCacheStorage):
-    @staticmethod
-    def _build_config_suffix(storage_config: HiCacheStorageConfig) -> str:
-        """Per-model/rank suffix appended to every file key.
+def _maybe_wrap_hicache_storage_failure_injector(
+    backend: HiCacheStorage,
+) -> HiCacheStorage:
+    """Wrap storage with random delay/failure injection when test env vars are set."""
+    random_delay_limit = envs.SGLANG_TEST_HICACHE_BACKEND_RANDOM_DELAY.get()
+    failure_prob = envs.SGLANG_TEST_HICACHE_BACKEND_RANDOM_FAILURE.get()
+    if random_delay_limit is None and failure_prob is None:
+        return backend
+    assert random_delay_limit is None or random_delay_limit >= 0
+    assert failure_prob is None or 0 <= failure_prob <= 1
+    logger.info(
+        "HiCache storage test injector enabled "
+        f"(random_delay_limit={random_delay_limit or 0.0}s, "
+        f"failure_prob={failure_prob or 0.0})"
+    )
+    return HiCacheStorageFailureInjector(
+        backend,
+        random_delay_limit or 0.0,
+        failure_prob or 0.0,
+    )
 
-        Shared with the ``fast_file`` backend so both keep one on-disk format.
-        """
+
+class HiCacheStorageFailureInjector(HiCacheStorage):
+    """Proxy that injects random delay and failures before each storage API call."""
+
+    _backend: HiCacheStorage
+    _random_delay_limit: float
+    _failure_prob: float
+    _thread_local = threading.local()
+
+    def __init__(
+        self,
+        backend: HiCacheStorage,
+        random_delay_limit: float,
+        failure_prob: float,
+    ):
+        self._backend = backend
+        self._random_delay_limit = random_delay_limit
+        self._failure_prob = failure_prob
+
+    def _thread_local_random(self) -> random.Random:
+        # We cannot use random.uniform() or random.random() directly, because
+        # TP/PP ranks have the same random seed at startup, so they would produce
+        # the same sequence of random numbers here.  We expect TP/PP ranks behave
+        # differently by injecting random failures and delays, in order to expose
+        # potential bugs.
+        if not hasattr(self._thread_local, "random"):
+            self._thread_local.random = random.Random()
+        return self._thread_local.random
+
+    def _inject_delay(self, func_name: str) -> None:
+        if self._random_delay_limit > 0:
+            r = self._thread_local_random()
+            delay_secs = r.uniform(0.0, self._random_delay_limit)
+            logger.debug(f"Inject delay {delay_secs}s in {func_name}")
+            time.sleep(delay_secs)
+
+    def _inject_failure(self, func_name: str) -> bool:
+        if self._failure_prob > 0:
+            r = self._thread_local_random()
+            if r.random() < self._failure_prob:
+                logger.debug(f"Inject failure in {func_name}")
+                return True
+        return False
+
+    def register_mem_pool_host(self, mem_pool_host: HostKVCache):
+        self._backend.register_mem_pool_host(mem_pool_host)
+
+    def register_mem_host_pool_v2(self, host_pool: HostKVCache, host_pool_name):
+        self._backend.register_mem_host_pool_v2(host_pool, host_pool_name)
+
+    def on_host_pools_registered(self) -> None:
+        self._backend.on_host_pools_registered()
+
+    def batch_exists_v2(
+        self,
+        keys: List[str],
+        pool_transfers: Optional[List[PoolTransfer]] = None,
+        extra_info: Optional[HiCacheStorageExtraInfo] = None,
+    ) -> PoolTransferResult:
+        func_name = "batch_exists_v2"
+        self._inject_delay(func_name)
+        if self._inject_failure(func_name):
+            return PoolTransferResult.empty()
+        return self._backend.batch_exists_v2(keys, pool_transfers, extra_info)
+
+    def batch_get_v2(
+        self,
+        transfers: List[PoolTransfer],
+        extra_info: Optional[HiCacheStorageExtraInfo] = None,
+    ) -> dict[str, List[bool]]:
+        func_name = "batch_get_v2"
+        self._inject_delay(func_name)
+        if self._inject_failure(func_name):
+            return {
+                transfer.name: [False] * len(transfer.keys or [])
+                for transfer in transfers
+            }
+        return self._backend.batch_get_v2(transfers, extra_info)
+
+    def batch_set_v2(
+        self,
+        transfers: List[PoolTransfer],
+        extra_info: Optional[HiCacheStorageExtraInfo] = None,
+    ) -> dict[str, List[bool]]:
+        func_name = "batch_set_v2"
+        self._inject_delay(func_name)
+        if self._inject_failure(func_name):
+            return {
+                transfer.name: [False] * len(transfer.keys or [])
+                for transfer in transfers
+            }
+        return self._backend.batch_set_v2(transfers, extra_info)
+
+    def batch_get_v1(
+        self,
+        keys: List[str],
+        host_indices: torch.Tensor,
+        extra_info: Optional[HiCacheStorageExtraInfo] = None,
+    ) -> List[bool]:
+        func_name = "batch_get_v1"
+        self._inject_delay(func_name)
+        if self._inject_failure(func_name):
+            return [False] * len(keys)
+        return self._backend.batch_get_v1(keys, host_indices, extra_info)
+
+    def batch_set_v1(
+        self,
+        keys: List[str],
+        host_indices: torch.Tensor,
+        extra_info: Optional[HiCacheStorageExtraInfo] = None,
+    ) -> List[bool]:
+        func_name = "batch_set_v1"
+        self._inject_delay(func_name)
+        if self._inject_failure(func_name):
+            return [False] * len(keys)
+        return self._backend.batch_set_v1(keys, host_indices, extra_info)
+
+    def get(
+        self,
+        key: str,
+        target_location: Optional[Any] = None,
+        target_sizes: Optional[Any] = None,
+    ) -> torch.Tensor | None:
+        func_name = "get"
+        self._inject_delay(func_name)
+        if self._inject_failure(func_name):
+            return None
+        return self._backend.get(key, target_location, target_sizes)
+
+    def batch_get(
+        self,
+        keys: List[str],
+        target_locations: Optional[Any] = None,
+        target_sizes: Optional[Any] = None,
+    ) -> List[torch.Tensor | None] | int:
+        func_name = "batch_get"
+        self._inject_delay(func_name)
+        if self._inject_failure(func_name):
+            return [None] * len(keys)
+        return self._backend.batch_get(keys, target_locations, target_sizes)
+
+    def set(
+        self,
+        key: str,
+        value: Optional[Any] = None,
+        target_location: Optional[Any] = None,
+        target_sizes: Optional[Any] = None,
+    ) -> bool:
+        func_name = "set"
+        self._inject_delay(func_name)
+        if self._inject_failure(func_name):
+            return False
+        return self._backend.set(key, value, target_location, target_sizes)
+
+    def batch_set(
+        self,
+        keys: List[str],
+        values: Optional[Any] = None,
+        target_locations: Optional[Any] = None,
+        target_sizes: Optional[Any] = None,
+    ) -> bool:
+        func_name = "batch_set"
+        self._inject_delay(func_name)
+        if self._inject_failure(func_name):
+            return False
+        return self._backend.batch_set(keys, values, target_locations, target_sizes)
+
+    def exists(self, key: str) -> bool:
+        func_name = "exists"
+        self._inject_delay(func_name)
+        if self._inject_failure(func_name):
+            return False
+        return self._backend.exists(key)
+
+    def batch_exists(
+        self, keys: List[str], extra_info: Optional[HiCacheStorageExtraInfo] = None
+    ) -> int:
+        func_name = "batch_exists"
+        self._inject_delay(func_name)
+        if self._inject_failure(func_name):
+            return 0
+        return self._backend.batch_exists(keys, extra_info)
+
+    def clear(self) -> None:
+        return self._backend.clear()
+
+    def get_stats(self):
+        return self._backend.get_stats()
+
+    def close(self):
+        self._backend.close()
+
+
+class HiCacheFile(HiCacheStorage):
+    def _init_config_suffix(self, storage_config: HiCacheStorageConfig) -> None:
+        """Derive the per-deployment key suffix from the storage config."""
+        self._unified_suffixes = None
+        self._unified_chunk_sizes = {}
+        self._unified_chunk_spans = storage_config.unified_chunk_spans
+        if storage_config.unified_suffixes is not None:
+            # The chunk coordinate replaces the whole rank/pp/cp suffix family;
+            # model identity lives inside the namespace digest.
+            suffixes = storage_config.unified_suffixes
+            if not suffixes or len(set(suffixes)) != len(suffixes):
+                raise ValueError(
+                    "Unified storage suffixes must be nonempty and unique."
+                )
+            if storage_config.dcp_size != 1:
+                raise ValueError("Unified storage requires full pages without DCP.")
+            if self._unified_chunk_spans is None:
+                if len(suffixes) != 1:
+                    raise ValueError("Unified multichunk storage requires chunk spans.")
+            else:
+                if len(self._unified_chunk_spans) != len(suffixes):
+                    raise ValueError("Each unified suffix requires one chunk span.")
+                end = 0
+                for offset, length in sorted(self._unified_chunk_spans):
+                    if (
+                        type(offset) is not int
+                        or type(length) is not int
+                        or offset != end
+                        or length <= 0
+                    ):
+                        raise ValueError(
+                            "Unified chunk spans must cover the page without gaps or overlap."
+                        )
+                    end = offset + length
+                self._unified_chunk_spans = tuple(self._unified_chunk_spans)
+            self._unified_suffixes = tuple(f"_{suffix}" for suffix in suffixes)
+            if self._unified_chunk_spans is not None:
+                self._unified_chunk_sizes = dict(
+                    zip(
+                        self._unified_suffixes,
+                        (length for _, length in self._unified_chunk_spans),
+                    )
+                )
+            self.config_suffix = self._unified_suffixes[0]
+            # Unified keys currently support only a single KV pool, without
+            # TP-sharded sidecars. Keep all key lookups in its chunk namespace.
+            self.tp_config_suffix = self.config_suffix
+            return
+        if self._unified_chunk_spans is not None:
+            raise ValueError("Unified chunk spans require unified storage suffixes.")
         model_name = storage_config.model_name
         model_name = "-".join(model_name.split("/")) if model_name else ""
-        config_suffix = f"_{model_name}"
-        if not storage_config.is_mla_model:
-            config_suffix += f"_{storage_config.tp_rank}_{storage_config.tp_size}"
+        shard_suffix = ""
         if storage_config.pp_size > 1:
-            config_suffix += f"_{storage_config.pp_size}_{storage_config.pp_rank}"
-        # Under NSA context parallel each CP rank holds a disjoint slice of every
-        # page, so give each rank its own file key to avoid a cross-rank write race.
+            shard_suffix += f"_{storage_config.pp_size}_{storage_config.pp_rank}"
+        # Under NSA context parallel each CP rank holds a disjoint slice of
+        # every page, so give each rank its own file key to avoid a cross-rank
+        # write race.
         if storage_config.attn_cp_size > 1:
-            config_suffix += (
+            shard_suffix += (
                 f"_cp{storage_config.attn_cp_rank}_{storage_config.attn_cp_size}"
             )
-        return config_suffix
+        # MLA KV is replicated across TP ranks and shares one file per page;
+        # TP-sharded state is keyed by tp_config_suffix instead.
+        self.tp_config_suffix = (
+            f"_{model_name}_{storage_config.tp_rank}_{storage_config.tp_size}"
+            f"{shard_suffix}"
+        )
+        self.config_suffix = (
+            f"_{model_name}{shard_suffix}"
+            if storage_config.is_mla_model
+            else self.tp_config_suffix
+        )
 
     def __init__(
         self, storage_config: HiCacheStorageConfig, file_path: str = "/tmp/hicache"
     ):
-        self.read_workers = max(1, envs.SGLANG_HICACHE_FILE_BACKEND_READ_WORKERS.get())
-        self._read_pool = None
-        self._read_pool_lock = threading.Lock()
         self.file_path = (
-            (storage_config.extra_config or {}).get("file_storage_path")
-            or envs.SGLANG_HICACHE_FILE_BACKEND_STORAGE_DIR.get()
+            envs.SGLANG_HICACHE_FILE_BACKEND_STORAGE_DIR.get()
+            or (storage_config.extra_config or {}).get("file_storage_path")
             or file_path
         )
 
+        self._init_config_suffix(storage_config)
         tp_rank = storage_config.tp_rank
-        is_mla_model = storage_config.is_mla_model
         attn_cp_rank = storage_config.attn_cp_rank
-        self.config_suffix = self._build_config_suffix(storage_config)
+
+        # TODO: Include KV dtype and stored layout in keys for both DCP and
+        # non-DCP caches; raw file payloads do not describe their format.
+        if storage_config.dcp_size > 1:
+            # Equivalent MLA shards in different DCP groups share a file.
+            dcp_suffix = (
+                f"_tp{storage_config.tp_size}_dcp{storage_config.dcp_rank}_{storage_config.dcp_size}"
+                f"_page{storage_config.logical_page_size}"
+            )
+            self.config_suffix += dcp_suffix
+            self.tp_config_suffix += dcp_suffix
 
         if not os.path.exists(self.file_path) and tp_rank == 0 and attn_cp_rank == 0:
-            os.makedirs(self.file_path, exist_ok=True)
+            os.makedirs(self.file_path)
             logger.info(f"Created HiCacheFile storage directory at {self.file_path}")
 
         # Metadata cache positive lookup toggle & TTL
@@ -497,57 +869,81 @@ class HiCacheFile(HiCacheStorage):
         # module, so a top-level import here would be circular.
         from sglang.srt.mem_cache.storage.file.lru_file_evictor import LRUFileEvictor
 
+        if storage_config.unified_suffixes is not None:
+            owned_suffixes = (
+                self._unified_suffixes if storage_config.is_storage_writer else ()
+            )
+        else:
+            # Each rank owns its TP-sharded state; selected DCP writers
+            # also own their shared MLA shard files.
+            owned_suffixes = (self.tp_config_suffix,)
+            if storage_config.is_mla_model and storage_config.is_storage_writer:
+                owned_suffixes += (self.config_suffix,)
         self._evictor = LRUFileEvictor(
             self.file_path,
-            self.config_suffix,
+            owned_suffixes=owned_suffixes,
             tp_rank=tp_rank,
-            is_mla_model=is_mla_model,
             extra_config=storage_config.extra_config,
             on_evict=(
                 self.metadata_cache.remove if self.metadata_cache is not None else None
             ),
         )
 
-        # Rate limit for unreadable-page warnings; see _BAD_PAGE_WARN_BUDGET.
-        self._bad_page_warnings = 0
-        # Same rate limit for the two fetch/write-miss reports below, plus a
-        # per-pool tally: a refused sidecar write is otherwise invisible to the
-        # operator (the backup path does not check sidecar results unless the
-        # backend dedupes writes), and the fetch-miss warning used to be
-        # indistinguishable from a KV page miss.
-        self._miss_report_warnings = 0
-        self.fetch_miss_counts: dict[str, int] = {}
-        self.write_refusal_counts: dict[str, int] = {}
+    def _validate_unified_page_bytes(self, page_bytes: int) -> None:
+        if self._unified_chunk_spans is not None:
+            expected = sum(length for _, length in self._unified_chunk_spans)
+            if page_bytes != expected:
+                raise ValueError(
+                    f"Unified chunk spans cover {expected} bytes, but the page has {page_bytes}."
+                )
 
-    @staticmethod
-    def _component_of(storage_key: str) -> str:
-        """Pool an (unsuffixed) storage key belongs to.
+    def register_mem_pool_host(self, mem_pool_host: HostKVCache):
+        if self._unified_chunk_spans is not None:
+            self._validate_unified_page_bytes(
+                mem_pool_host.page_unified_layout.bytes_per_page
+            )
+        super().register_mem_pool_host(mem_pool_host)
 
-        KV pages carry no marker; sidecar keys are ``<page hash>.<pool>``, and a
-        page hash is hex, so the marker is the trailing dotted token.
-        """
-        _, _, marker = storage_key.rpartition(".")
-        if marker and marker != storage_key and marker in _POOL_COMPONENT_MARKERS:
-            return marker
-        return str(PoolName.KV)
+    def register_mem_host_pool_v2(self, host_pool: HostKVCache, host_pool_name):
+        if self._unified_suffixes is not None:
+            if host_pool_name != PoolName.KV:
+                raise NotImplementedError(
+                    "Unified file storage does not support sidecar pools."
+                )
+            if self._unified_chunk_spans is not None:
+                self._validate_unified_page_bytes(
+                    host_pool.page_unified_layout.bytes_per_page
+                )
+        super().register_mem_host_pool_v2(host_pool, host_pool_name)
 
-    def _report_miss(self, message: str) -> None:
-        # Rate-limited like _report_bad_page: a storage dir written by another
-        # build (or a per-rank shard that never held these sidecars) can miss
-        # thousands of keys, and one warning per key buries the signal.
-        if self._miss_report_warnings < _BAD_PAGE_WARN_BUDGET:
-            self._miss_report_warnings += 1
-            logger.warning(message)
-        else:
-            logger.debug(message)
+    def _page_chunks(self, key: str, page: torch.Tensor):
+        self._validate_unified_page_bytes(page.numel() * page.element_size())
+        data = page.contiguous().view(torch.uint8).reshape(-1)
+        spans = self._unified_chunk_spans or ((0, data.numel()),)
+        return [
+            (key + suffix, data[offset : offset + length])
+            for suffix, (offset, length) in zip(self._unified_suffixes, spans)
+        ]
 
     def _get_suffixed_key(self, key: str) -> str:
+        # Mamba state is TP-sharded even when the model's MLA KV is replicated.
+        if key.endswith(f".{PoolName.MAMBA.value}"):
+            return key + self.tp_config_suffix
         return key + self.config_suffix
 
     def _get_component_key(self, key: str, component_name: Optional[str] = None) -> str:
         if component_name is None or component_name in ("__default__", PoolName.KV):
             return self._get_suffixed_key(key)
-        return self._get_suffixed_key(f"{key}.{component_name}")
+        return self._get_suffixed_key(self._log_key(component_name, key))
+
+    def _get_component_keys(self, key: str, component_name: Optional[str] = None):
+        if self._unified_suffixes is None:
+            return (self._get_component_key(key, component_name),)
+        if component_name not in (None, "__default__", PoolName.KV):
+            raise NotImplementedError(
+                "Unified file storage does not support sidecar pools."
+            )
+        return tuple(key + suffix for suffix in self._unified_suffixes)
 
     def _scan_existing_files_to_metadata_cache(self) -> None:
         try:
@@ -559,21 +955,10 @@ class HiCacheFile(HiCacheStorage):
                 continue
             stem = fn[:-4]
             # Only files belonging to this rank/model.
-            if stem.endswith(self.config_suffix):
+            if stem.endswith(
+                self._unified_suffixes or (self.config_suffix, self.tp_config_suffix)
+            ):
                 self.metadata_cache.add(stem)
-
-    def _report_bad_page(self, what: str, key: str) -> None:
-        # A page that exists but cannot be (de)serialized is a storage miss for
-        # the current build: report it as such (rate-limited) and let the batch
-        # truncate to the contiguous good prefix instead of unwinding into the
-        # daemon storage threads, which would disable the tier for the whole
-        # serve (see sgl-project/sglang#39830).
-        message = f"HiCacheFile page {what} failed for {key}; treating as a miss."
-        if self._bad_page_warnings < _BAD_PAGE_WARN_BUDGET:
-            self._bad_page_warnings += 1
-            logger.warning(message)
-        else:
-            logger.debug(message)
 
     def get(
         self,
@@ -581,11 +966,26 @@ class HiCacheFile(HiCacheStorage):
         target_location: torch.Tensor,
         target_sizes: Optional[Any] = None,
     ) -> torch.Tensor | None:
-        suffixed = self._get_suffixed_key(key)
+        if self._unified_suffixes is None:
+            return self._get_file(self._get_suffixed_key(key), target_location)
+        # Do not expose a partially restored page if any chunk is missing,
+        # truncated, or evicted between the existence check and the read.
+        scratch = torch.empty_like(
+            target_location, memory_format=torch.contiguous_format
+        )
+        for suffixed, chunk in self._page_chunks(key, scratch):
+            if self._get_file(suffixed, chunk) is None:
+                return None
+        target_location.copy_(scratch)
+        return target_location
+
+    def _get_file(self, suffixed: str, target_location: torch.Tensor):
         tensor_path = os.path.join(self.file_path, f"{suffixed}.bin")
         try:
             expected = target_location.numel() * target_location.element_size()
             with open(tensor_path, "rb", buffering=0) as f:
+                if os.fstat(f.fileno()).st_size != expected:
+                    raise IOError(f"Incorrect object size for {suffixed}")
                 buf = memoryview(target_location.view(torch.uint8).contiguous().numpy())
                 if f.readinto(buf) != expected:
                     raise IOError(f"Short read for {suffixed}")
@@ -593,30 +993,10 @@ class HiCacheFile(HiCacheStorage):
             if self.metadata_cache is not None:
                 self.metadata_cache.add(suffixed)
             return target_location
-        except FileNotFoundError:
+        except OSError:
             if self.metadata_cache is not None:
                 self.metadata_cache.remove(suffixed)
-            pool = self._component_of(key)
-            self.fetch_miss_counts[pool] = self.fetch_miss_counts.get(pool, 0) + 1
-            self._report_miss(
-                f"Failed to fetch {key} from HiCacheFile storage: no such "
-                f"{pool} page ({self.fetch_miss_counts[pool]} {pool} misses so far)."
-                + (
-                    ""
-                    if pool == str(PoolName.KV)
-                    else " A sidecar miss is an endpoint miss: the trailing "
-                    "window of the prefetched span is not restorable there, so "
-                    "the KV prefix read for it is forfeited too."
-                )
-            )
-            return None
-        except OSError:
-            # Short read (IOError) or other read failures on a corrupt /
-            # truncated page (e.g. one written by a build with a different
-            # page layout).  Degrade to a miss with the tensor-or-None
-            # contract: the caller truncates the batch prefix, and a
-            # background storage thread never sees the exception.
-            self._report_bad_page("read", suffixed)
+            logger.warning(f"Failed to fetch {suffixed} from HiCacheFile storage.")
             return None
 
     def batch_get(
@@ -625,38 +1005,12 @@ class HiCacheFile(HiCacheStorage):
         target_locations: List[torch.Tensor],
         target_sizes: Optional[Any] = None,
     ) -> List[torch.Tensor | None]:
-        return self._map_reads(
-            lambda kt: self.get(kt[0], kt[1]),
-            list(zip(keys, target_locations or [None] * len(keys))),
-        )
-
-    def _map_reads(self, fn, items: list) -> list:
-        """[fn(x) for x in items], on the read pool when read_workers > 1.
-
-        Returns only after every read has finished (they write into caller-owned
-        buffers), in input order, so callers see the same results as a serial
-        loop. A read that raises becomes a miss (None).
-        """
-        if self.read_workers <= 1 or len(items) <= 1:
-            return [fn(x) for x in items]
-        if self._read_pool is None:
-            with self._read_pool_lock:
-                if self._read_pool is None:
-                    from concurrent.futures import ThreadPoolExecutor
-
-                    self._read_pool = ThreadPoolExecutor(
-                        max_workers=self.read_workers,
-                        thread_name_prefix="hicache-file-read",
-                    )
-        futures = [self._read_pool.submit(fn, x) for x in items]
-        results = []
-        for future in futures:
-            try:
-                results.append(future.result())
-            except Exception as e:
-                logger.error(f"HiCacheFile parallel read failed: {e}")
-                results.append(None)
-        return results
+        return [
+            self.get(key, target_location)
+            for key, target_location in zip(
+                keys, target_locations or [None] * len(keys)
+            )
+        ]
 
     def set(
         self,
@@ -665,12 +1019,21 @@ class HiCacheFile(HiCacheStorage):
         target_location: Optional[Any] = None,
         target_sizes: Optional[Any] = None,
     ) -> bool:
-        suffixed = self._get_suffixed_key(key)
+        if self._unified_suffixes is None:
+            return self._set_file(self._get_suffixed_key(key), value)
+        for suffixed, chunk in self._page_chunks(key, value):
+            if not self._set_file(suffixed, chunk):
+                return False
+        # A small LRU cap may have evicted an earlier chunk while publishing
+        # a later one. Partial pages must not be acknowledged as complete.
+        return self.exists(key)
+
+    def _set_file(self, suffixed: str, value: torch.Tensor) -> bool:
         tensor_path = os.path.join(self.file_path, f"{suffixed}.bin")
 
         # Fast path: same key already on disk. Refresh recency and skip rewrite.
-        if self.exists(key):
-            logger.debug(f"Key {key} already exists. Skipped.")
+        if self._file_exists(suffixed):
+            logger.debug(f"Key {suffixed} already exists. Skipped.")
             self._evictor.touch(suffixed, tensor_path)
             return True
 
@@ -679,21 +1042,7 @@ class HiCacheFile(HiCacheStorage):
         try:
             value_bytes = value.numel() * value.element_size()
             # Ask the evictor to admit + reserve disk space (evicting if needed).
-            if not self._evictor.reserve(suffixed, value_bytes, key=key):
-                # The evictor says why (cap / watermark / ownership) once per
-                # refused key; keep a per-pool tally so a sidecar pool that is
-                # systematically refused -- e.g. ``.mamba`` files losing the
-                # free-space watermark while KV keeps landing -- is measurable
-                # instead of only inferable from later prefetch misses.
-                pool = self._component_of(key)
-                self.write_refusal_counts[pool] = (
-                    self.write_refusal_counts.get(pool, 0) + 1
-                )
-                self._report_miss(
-                    f"HiCacheFile refused to write {key} (pool={pool}, "
-                    f"{self.write_refusal_counts[pool]} {pool} refusals so far); "
-                    "later prefetches cannot restore this page."
-                )
+            if not self._evictor.reserve(suffixed, value_bytes, key=suffixed):
                 return False
             reserved = True
 
@@ -705,7 +1054,7 @@ class HiCacheFile(HiCacheStorage):
                 self.metadata_cache.add(suffixed)
             return True
         except Exception as e:
-            logger.error(f"Failed to save tensor {key}: {e}")
+            logger.error(f"Failed to save tensor {suffixed}: {e}")
             # Roll back the reservation and clean up any half-written file.
             if reserved:
                 self._evictor.abort(suffixed)
@@ -731,14 +1080,36 @@ class HiCacheFile(HiCacheStorage):
         return True
 
     def exists(self, key: str) -> bool:
-        key = self._get_suffixed_key(key)
-        if self.metadata_cache is not None and self.metadata_cache.contains(key):
+        return all(self._file_exists(stem) for stem in self._get_component_keys(key))
+
+    def _file_exists(self, key: str) -> bool:
+        # Unified chunks may be shared with a differently sharded deployment,
+        # whose evictor cannot invalidate this instance's metadata cache.
+        if (
+            self._unified_suffixes is None
+            and self.metadata_cache is not None
+            and self.metadata_cache.contains(key)
+        ):
             return True
         tensor_path = os.path.join(self.file_path, f"{key}.bin")
-        if os.path.exists(tensor_path):
+        if self._unified_suffixes is not None:
+            try:
+                size = os.stat(tensor_path).st_size
+                found = all(
+                    size == expected
+                    for suffix, expected in self._unified_chunk_sizes.items()
+                    if key.endswith(suffix)
+                )
+            except OSError:
+                found = False
+        else:
+            found = os.path.exists(tensor_path)
+        if found:
             if self.metadata_cache is not None:
                 self.metadata_cache.add(key)
             return True
+        if self.metadata_cache is not None:
+            self.metadata_cache.remove(key)
         return False
 
     def _collect_existing_component_keys(
@@ -746,10 +1117,22 @@ class HiCacheFile(HiCacheStorage):
         keys: List[str],
         pool_transfers: Optional[List[PoolTransfer]] = None,
     ) -> Set[str]:
-        target_files = {f"{self._get_component_key(key)}.bin" for key in keys}
+        target_files = {
+            f"{stem}.bin" for key in keys for stem in self._get_component_keys(key)
+        }
         for transfer in pool_transfers or []:
             for key in keys:
-                target_files.add(f"{self._get_component_key(key, transfer.name)}.bin")
+                target_files.update(
+                    f"{stem}.bin"
+                    for stem in self._get_component_keys(key, transfer.name)
+                )
+
+        if self._unified_suffixes is not None:
+            return {
+                filename
+                for filename in target_files
+                if self._file_exists(filename[:-4])
+            }
 
         if self.metadata_cache is None:
             return {
@@ -779,28 +1162,19 @@ class HiCacheFile(HiCacheStorage):
         existing_files = self._collect_existing_component_keys(keys, pool_transfers)
 
         def has_component(page_idx: int, name: str) -> bool:
-            return (
-                f"{self._get_component_key(keys[page_idx], name)}.bin" in existing_files
+            return all(
+                f"{stem}.bin" in existing_files
+                for stem in self._get_component_keys(keys[page_idx], name)
             )
 
         # Longest contiguous KV prefix present in storage.
         kv_pages = next(
-            (
-                i
-                for i in range(len(keys))
-                if f"{self._get_component_key(keys[i])}.bin" not in existing_files
-            ),
+            (i for i in range(len(keys)) if not has_component(i, PoolName.KV)),
             len(keys),
         )
 
-        # Collect every usable stop point, not just the deepest one: a
-        # TRAILING_PAGES pool leaves holes, so a span that has to stop short of
-        # the deepest hit (partial host allocation) still needs a stop point
-        # whose sidecar is present. Same reasoning as MooncakeStore's
-        # batch_exists_v2 and PoolTransferResult.restorable_prefix_pages.
-        restorable = list(range(1, kv_pages + 1))
-
         hit_count: dict[str, int] = {PoolName.KV: kv_pages} if kv_pages else {}
+        restorable = list(range(1, kv_pages + 1))
 
         for transfer in pool_transfers or []:
             if not restorable:
@@ -810,52 +1184,36 @@ class HiCacheFile(HiCacheStorage):
                 boundary = next(
                     (i for i in range(kv_pages) if not has_component(i, name)), kv_pages
                 )
-                pool_restorable = list(range(1, boundary + 1))
-            else:  # trailing_pages
+                pool_restorable = set(range(1, boundary + 1))
+            elif transfer.hit_policy == PoolHitPolicy.TRAILING_PAGES:
                 trailing = max(1, len(transfer.keys) if transfer.keys else 1)
-                boundary = 0
-                pool_restorable = []
-                # A stop point works when the window ending there is complete,
-                # so scan every one instead of stopping at the longest.
-                for prefix_len in range(kv_pages, 0, -1):
+                pool_restorable = set()
+                for prefix_len in range(1, kv_pages + 1):
                     if all(
                         has_component(i, name)
                         for i in range(max(0, prefix_len - trailing), prefix_len)
                     ):
-                        pool_restorable.append(prefix_len)
-                        if boundary == 0:
-                            boundary = prefix_len
+                        pool_restorable.add(prefix_len)
+                boundary = max(pool_restorable, default=0)
+            else:
+                raise ValueError(f"Unsupported pool hit policy: {transfer.hit_policy}")
             if boundary:
                 hit_count[name] = boundary
-            pool_restorable_set = set(pool_restorable)
-            restorable = [p for p in restorable if p in pool_restorable_set]
+            restorable = [p for p in restorable if p in pool_restorable]
 
         final_pages = restorable[-1] if restorable else 0
-
         return PoolTransferResult(final_pages, hit_count, restorable)
 
     def _log_key(self, pool_name: str, key: str) -> str:
         return key if pool_name == PoolName.KV else f"{key}.{pool_name}"
 
     def _read_page(self, pool_name: str, key: str, host_pool, page_offset: int) -> bool:
-        """Read one page from storage into host_pool at page_offset.
-
-        A page whose payload cannot be deserialized (e.g. a sidecar or
-        slot-side-state file written by an older build with a shorter layout)
-        is reported as a per-page miss: ``set_from_flat_data_page`` explicitly
-        raises on incompatible layouts, and that exception must not unwind
-        through ``_batch_io_v2`` into the daemon storage threads
-        (sgl-project/sglang#39830).
-        """
+        """Read one page from storage into host_pool at page_offset."""
         storage_key = self._log_key(pool_name, key)
-        try:
-            data_page = self.get(storage_key, host_pool.get_dummy_flat_data_page())
-            if data_page is None:
-                return False
-            host_pool.set_from_flat_data_page(page_offset, data_page)
-        except (OSError, ValueError, RuntimeError):
-            self._report_bad_page("read", storage_key)
+        data_page = self.get(storage_key, host_pool.get_dummy_flat_data_page())
+        if data_page is None:
             return False
+        host_pool.set_from_flat_data_page(page_offset, data_page)
         return True
 
     def _write_page(
@@ -863,24 +1221,8 @@ class HiCacheFile(HiCacheStorage):
     ) -> bool:
         """Write one page from host_pool at page_offset to storage as raw bytes."""
         storage_key = self._log_key(pool_name, key)
-        try:
-            data_page = host_pool.get_data_page(page_offset, flat=True)
-        except (OSError, ValueError, RuntimeError):
-            self._report_bad_page("write", storage_key)
-            return False
+        data_page = host_pool.get_data_page(page_offset, flat=True)
         return self.set(storage_key, data_page)
-
-    def _safe_page_op(self, op_fn, pool_name: str, key: str, host_pool, offset):
-        # Per-page last line of defense: a single bad page must come back as
-        # False (a miss) rather than raising out of the batch comprehension,
-        # which would skip every later page and kill the calling storage
-        # thread.  The consumers (count_pool_hits / page loops) truncate the
-        # batch to the leading run of True results.
-        try:
-            return op_fn(pool_name, key, host_pool, offset)
-        except (OSError, ValueError, RuntimeError):
-            self._report_bad_page(op_fn.__name__, key)
-            return False
 
     def _batch_io_v2(self, transfers: List[PoolTransfer], op_fn):
         results: dict[str, List[bool]] = {}
@@ -902,51 +1244,11 @@ class HiCacheFile(HiCacheStorage):
                 results[transfer.name] = [False] * len(keys)
                 continue
 
-            args = [
-                (transfer.name, key, host_pool, host_indices[i * page_size].item())
+            results[transfer.name] = [
+                op_fn(transfer.name, key, host_pool, host_indices[i * page_size].item())
                 for i, key in enumerate(keys)
             ]
-            if op_fn == self._read_page and self.read_workers > 1 and len(args) > 1:
-                results[transfer.name] = self._read_pages_parallel(host_pool, args)
-            else:
-                results[transfer.name] = [self._safe_page_op(op_fn, *a) for a in args]
         return results
-
-    def _read_pages_parallel(self, host_pool, args: list) -> List[bool]:
-        """_read_page for many pages: file reads on the read pool, pool writes here.
-
-        Only the file read (into a private staging page) runs on the pool;
-        set_from_flat_data_page stays on the calling thread, in page order. Host
-        pools may take thread-local state there (e.g. a layout lease that the
-        caller already holds for the whole transfer); calling it from a pool
-        thread can deadlock. Chunked so staging memory stays at a few pages per
-        worker. Like the serial _read_page (stack entry 24), a failing file read
-        or a pool write on an incompatible layout degrades to a per-page miss
-        and never unwinds into the daemon storage threads.
-        """
-        chunk = 4 * self.read_workers
-        staging = [
-            host_pool.get_dummy_flat_data_page() for _ in range(min(chunk, len(args)))
-        ]
-        out: List[bool] = []
-        for start in range(0, len(args), chunk):
-            part = args[start : start + chunk]
-            pages = self._map_reads(
-                lambda ia: self.get(self._log_key(ia[1][0], ia[1][1]), staging[ia[0]]),
-                list(enumerate(part)),
-            )
-            for (name, key, _, page_offset), page in zip(part, pages):
-                if page is None:
-                    out.append(False)
-                    continue
-                try:
-                    host_pool.set_from_flat_data_page(page_offset, page)
-                except (OSError, ValueError, RuntimeError):
-                    self._report_bad_page("read", self._log_key(name, key))
-                    out.append(False)
-                    continue
-                out.append(True)
-        return out
 
     def batch_get_v2(
         self,
@@ -976,3 +1278,5 @@ class HiCacheFile(HiCacheStorage):
         except Exception as e:
             logger.error(f"Failed to clear HiCacheFile storage: {e}")
             return False
+
+# TODO(merge5): re-plant entry 24,60,209,252,253,254 semantics (batch B3); fork hunks saved /tmp/opencode/merge5-dossier/replant/python__sglang__srt__mem_cache__hicache_storage.py.fork-hunks.patch

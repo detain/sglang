@@ -38,6 +38,13 @@ from triton.knobs import HookChain
 from triton.runtime import driver
 from triton.runtime.jit import JITFunction
 
+try:
+    from triton import knobs
+    from triton.knobs import HookChain
+except ImportError:
+    # Vendor Triton builds may not expose the upstream launch-hook API.
+    knobs = None
+
 logger = logging.getLogger(__name__)
 
 _ENABLED = os.environ.get(
@@ -168,6 +175,9 @@ def _launch_hooked() -> bool:
     )
 
 
+    if knobs is None:
+        # Keep the regular runner when its hooks cannot be inspected safely.
+        return True
 def _covers_storage(t: torch.Tensor) -> bool:
     extent = 1 + sum((n - 1) * s for n, s in zip(t.shape, t.stride()))
     return (

@@ -100,12 +100,32 @@ def _model_uses_compressed_tensors_nvfp4(model: Optional[torch.nn.Module]) -> bo
     )
 
 
+def _serves_block_fp8_as_mxfp8_on_flashinfer(model_runner: ModelRunner) -> bool:
+    from sglang.srt.layers.quantization.fp8 import Fp8LinearMethod
+    for module in model_runner.model.modules():
+        method = getattr(module, "quant_method", None)
+        if (
+            isinstance(method, Fp8LinearMethod)
+            and method.block_fp8_as_mxfp8
+            and module.block_fp8_mxfp8_ready
+            and (
+                method.mxfp8_dense_backend.is_flashinfer_cutedsl()
+                or method.mxfp8_dense_backend.is_flashinfer_cutlass()
+            )
+        ):
+            return True
+    return False
 def should_run_flashinfer_autotune(
     model_runner: ModelRunner, *, for_speculative_draft: bool = False
 ) -> bool:
     """Check if flashinfer autotune should be run."""
     mr = model_runner
     if mr.device != "cuda":
+        return False
+    if get_parallel().enable_kv_cache_sharding:
+        # The generic dummy uses decode-shaped metadata and physical page zero.
+        # Sharded P pools only implement logical-page extend; warm them through
+        # real extend batches until the dummy owns a rotation-aware allocation.
         return False
     if get_exec().kernel.disable_flashinfer_autotune:
         return False
@@ -167,12 +187,12 @@ def should_run_flashinfer_autotune(
         resolve_mxfp8_dense_gemm_backend,
     )
 
-    if model_quantization == "mxfp8":
+    if model_quantization == "mxfp8" or model_quantization == "minimax_m3_nvfp4":
         fp8_gemm_needs_autotune = resolve_mxfp8_dense_gemm_backend().is_flashinfer()
     elif model_quantization in ("modelopt", "modelopt_fp8", "modelopt_mixed"):
         fp8_gemm_needs_autotune = flashinfer_per_tensor_fp8_supported()
     else:
-        fp8_gemm_needs_autotune = False
+        fp8_gemm_needs_autotune = _serves_block_fp8_as_mxfp8_on_flashinfer(mr)
 
     if not (moe_needs_autotune or fp4_gemm_needs_autotune or fp8_gemm_needs_autotune):
         return False

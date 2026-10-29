@@ -65,8 +65,8 @@ from sglang.srt.layers.vocab_parallel_embedding import (
     get_embedding_tp_kwargs,
 )
 from sglang.srt.managers.mm_utils import (
-    MultiModalityDataPaddingPatternMultimodalTokens,
     general_mm_embed_routine,
+    pad_mm_tokens,
     prepare_mm_inputs,
 )
 from sglang.srt.managers.schedule_batch import MultimodalDataItem, MultimodalInputs
@@ -117,6 +117,8 @@ from sglang.srt.runtime_context import (
     get_mm,
     get_parallel,
     get_spec,
+    linear_attn_parallel_group,
+    linear_attn_tp_size,
 )
 from sglang.srt.speculative.spec_info import SpeculativeAlgorithm
 from sglang.srt.utils.common import (
@@ -135,7 +137,7 @@ if _use_aiter_gfx95:
 
 logger = logging.getLogger(__name__)
 
-# Matches DeepSeek-V4's _MHC_POST_MULT_VALUE; the fused and unfused boundaries
+# Matches deepseek_v4_mhc.MHC_POST_MULT_VALUE; the fused and unfused boundaries
 # must agree on it.
 _MHC_POST_MULT_VALUE = 2.0
 
@@ -395,11 +397,6 @@ class Glm5NextLinearAttention(nn.Module):
         **kwargs,
     ) -> None:
         super().__init__()
-        from sglang.srt.runtime_context import (
-            linear_attn_parallel_group,
-            linear_attn_tp_size,
-        )
-
         head_shard_size = linear_attn_tp_size()
         head_parallel_group = linear_attn_parallel_group()
 
@@ -660,7 +657,7 @@ class Glm5NextLinearAttention(nn.Module):
                 hidden_states, forward_batch
             )
 
-        if not forward_batch.forward_mode.is_decode():
+        if not forward_batch.logical_forward_mode.is_decode():
             forget_gate = forget_gate.unsqueeze(0)
         beta = beta.unsqueeze(0)
 
@@ -840,7 +837,7 @@ class Glm5NextDecoderLayer(nn.Module):
                 update=residual.attn_update,
                 tp_group=SumGroup.TP
                 if config.is_kda_layer(layer_id)
-                and get_parallel().enable_cp_tp_group_sharing
+                and linear_attn_parallel_group() == "tp"
                 else SumGroup.ATTN_TP,
             ),
             declare_ffn(
@@ -1528,8 +1525,7 @@ class Glm5NextForConditionalGeneration(nn.Module):
         self.model.layers_to_capture = [val + 1 for val in layer_ids]
 
     def pad_input_ids(self, input_ids: array, mm_inputs: MultimodalInputs) -> array:
-        pattern = MultiModalityDataPaddingPatternMultimodalTokens()
-        return pattern.pad_input_tokens(input_ids, mm_inputs)
+        return pad_mm_tokens(input_ids, mm_inputs)
 
     def get_image_feature(self, items: List[MultimodalDataItem]) -> torch.Tensor:
         pixel_values = torch.cat([item.feature for item in items], dim=0).type(
@@ -1949,3 +1945,5 @@ class Glm5NextForConditionalGeneration(nn.Module):
 
 
 EntryClass = [Glm5NextForConditionalGeneration]
+
+# TODO(merge5): fold upstream changes dropped here (entries 176 own this file; batch B5)

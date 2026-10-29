@@ -41,6 +41,9 @@ import numpy as np
 import torch
 
 from sglang.srt.constants import GIB_BYTES
+from sglang.srt.kernel_plugins.amd.binding import (
+    monokernel_weights_iterator,
+)
 from sglang.srt.model_loader.post_load import stage_module_for_post_load
 from sglang.srt.model_loader.remote_instance_weight_loader_utils import (
     RemoteInstanceWeightLoaderBackend,
@@ -83,6 +86,7 @@ from sglang.srt.distributed import (
     model_parallel_is_initialized,
 )
 from sglang.srt.layers.layer_boundary.stage import check_stage_producers
+from sglang.srt.layers.layernorm import GemmaRMSNorm
 from sglang.srt.layers.modelopt_utils import QUANT_CFG_CHOICES
 from sglang.srt.layers.moe.utils import (
     resolve_shared_experts_config,
@@ -91,6 +95,7 @@ from sglang.srt.layers.quantization.base_config import (
     QuantizationConfig,
     QuantizeMethodBase,
 )
+from sglang.srt.layers.radix_linear_attention import RadixLinearAttention
 from sglang.srt.model_loader.remote_instance_weight_loader_utils import (
     trigger_transferring_weights_request,
 )
@@ -136,7 +141,6 @@ from sglang.srt.utils import (
     rank0_log,
     set_weight_attrs,
 )
-from sglang.srt.utils.common import temp_set_env
 
 if TYPE_CHECKING:
     from sglang.srt.configs.device_config import DeviceConfig
@@ -1055,72 +1059,11 @@ class DefaultModelLoader(BaseModelLoader):
                 for name, loaded_weight in weights
             )
 
-        try:
-            from sglang.srt.runtime_context import get_model
-
-            model_bag = get_model()
-            runtime_kv_dtype = getattr(model_bag, "kv_cache_dtype", None)
-
-            kv_scheme = None
-            if quant_config is not None and hasattr(quant_config, "kv_cache_scheme"):
-                kv_scheme = quant_config.kv_cache_scheme
-            elif hasattr(model, "config") and hasattr(model.config, "hf_config"):
-                quant_cfg = getattr(model.config.hf_config, "quantization_config", None)
-                if isinstance(quant_cfg, dict):
-                    kv_scheme = quant_cfg.get("kv_cache_scheme")
-                elif hasattr(quant_cfg, "kv_cache_scheme"):
-                    kv_scheme = getattr(quant_cfg, "kv_cache_scheme", None)
-
-            if isinstance(kv_scheme, dict) and runtime_kv_dtype:
-                checkpoint_bits = kv_scheme.get("num_bits")
-                expected_bits = None
-                if "fp8" in runtime_kv_dtype or "int8" in runtime_kv_dtype:
-                    expected_bits = 8
-                elif "fp4" in runtime_kv_dtype:
-                    expected_bits = 4
-
-                if (
-                    checkpoint_bits
-                    and expected_bits
-                    and checkpoint_bits != expected_bits
-                ):
-                    logger.info(
-                        "ignoring kv cache scales from checkpoint (checkpoint_bits=%s, runtime_dtype=%s). "
-                        "mismatch prevents scale corruption; falling back to dynamic scales.",
-                        checkpoint_bits,
-                        runtime_kv_dtype,
-                    )
-
-                def _filter_kv_scales(ws):
-                    for n, w in ws:
-                        if (
-                            n.endswith("k_scale")
-                            or n.endswith("v_scale")
-                            or n.endswith("kv_scale")
-                        ):
-                            continue
-                        yield n, w
-
-                weights = _filter_kv_scales(weights)
-        except ValueError:
-            pass
-
-        if is_nvfp4_online or is_modelopt_fp4_online:
-            # Scope exact FP4 quantization math to load-time conversion only;
-            # restore the original environment before serving starts.
-            with temp_set_env(
-                FLASHINFER_DISABLE_FP4_QUANT_FAST_MATH="1",
-                FLASHINFER_NVFP4_4OVER6="1",
-                FLASHINFER_NVFP4_4OVER6_E4M3_USE_256="0",
-                FLASHINFER_NVFP4_4OVER6_ERR_MODE="MSE",
-                FLASHINFER_NVFP4_4OVER6_ERR_USE_FAST_MATH="1",
-            ):
-                model.load_weights(weights)
-            if target_device.type == "cuda":
-                torch.cuda.synchronize()
-                torch.cuda.empty_cache()
-        else:
-            model.load_weights(weights)
+        weights = monokernel_weights_iterator(model=model, weights=weights)
+        model.load_weights(weights)
+        if (is_nvfp4_online or is_modelopt_fp4_online) and target_device.type == "cuda":
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
 
         # Used in tests to verify memory savings when using online quantization.
         if is_cuda_alike():
@@ -1554,7 +1497,7 @@ class DummyModelLoader(BaseModelLoader):
         device_config: DeviceConfig,
     ) -> nn.Module:
 
-        if get_bool_env_var("SGL_CPU_QUANTIZATION"):
+        if envs.SGLANG_CPU_QUANTIZATION.get():
             return load_model_with_cpu_quantization(
                 self, model_config=model_config, device_config=device_config
             )
@@ -2108,14 +2051,8 @@ class PreshardedModelLoader(DefaultModelLoader):
     @staticmethod
     def _rebind_parameter_aliases(model: nn.Module) -> None:
         for _, module in model.named_modules():
-            gemma_w = getattr(module, "gemma_weight", None)
-            weight = getattr(module, "weight", None)
-            if (
-                isinstance(gemma_w, torch.Tensor)
-                and isinstance(weight, torch.nn.Parameter)
-                and gemma_w.shape == weight.shape
-            ):
-                torch.add(weight.data, 1.0, out=gemma_w)
+            if isinstance(module, GemmaRMSNorm):
+                module.refresh_gemma_weight()
 
             attn = getattr(module, "attn", None)
             conv1d = getattr(module, "conv1d", None)
@@ -2128,13 +2065,8 @@ class PreshardedModelLoader(DefaultModelLoader):
             if conv1d is None:
                 continue
             cweight = getattr(conv1d, "weight", None)
-            if cweight is not None and hasattr(attn, "conv_weights"):
-                if cweight.dim() == 3 and cweight.size(1) == 1:
-                    attn.conv_weights = cweight.view(cweight.size(0), cweight.size(2))
-                else:
-                    attn.conv_weights = (
-                        cweight.squeeze() if cweight.dim() > 2 else cweight
-                    )
+            if cweight is not None and isinstance(attn, RadixLinearAttention):
+                attn.refresh_conv_weights(cweight)
             if hasattr(conv1d, "bias") and hasattr(attn, "bias"):
                 attn.bias = conv1d.bias
 
@@ -4362,3 +4294,5 @@ def get_model_loader(
         )
 
     return DefaultModelLoader(load_config)
+
+# TODO(merge5): re-plant entry 178 semantics (batch B4); fork hunks saved /tmp/opencode/merge5-dossier/replant/python__sglang__srt__model_loader__loader.py.fork-hunks.patch
