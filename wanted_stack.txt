@@ -1,0 +1,526 @@
+# wanted_stack.txt -- implementation queue for qwennext-stack (created 2026-10-28)
+# Companion to stack.txt (the landed ledger). Source: two 2026-10-28 gh sweeps
+# (1,196 merged PRs 2026-10-14..28 + 2,555 in-window open PRs, deduped against
+# the 454 PR numbers stack.txt already references). Selection rule (operator,
+# 2026-10-28): a PR must match BOTH the hardware/transport path we run AND our
+# model's shared code. "SM120 but a different model" and "our model but AMD/NPU"
+# are NOT wanted (see section R for the drop log; #45474 is the recorded
+# counter-example where the tag lies and the code is shared -- verified, keep).
+#
+# =============================================================================
+# PROTOCOL (binding for every agent on this queue)
+# =============================================================================
+# 1. CODING agents NEVER commit to qwennext-stack, NEVER touch the main
+#    worktree (/home/my/sglang/sglang), NEVER edit stack.txt or this file,
+#    NEVER push, NEVER restart prod, NEVER run GPU code.
+#    Worktree per family:
+#      git -C /home/my/sglang/sglang worktree add /tmp/opencode/wt-<NAME> \
+#          -b port-<NAME> qwennext-stack
+# 2. ONE PR = ONE COMMIT on the staging branch. A test-only follow-up commit
+#    belonging to the SAME PR may ride as its own adjacent commit, but two PRs
+#    never share a commit. Provenance:
+#    - merged upstream: git fetch origin (read-only ok), find the squash commit
+#      (git log origin/main --grep='(#N)') and git cherry-pick -x <sha>.
+#    - open PR: cherry-pick its commits with -x against the PR head (gh pr view
+#      <N> --json commits,headRefOid); squash-port only when the per-commit
+#      series is unlandable, and say "[PR #N -- OPEN, squash-ported]" in the
+#      message body plus "(cherry picked from commit <head-sha>)".
+#    - hand port (fork divergence): re-implement the PR's semantics minimally
+#      on our tree, message names the PR + head sha + every deviation.
+#    - if a pick conflicts beyond local union resolution, do NOT force it:
+#      mark it BLOCKED with the conflict file list and move to the next PR.
+# 3. CPU verification ONLY: prod venv python /home/my/sglang/.venv, run from
+#    the worktree root with CUDA_VISIBLE_DEVICES=9 and
+#    PYTHONPATH=<worktree>/python, and prove the import with
+#    python -c "import sglang; print(sglang.__file__)"  -- it must be the
+#    WORKTREE path, not the editable prod install.
+# 4. LANDING: only the INTEGRATOR agent cherry-picks port-* commits onto
+#    qwennext-stack, in the order this file lists them, resolving unions
+#    against landed entries. After each PR lands, the integrator deletes its
+#    block from wanted_stack.txt and appends it to stack.txt as the next
+#    numbered entry (style: existing ledger; numbering continues from 249;
+#    '*' = squash/ported marker where applicable), bumping the STACK:/synced:
+#    header lines, in one docs commit.
+# 5. NOTHING is ever pushed. Live only after user-driven restart.
+#
+# State tags: TODO | IN-WT(port-<NAME>) | LANDED(entry-XXX @sha) | BLOCKED(why)
+#
+# =============================================================================
+# WAVE 1 -- five disjoint-file families, running concurrently since 2026-10-28
+# =============================================================================
+#
+# --- FAM-A1  port-autotune (files: srt runtime flashinfer autotune,
+#     base_runner.py, environ.py; context entries 174/176/191/228/229/243/246)
+# #40420  open (head 10c6feba6f, re-pull) [Fix] FlashInfer autotune cache
+#         dropped every startup under expert parallelism -- digest hashes the
+#         whole per-rank file; under EP2 our cache is unlinked EVERY boot.
+#         +7/-3 in runner/flashinfer_autotune.py + 2 regressions. Highest
+#         value-per-line of the sweep. State: IN-WT(port-autotune)
+# #45543  open (head 44b7dfd793) [Perf] Tune FlashInfer MoE tactics on distinct
+#         dummy tokens -- zero-filled dummies route every row to one expert;
+#         13-16%/layer claimed. +24 autotune, +7/-3 base_runner. Cache reuse:
+#         retune once after landing. State: IN-WT(port-autotune)
+# #43927  merged 2026-10-15 (W1 sweep-gap, arrive via merge #5; accelerate)
+#         [Feat] include FlashInfer default tactic in startup tuning. REFUTES
+#         entry-243's "no tactic=-1" PASS-needle -- integrator records that.
+#         State: IN-WT(port-autotune)
+# #44514  merged 2026-10-20 (companion) [Fix] version FlashInfer caches for
+#         default-tactic tuning (candidate_selection=v2_default key -> one
+#         cold autotune boot at landing). Order AFTER #43927. State: IN-WT(port-autotune)
+#
+# --- FAM-A2a  port-hicache-file (files: mem_cache file backend:
+#     hicache_storage.py, lru_file_evictor, storage-path plumbing; context
+#     entries 24/30/209/217/249 + the 10-28 per-replica dir split)
+# #44422  open (head 0276104d40) [Fix] tolerate concurrent file storage dir
+#         creation (cross-process makedirs race; same-replica TP ranks still
+#         race even with our per-replica dirs). 1 line + race regression.
+#         State: IN-WT(port-hicache-file)
+# #42676  open (head 37671da2be) [HiCache] honor --file-storage-path on every
+#         attach path; fixes the env-vs-flag precedence inversion we rely on.
+#         9 files, ~+20 non-test. State: IN-WT(port-hicache-file)
+# #44776  open (head 5e26a3473e) [Perf] optional parallel page reads
+#         (SGLANG_HICACHE_FILE_BACKEND_READ_WORKERS, default 1 = OFF;
+#         order-preserving within one batch_get, raises->miss). +70/-8
+#         hicache_storage.py; small conflict vs our entry-199 batched
+#         write-through work in the same file. State: IN-WT(port-hicache-file)
+#
+# --- FAM-A5  port-admission (files: schedule_policy.py, scheduler.py,
+#     components/mamba.py admission half, BatchResultProcessor; context
+#     entries 215/196-198/119 + mixed-chunk group pr39575*/pr39526*/pr40458/
+#     pr40143*)
+# #46272  open (head 4b57095434, CI SUCCESS) [Fix] remove O(B^2) `not in list`
+#         scans in filter_batch/BatchResultProcessor/RankMetadata -- free CPU
+#         decode headroom, model-neutral. State: IN-WT(port-admission)
+# #43484  open (head via gh, CI SUCCESS) [Fix] Mamba slot admission on the
+#         CLASSIC hybrid pool: gate the scheduler, never assert the engine
+#         (rem_mamba_slots isinstance-gated to Unified* -> our pool checks
+#         nothing -> deterministic 'Can not alloc mamba cache' crash at
+#         max-mamba 256 over 1M ctx). Read in-stack #37619/#40128/#37943
+#         (same _alloc_mamba_slot path) as a set. State: IN-WT(port-admission)
+# #46496  open DRAFT (head 1947555adf) [Fix] clamp new-token ratio at floor
+#         after KV-full retraction (1 line + comment; unset max_tokens over
+#         1M context = our exact over-admission amplifier; CPU repro in issue
+#         #46495). State: IN-WT(port-admission)
+# #46643  open (head 0954308f69) [Fix] keep chunked prefill within allocatable
+#         KV under pressure (3 admission bugs: over-ask on continuation,
+#         second chunked request under non-shortest policies, latched
+#         batch_is_full stall -- absorbs closed #35609). Expect a
+#         schedule_policy.py union vs the mixed-chunk entry group + entry 215;
+#         SKIP any aiter-backend hunk. State: IN-WT(port-admission)
+# #45607  open (head 7ba034ad7f) [Fix] align truncated hybrid-Mamba chunks to
+#         KV pages (double-free class; QSA page-64 + mixed-chunk exposure;
+#         body cites in-stack #39526). +17/-1 + 54-line test. Review together
+#         with #46643/#45789. State: IN-WT(port-admission)
+# #45789  open (head 0e2097072e) [Fix] preserve Mamba fork+tail states across
+#         chunked prefills (opt-in SGLANG_SPLIT_PREFILL_AT_MAMBA_FORK;
+#         eligibility requires extra-buffer strategy = ours; HiCache
+#         load-back path). Touches the single-unfinished-chunk guard the way
+#         #46643 does -- land 46643 first, then 45789 unioned onto it.
+#         State: IN-WT(port-admission)
+#
+# --- FAM-B234  port-spec-mamba-merged (cherry-picks from origin/main
+#     417606527d..f2d3188925; files: spec_utils.py, eagle_worker_v2.py,
+#     schedule_batch.py, forward_batch_info.py, mamba track modules; context
+#     entries 102/119/121/122/123/169/185/194/196-199/213/215/220/222/234)
+# #45491  merged 2026-10-21 [Fix] spec: post-verify KV move targets from the
+#         verify window (overlap + finished-request row re-ownership copied KV
+#         into a NEW request's slots incl. radix-cached prefix). Union vs our
+#         entry-194 spec_kv_index work. Wrong-output family. State: IN-WT(port-spec-mamba-merged)
+# #45435  merged 2026-10-21 [Fix] mamba: keep prefill rows' checkpoint tracking
+#         through mixed chunked prefill -- this is our ENTRY-119 production
+#         half re-derived upstream on the UnifiedRadixCache API; + #45670
+#         (test fix). Resolve to the UPSTREAM form where it collides with
+#         entry 119; keep our orthogonal deltas; integrator records the
+#         supersession. State: IN-WT(port-spec-mamba-merged)
+# #45472  merged 2026-10-21 [Perf] scheduler: plan hybrid Mamba extend batches
+#         WITHOUT host-device syncs (extra_buffer/_lazy hot path -- ours;
+#         new track_position + _gather_mamba_track_indices; DEFAULT-ON, no
+#         flag). Changes the _MambaRadixCacheV2TrackEntry contract entries
+#         119/169/196/216 read -- union carefully, expect the deepest
+#         conflicts of wave 1. State: IN-WT(port-spec-mamba-merged)
+#
+# --- FAM-A6a  port-comm (files: custom_all_reduce.py, parallel_state.py,
+#     new host-staged AR kernel + environ; context entries 75/162-164/228/245
+#     + the 2026-10-26/28 run-script notes)
+# #44448  open RE-PULL at head ad19c6ade7 (older revisions were watch-listed;
+#         entry-227 re-arm condition TP2+expandable_segments is NOW TRUE and
+#         the PR's repro says arming PCIe-IPC does NOT prevent the v1
+#         graph-capture cudaIpcGetMemHandle crash). +10/-1
+#         custom_all_reduce.py + 114-line CPU test. Tracking issue #44291.
+#         Do first -- it guards the imminent PCIe-IPC first boot.
+#         State: IN-WT(port-comm)
+# #39605  open (head b2d47b8539) [Feat] host-staged all-reduce for TWO GPUs
+#         without peer access (opt-in SGLANG_HOST_STAGED_ALLREDUCE(+_MIN_BYTES)
+#         , /dev/shm + cuStreamWriteValue32 counters, bit-identical, prefill
+#         chunks only, decode untouched). Qwen3.8 TP2 TTFT 6.36->1.10s
+#         claimed. 204-line new file + 181-line ll_allreduce.py; tests are
+#         test/manual (port them, expect non-CI). Check the no-P2P assumption
+#         against nvidia-smi topo (9b notes say our pair has no P2P).
+#         State: IN-WT(port-comm)
+#
+# =============================================================================
+# WAVE 2+ QUEUE (file sets overlap wave 1 -- strictly serial after the
+# relevant wave-1 family lands)
+# =============================================================================
+#
+# --- FAM-A2b  QSA pending index-key ring (after FAM-B234; files:
+#     qsa/graph_metadata.py, qsa/metadata.py, qwen_sparse_attn_backend.py,
+#     mem_cache/qsa_kv_pool.py; context entries 16/31/53/184/200/210-213)
+# #47051  open (head f78ee79014) [Fix] QSA: keep TWO groups in the pending
+#         index-key ring under TARGET_VERIFY -- documents a SECOND cross-step
+#         failure mode entry-184 does not cover (nothing restores the ring
+#         after acceptance; rejected row's key read as pending member next
+#         step; corrupted compressed keys persist for the request). NEXTN
+#         3/1/4 = W4 = ratio is our exact geometry. State: TODO
+# #46125  open (head 85cb8d0af7) [Fix] QSA: stop spec verify overwriting the
+#         ring -- MUTUALLY EXCLUSIVE alternative remedy to #47051. Take its
+#         497-line verify-ring test either way. Operator verdict needed: which
+#         remedy; default = 47051 + 46125's tests. State: TODO
+# #45865  open (head c022f8a104) [Fix] qsa: carry QSA indexer state through
+#         cpu_tensor retraction (resumed request ran with ANOTHER request's
+#         compressed index keys + pending ring). +62/0 qsa_kv_pool.py --
+#         batch with the ring work. State: TODO
+# #45867  open (head c6983d9c2c) [Fix] preserve FP4 MHA block scales during
+#         CPU retraction (needs cpu_tensor retraction backend; gate: only for
+#         the NVFP4-KV trialings). Drop the PD hunks. State: TODO
+#
+# --- FAM-A4  GDN/ReplaySSM/spec-state correctness (after FAM-A5 + B234;
+#     files: fla/*, kernels/gdn_*, linear/utils.py, components/mamba.py,
+#     memory_pool.py; context entries 102/185/196-198/203/210/213/216/234)
+# #46839  open (head 7705f6c3ff) [Fix] gdn: honour the fp32 radix track
+#         snapshot in Triton extend -- SUCCESSOR to our entry-185 (#44195);
+#         our triton prefill never fires the fp32 snapshot path without it.
+#         +12 chunk.py, +16 gdn_triton.py, 199-line test. Take first. State: TODO
+# #42688  open (head b6448d1708) [Fix] mask unused ReplaySSM history before
+#         checkpoint arithmetic (0*inf contamination -> acceptance-length
+#         drift signature). +24/-15 one kernel + 111 GPU cases (port CPU-safe
+#         subset; GPU run = window debt). State: TODO
+# #36014  open (head ede0919405) [Fix] align GDN target-verify beta semantics
+#         with packed decode (bf16 materialization vs fp32 = direct
+#         accept-length loss on NEXTN-over-GDN; KL-consistency class).
+#         +4/-1 + Triton-verify unit test; rebase-check (Sept branch). State: TODO
+# #43749  open DRAFT (head 5be80c75be) [Fix] reject unflushed ReplaySSM cache
+#         checkpoints at donation (warm/cold KL 0.087 vs 0.055; stated
+#         INDEPENDENT of #43387/entry-169). Ships the full-vocab warm/cold KL
+#         oracle we can reuse for entries 210/213 GPU debt. +7/-8
+#         components/mamba.py, +2/-2 memory_pool.py. State: TODO
+# #46856  open (head 199d187354) [Fix] attention: cover CUDA-graph padding in
+#         verify state indices (+15/-9 linear/utils.py -- graph alignment can
+#         exceed eager max; our bs<=48 buckets + 4-row verify). State: TODO
+# #42525  open DRAFT (head 7bb6a140d2) [Bugfix] zero padded rows of GDN/KDA
+#         recurrent output -- READ, likely wait-for-merge (thin body).
+#         Its +8/-1 fla/fused_sigmoid_gating_recurrent.py hunk is adjacent to
+#         #36014 -- sequence 36014 -> read 42525. State: TODO
+# #38494  open (head 95462642ae) [Fix] preserve pending ReplaySSM updates
+#         during CPU retraction (+32/0 schedule_batch.py; rebase vs our
+#         entries 196-198). State: TODO
+# #46633  open DRAFT (head bb267e6b09) [Perf] gdn: SGLANG_GDN_REPLAYSSM_VERIFY_
+#         _NUM_STAGES knob (default 2; measured recipe = Qwen3.8-Flash-Next;
+#         regression seen only on fp32 SSM -- we run bf16). Port as A/B
+#         instrument. +4/0 gdn_backend + 1 env. State: TODO
+# #42660  open DRAFT (head 511bc4eed9) [Mamba] --radix-cache-skip-decode-insert
+#         (59 MB/slot on Qwen3.8-Flash-Next named in body; concurrency lever
+#         at max-mamba 256; hurts deep multi-turn). 12 files incl.
+#         components/mamba.py + spec_utils.py + decode graph runner --
+#         evaluate after A4 lands. State: TODO
+#
+# --- FAM-A3b  HiCache controller/URC tranche (after FAM-A2a; files:
+#     unified_radix_cache.py, hybrid_cache_controller.py, hicache_storage.py
+#     key scheme, parallel_state.py -- HIGH divergence surface, strict serial)
+# #46954  open (head a23ba8303b) [Fix] hicache: preserve sparse restore
+#         checkpoints under host pressure -- upstream GENERALIZATION of our
+#         entry-209; re-read our local delta, retire the subsumed half. +40/-7
+#         hybrid_cache_controller.py (same file as entries 209/217). State: TODO
+# #46707  open (head 4095308888) [Fix] restore sidecars to EVERY Mamba
+#         destination (live request kept stale side state). +22/-13, real
+#         build_hicache_transfers() regression. State: TODO
+# #43110  open (head 15f6d77792) [Fix] resolve derived sidecars over every
+#         SOURCE transfer (mirror bug + byte accounting; broader -- touches
+#         hicache_storage.py, pool_host/group.py, unified_radix_cache.py).
+#         After 46707. State: TODO
+# #46451  open (head 9e61b77766) [Perf] bound full-hit staging waits
+#         (--hicache-storage-prefetch-host-capacity-wait-ms, default 0;
+#         cancellation/expiry hardening our decline-and-retry lacks; supersedes
+#         closed #40361). +90/-11 unified_radix_cache.py. State: TODO
+# #45795  open (head 6ffe9cd46c) [Perf] opt-in async ready-count sync
+#         (--hicache-async-ready-sync kills a per-step blocking gloo collective
+#         -- TP2 short-decode-step critical path; default OFF). +132
+#         unified_radix_cache.py; order vs in-stack #40363 (entry 199) in the
+#         same file. State: TODO
+# #44342  open (head 98bfcbd450) [Fix] recover storage worker collectives +
+#         expose liveness (daemon-thread gloo outside try/except: one rank's
+#         slow exists() WEDGES THE TP2 PAIR). 16 files, +166/-20 URC +147/-8
+#         controller + parallel_state.py. #44343/#44339/#44348/#44344 are its
+#         stacked drafts: #44339/#44344 = buffer_only-only -> SKIP permanently;
+#         #44343/#44348 take as a set with 44342 or not at all. State: TODO
+# #33029  open STALE (head 54c6ee41fa) [Fix] HiCache prefetch progress TP
+#         all_reduce deadlock (collective in a per-rank-trip-count loop =
+#         permanent hang). Verify against current tree before porting. State: TODO
+# #42912  open (head ff839ff6f1) [Fix] --hicache-size checked against a
+#         per-rank-sampled memory snapshot (we pass --hicache-size 32). State: TODO
+# #47040  open (head 49bcdf71d2) [Feat] --hicache-mamba-size + FIX: plain
+#         MambaPool counts spec-verify scratch + ReplaySSM rings as host
+#         bytes. TAKE THE ACCOUNTING HALF; flag name collides with entries
+#         219/189 -- integrator decides. State: TODO
+# #35875  open STALE (head 1750e7d94a) [Fix] shrink --hicache-size budget for
+#         the SIDECAR draft host pool (bf16 draft > quantized target
+#         per-token = our case). State: TODO
+# #44732  open (head 68c917c75d) DECISION: separate storage keys for
+#         incompatible host layouts (silently-wrong-KV class; +6/+6
+#         pool_host/{mha,mla}.py). COST: current warm /root/hicache_store +
+#         the new per-replica dirs go cold-but-safe. Operator go/no-go. State: TODO
+#
+# --- FAM-A6b  comm extended (after FAM-A6a lands + operator answers)
+# #32479  open (head b877f961a7) [SM120] optional b12x PCIe all-reduce
+#         (one-shot <=8MB / DMA ring / fused AR+residual+RMSNorm;
+#         SGLANG_B12X_PCIE_{AR,DMA}; world-size-agnostic -> TP2-capable;
+#         bs1 TPOT 23.9->14.7 ms claimed). COSTS: pip install b12x +
+#         nvidia-cutlass-dsl in the prod venv (venv decision, out of git),
+#         DMA ring default 256 MB outside KV budget, fused kernel caps at 36
+#         rows vs our 48 graph buckets (top buckets fall back). Package
+#         shared with entry-247 b12x route -- bundle the dependency decision.
+#         State: TODO
+# #37106  open STALE (head 939ffe8240) [Feat] vocab-parallel MTP LOCAL ARGMAX
+#         for topk-1 greedy draft (--speculative-draft-local-argmax; packed
+#         fp32-max+global-id candidate per rank, fail-closed gates). The
+#         structural fix for TP2 vocab-gather-on-NCCL (9b.sh LIMITS note).
+#         PORT-WITH-WORK: capability hook currently only wired for the
+#         DeepSeek NextN draft -> needs qwen4_exp_mtp equivalent (small; we
+#         already touch that file for #44480/entry 239). Rebase vs #44116
+#         territory in logits_processor.py. State: TODO
+#
+# --- FAM-A7  MoE selection / NVFP4 load (after B5 lands -- same files:
+#     modelopt_quant.py, overrides.py, fused_moe layer.py; context entries
+#     205/206/225/230/231/244/247)
+# #45520  open (head 7032238d09) [Fix] pick a supported runner for
+#         auto-detected ModelOpt NVFP4 MoE on SM110/SM120 (--quantization is
+#         unset when quant comes from the checkpoint -> auto resolves TRT-LLM
+#         while weight-prep follows global auto -> g1_scale_c AttributeError).
+#         THE UPSTREAM HALF OF OUR ENTRY-230 FORK FIX -- port, then reconcile
+#         entry 230 toward it (same _moe_runner_backend_quant_constraints
+#         function as our entry-230/244 retargets). (#35617, head b870a0e713:
+#         modelopt_mixed mapping gap -- REFERENCE only, our entry-231
+#         territory.) State: TODO
+# #46153  open (head 46da368e4b) [Feat] modelopt: load NVFP4 experts with
+#         CSF-compressed scales (E4M3 fixed/exception pairs; names
+#         Qwen3.8-Flash-Next-FP4-Local as un-loadable; shard-in-subfolder
+#         lookup; qwen4_exp/qwen4_exp_mtp hunks conflict entries 166/205/207/231).
+#         State: TODO
+# #41624  open (head e12b074f74) LARGE-EVALUATE: serve NVFP4-packed QAD
+#         checkpoints -- weight_scale->inv rename guard, vision key spelling,
+#         MXFP8 dense N>=128 requirement vs GDN in_proj_ba, and NVFP4-PACKED
+#         PLE n-gram tables through the PLE loader + offload gather
+#         (--ple-offload-embedding path). +281/-30 qwen4_exp.py -- a merge,
+#         not a patch; check against entry 207 before any QAD/FP4-Local trial.
+#         State: TODO
+# #45298  STATUS RESYNC (not a new entry -- an entry-247 RECORD UPDATE):
+#         upstream head moved to f6b41c4e21 (25 visible files; DSA kpool /
+#         graph_buffer_lifetime / flash_mla_sm120 / mhc baggage still there);
+#         re-check our 3 corrections (source_format spelling, 534x/415x alpha
+#         fold, w13_layout) against the new flashinfer_cutlass.py (+153/-1) +
+#         modelopt_quant.py (+210/-24) hunks; its claimed prerequisite
+#         flashinfer E4M3-K/32 W4A16 support has since shipped -- re-read
+#         whether a clean upstream route now exists. State: TODO
+#
+# =============================================================================
+# SECTION B REMAINDER -- merged accelerators (cherry-pick -x from origin/main;
+# order within group; serial across groups where files overlap)
+# =============================================================================
+#
+# #45289  merged 2026-10-20 [Fix] modelopt-nvfp4: keep MoE global scales in
+#         gate/up order -- REVERTS #44858's call-site workaround and fixes the
+#         loader (canonical [gate,up] + SwiGLU 1/g1_alphas_up correction).
+#         Entry-247 defect (3) is this same trap; entry-227's skip note on
+#         #44858 is now stale. MUST union with entries 231/244/247; NEVER let
+#         auto-merge keep #44858's form. Their test_modelopt_nvfp4_moe_scales
+#         .py = the oracle. FAM after A7. State: TODO
+# #44904 + #44901  merged 2026-10-19 (ch-wan #4491x stack first half) --
+#         fused-shared per-rank renormalization wrong-output (CUDA) and the
+#         double routed_scaling_factor fold whose predicate explicitly includes
+#         MODELONOPT NVFP4 ON NON-MARLIN RUNNERS = our flashinfer_cutlass FP4
+#         arm. BEFORE anything else in the ch-wan zone: VERIFY WHETHER OUR
+#         ROUTE DOUBLE-SCALES TODAY (GPU-window task; record the question even
+#         if the pick lands clean). State: TODO
+# #44913 + #44912  merged 2026-10-19 (companion second half; 62 files) --
+#         frozen SharedExpertsConfig + num_fused_shared_experts vs
+#         num_shared_topk_slots split. HIGH conflict surface vs entries
+#         230/231/244/247 reads (modelopt_quant.py can_fuse_shared_expert,
+#         _moe_runner_fusion_disable). Evaluate WITH A7. State: TODO
+# #43216  merged 2026-10-22 [Fix] nccl: disable graph buffer registration
+#         whenever a captured graph can hold a collective (NCCL_GRAPH_REGISTER
+#         recycling graph-pool temporaries under expandable_segments -- the old
+#         guards missed our shape). Flips NCCL env for graph-heavy boots ->
+#         verify TP2 capture needles at first boot. State: TODO
+# #45631 -> #45855 -> #46167  merged 2026-10-22/22/23 -- logits/lm_head
+#         shared-buffer trilogy; TAKE AS A UNIT (never 45631 alone -- 45855
+#         fixes its precision regression, 46167 adds the bf16->fp32 cast
+#         kernel whose stated motivation is spec-verify decode steps on our
+#         hardware class). logits_processor.py = entries 161/232 territory.
+#         State: TODO
+# #44124  merged 2026-10-27 [Fix] qwen3_coder: preserve structured values in
+#         mixed unions (string|object params passed through as STRINGS incl.
+#         streamed) -- our live tool-call-parser file; union vs entries
+#         159/160; re-run the function_call 644P battery. State: TODO
+# #42689  merged 2026-10-21 [Fix] preserve BF16 NaNs through per-token FP8
+#         quantization (INTENDED behavior change: undoes #32188/#32296
+#         sanitization; a boot that "worked" by hiding NaN now surfaces it --
+#         read logs differently; entries 31/186/163 quant paths). State: TODO
+# #46127  merged 2026-10-24 [Fix] keep >2s prefill steps in busy counters
+#         (our 1M prefills routinely exceed 2s; --enable-metrics + harness
+#         /v1/loads undercounted). State: TODO
+# #44663  merged 2026-10-19 [Fix] record HTTP metrics in tokenizer workers
+#         (--tokenizer-worker-num>1; rides entry 201's worker-owned
+#         preprocessing monitoring). State: TODO
+# #45280  merged 2026-10-20 [Perf] SGLANG_BATCH_TOKENIZER_OUTPUTS opt-out --
+#         makes skipped #44288 adoptable; ride together at landing. State: TODO
+# #46049  merged 2026-10-26 [Fix] grammar: accept-failures get a real error
+#         status (entries 122/195 make grammar+spec+mixed-chunk hot; client
+#         correctness for tool-calling). State: TODO
+# #45923  merged 2026-10-26 [Fix] weak Req __req__ self-reference (entry-207
+#         class GC fix; our parsers attach customized_info). State: TODO
+# #37958  merged 2026-10-20 + #45559  merged 2026-10-21 -- VERIFIED INERT FOR
+#         PROD GEOMETRY: NEXTN fails supports_prefill_shared_read_done() AND
+#         HiCache is a second hard gate (code-verified 2026-10-28:
+#         shared_read_event.py early-returns on enable_hierarchical_cache;
+#         consumer falls back to the coarse barrier; only trtllm_mha/
+#         deepseek_v4/minimax_sparse declare PRE_REPLAY). 45559 = mooncake/
+#         umbp linker ordering, file backend unaffected. ACTION: integrator
+#         records the verdict in stack.txt (do-not-re-litigate at merge #5);
+#         no port needed unless the config ever drops NEXTN or HiCache.
+#         State: TODO (docs-only)
+#
+# =============================================================================
+# SECTION C -- MERGE #5 BOOKKEEPING (origin/main = f2d3188925 = +1,097 since
+# 12dc623102; +662 since 1dd0f361b8). These arrive with the owed merge; the
+# actionable-now items are DOCS-ONLY (integrator writes them into stack.txt so
+# a future merge does not auto-resolve them wrong). DO NOT port the series.
+# =============================================================================
+#
+# NOW-ACTIONABLE (docs):
+#  C0a Record the sweep-gap correction to entry 227: #37625, #37941 (exact-
+#      rescan top-k family -- the follow-up our entry-28 note named), #39727,
+#      #43927, #44849 merged INSIDE 12dc623102..417606527d but are absent from
+#      the 227 skip record. State: TODO
+#  C0b Record stale-decision refreshes: #44030 skip rationale ("inert while L3
+#      parked") OBSOLETE -- L3 live now, re-evaluate at merge #5; #44858 was
+#      REVERSED by #45289 (entry-227 note stale); #44115 permanently N/A;
+#      #44448 re-arm condition TRUE (promoted to FAM-A6a); open-status
+#      re-verified 2026-10-28 for #44462/#43471/#45298/#42388/#43795/#45091.
+#      State: TODO
+#  C0c Record the pairing state: no flashinfer/sgl-kernel pin moves beyond
+#      0.7.2/0.4.9-recorded-0.4.10 in the window. State: TODO
+#
+# AT-MERGE-TIME (record only):
+#  C1 #46970..#46991 (22-PR mem_cache/KV-storage rewrite, merged 10-28) +
+#     precursors #45439/#45444/#45701/#45702/#45703 -- THE merge-#5 conflict
+#     multiplier; #46981 lands in our entries-73/209/219 file; #46977 rewrites
+#     admission pricing over the scheduler trio; #46988 touches memory_pool/
+#     schedule_batch/hicache_auto_size; #45703 = the shorter-FULL-device-match
+#     seam entry 209's P2 note wished for; entry-227's #44447 competing-design
+#     verdict partially obsolete. Recommendation on record: main-past-10-21
+#     needs a dedicated merge week. State: TODO
+#  C2 #44993/#44994 (95+83 files, "effective execution backend" -- upstream
+#     converging on entry-230's gap; rewrites standard.py/layer.py/topk.py/
+#     modelopt_quant.py/fp8.py = entries 205/206/225/230/231/244/247; re-run
+#     standard_dispatcher 12P + modelopt suites BEFORE unioning). State: TODO
+#  C3 #45232/#45236/#45334 (URC test prune/split/re-home -- re-derive entry
+#     241's pinned baselines against the new file layout). State: TODO
+#  C4 #45238/#45242/#45241 (radix logical-vs-reclaimable lengths, split-
+#     during-write-through action, num_children -- union vs entries 197/216/
+#     198/114/199/118-125; re-run donated/latch battery). State: TODO
+#  C5 #44913/#44912 -- see section B (port decision) + merge-#5 semantics note
+#     for expert-id/routing decisions guarded by our entry-230 dispatcher
+#     warning. State: TODO
+#  C6 #45474 -- "different model" is NOT a valid skip (VERIFIED: zero model/
+#     arch gating; restructures decode_cuda_graph_runner._copy_replay_inputs,
+#     eagle_sample, generate_simulated_accept_index, gdn_backend.forward_extend,
+#     request_receiver -- all on our boot path; fastpaths env-default-False).
+#     Record: defensible skip = "flag-off behavior preserved", measured
+#     at first boot after merge #5. State: TODO (docs)
+#  C7 #44014 -- VERIFIED SM90-ONLY (use_state_pool = sm_major>=10 -> our cc-12
+#     already on the indexed path; PR's test skipUnless cc==9). DROPPED per the
+#     both-halves rule. Also record: sm_major in (9,10) means FlashInfer GDN
+#     target-verify is NOT offered on SM120 either way. State: DONE-VERIFIED
+#  C8 #37958/#45559 -- see section B docs-only entry. State: TODO (docs)
+#  C9 #39727 (page_unified host layout + unified L3 key, merged-in-window) --
+#     library-only today; its follow-up integration would change L3 NAMING vs
+#     our warm stores = store-purge event. WATCH + block a silent key-scheme
+#     switch at merge #5. State: TODO
+#  C10 riders to union-note: #45559, #46674 (GIL-keep bindings; rust re-pin),
+#     #45503 (PyNccl half-init; page_interleave/dsa conflict), #46853+#46994
+#     (custom-AR v2 relaxations -- does NOT revive v1 under
+#     expandable_segments), #45212 (zero-width conv MTP scatter guards),
+#     #45487 (host-side last-prefill-chunk bool -- same theme as entries
+#     76-78), #45219 (SM120 eligibility AUDIT of the dense SwiGLU+block-FP8
+#     fusion -- entries-240 class question), #45090 (environ.py: confirm no
+#     harness sets SGLANG_ENABLE_UNIFIED_RADIX_TREE), #44849 (--enable-hicache
+#     alias; fields/memory.py standing conflict file), #46543 (qwen4_exp.py
+#     breakable-graph topk/PLE bridge -- our most-diverged file),
+#     #44029/#44280 (KVShard -- re-pin entry-200's page_interleave
+#     82P/4S/11sub), #45787/#42557 (paged experts -- competing framing to
+#     entry-247's b12x route; exec_/fused_marlin_moe conflict zone),
+#     #46290 (draft parallel placement -- re-run mamba_budget/
+#     pool_configurator), #45684 (linear/draft TP-group selectors -- cheap
+#     union), #45462/#45917 cluster (-1-route padding class -- entry-225's
+#     StandardDispatcher sentinel family; keep its test as oracle),
+#     #43450/#45144/#45145 (forward_observer + OOT spec hooks --
+#     conflict-only, frozen-class files), #44124 see B, #34031 (ragged-verify
+#     layout through ForwardBatch -- claimed no-behavior-change, verify at
+#     union), #45151-adjacent #45543 see A1, #46639 (multi-layer-EAGLE only --
+#     inert, note), #45435/#45472 see B234, #46682 (MultimemAllGatherer probe
+#     -- NOT found on origin/main despite merged flag: verify mergeCommit
+#     before ever porting; boot-needle adjacency per entry 245 trap #5),
+#     #45445 (/ping readiness -- we run SGLANG_ENABLE_HEALTH_ENDPOINT_
+#     GENERATION=false; probe-sequencing note). State: TODO (docs)
+#  C11 Watch-list (open PRs, no action): #46191 (HiSparse host KV tier for the
+#     QSA backend -- the most direct upstream answer to admission-over-1M for
+#     THIS arch, but 12 files +205 qsa_kv_pool... overlaps our hottest
+#     divergent QSA zone; wait for the ring decisions), #38724 (MXFP4 KV on
+#     SM120 for Qwen3.5/3.8 -- FORK-IN-THE-ROAD vs the NVFP4-KV route entries
+#     178/208/43247; read its load-time scale gate regardless), #32314
+#     (HiSparse V2 = HiCache as logical pool), #43703 (BF16 low-M FlashInfer
+#     CuTe autotune, dep satisfied by 0.7.2 -- draft; removes 6 lines from
+#     qwen4_exp.py -> conflict), #46619 (Triton GDN prefill in breakable
+#     graphs -- the lever we forgo with prefill graphs disabled; also deletes
+#     104 lines KDA graph code), #42790 + #46702 (the post-#42388 landscape
+#     around intermediate_ssm memory; Bole matters only if the draft ever
+#     moves to DFLASH/DSPARK), #40916 (QSA indexer host-pool declaration --
+#     structural, know before the next QSA port), #46248 (Engram store w/
+#     Qwen4Exp first -- PLE-on-L3 future), #42490 (zero-copy backends + PLE
+#     side states -- NIXL future), #46422 (direct linker + PLE slot states),
+#     #46502 (reap while paused), #38355 (QSA radix-insert corruption race on
+#     Qwen3.8-Flash-Next BY NAME -- VALIDATE THE DIAGNOSIS before any port;
+#     no reviews, predates our cache ports; if real it outranks much of A).
+#     State: TODO (docs/watch)
+#  C12 SM120 GEMM measurement queue (not ports): #42865 (register-backed
+#     Triton skinny MXFP8 GEMM), #45391 (b12x MXFP8 dense backend -- same
+#     b12x package decision as #32479), #34731 (APPROVED, 10-14 head
+#     7db8f397f4: SM120 blockwise-FP8 swapAB crossover m<=256 -- cleanest
+#     first-boot A/B for the FP8 arm), #44593 (CLOSED-unmerged, no successor:
+#     FP8 GEMV 4-rows/warp rule -- reference only; Qwen3.8-27B dense sizes,
+#     not our geometry), #43250 (sm_121 GB10 plan table -- port-the-dispatch-
+#     re-tune-the-table project, NOT a clean port; reference). State: TODO
+#     (measurement queue)
+#
+# =============================================================================
+# SECTION R -- deliberately EXCLUDED (audit log; both-halves rule unless
+# noted). Do not re-add without new evidence.
+# =============================================================================
+#  Wrong-arch after verification: #44014 (see C7).
+#  Wrong-SKU (sm_121/SM90/SM10x): #43250, #45407, #45585, #45450.
+#  Our-model-adjacent but not our execution path: #46619 (prefill graphs off),
+#  #43048 (GR/PLE sequence parallelism; conflicts in-stack #43032; CP/SP off),
+#  #44034 (Qwen3.5-MoE allowlist only -- porting to Qwen4Exp is OUR work),
+#  #42790/#46702/#32314/#46191 (watch, not wanted-now), #45867 conditional,
+#  #42490/#46422/#46502 (zero-copy/linker/pause paths not run).
+#  Model-specific other-families despite keyword hits: #41975 (DSA/MLA small-M
+#  BF16), #44593 (dense 27B GEMV sizes), #44124-family siblings for other
+#  parsers.
+#  Bulk non-relevant classes (merged+open sweeps): all AMD/ROCm/gfx*, NPU/
+#  Ascend/XPU/MLU/MLX/CPU-family, diffusion/multimodal-gen, DeepSeek-V4/
+#  DSpark/MegaMoE/Engram/HiSparse-private, GLM/Kimi/MiniMax/Bailing/Gemma4/
+#  Ling/Beam private paths, PD-disaggregation-only, rust-frontend mode we
+#  don't run, sgl-router/cookbook/docs/CI/docker churn, and the ~52
+#  release-branch cherry-picks that never touched origin/main (incl. #46682's
+#  odd landing -- flagged in C10). Full lists live in the two sweep reports
+#  (2026-10-28), summarized in stack.txt's 250+ wave entries as they land.

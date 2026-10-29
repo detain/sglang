@@ -1,6 +1,6 @@
 # stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
 #
-# STACK: qwennext-stack-249-2026-10-21
+# STACK: qwennext-stack-254-2026-10-28
 #   main+pr36787+pr37275+pr38144+pr38209+pr36644+pr39862+pr39809+pr39893+local_hicache_qsa_fixes
 #   +pr39614+pr39978+pr40002+pr39065+pr40501+pr40175+pr40362+pr39391+pr37061+pr39333+pr33778
 #   +pr38977+pr39977+pr40480+pr39880+pr40235+pr39807+cpu-triage+boot-fix+plan_updates_perf
@@ -10,7 +10,8 @@
 #   +diffusion-batch-2026-10-08(pr27673+pr28690*+pr32513+pr32550*+pr33036*+pr33588*
 #    +pr36399+pr36767+pr37460*+pr38650+pr39212+pr40493+pr40588+pr40755+pr41340*
 #    +pr41944+pr42249+pr42928*+pr43028*+pr43064*)
-#   (entries 1-249; *=squash/ported, see commit messages. 10-10 added
+#   +hicache-file-2026-10-28(pr42482+pr42488+pr44422+pr42676*+pr44776*)
+#   (entries 1-254; *=squash/ported, see commit messages. 10-10 added
 #   entries 157-161: parser batch A (Qwen3-Coder tool-call fixes + sampling
 #   upper bounds), on top of upstream merge #3 (see synced). 10-10b added
 #   entries 162-166: SM120 batch B (#42863 PCIe-IPC vocab gathers, #42566
@@ -248,7 +249,7 @@
 #   make --enable-mixed-chunk safe and fix the QSA verify ring collision.
 #   * = picked with local modifications, see the entries)
 # branch : qwennext-stack
-# tip    : 1818e2c0fb   (the stack.txt commit sits above it)
+# tip    : d598eff7da   (the stack.txt commits sit above it)
 # base   : upstream sgl-project/sglang main @ 7ad55e4386 ([HiCache] TMA-staged
 #          host<->device KV transfer kernel (sm_90+) (#40278), 2026-09-21)
 # synced : upstream main @ f209e67767 (#39643, 2026-09-28) MERGED IN as
@@ -319,6 +320,27 @@
 #          MERGE #5 STILL OWED (refreshed at the 248/249 docs commit):
 #          origin/main is now 1dd0f361b8 = +435 commits since 12dc623102.
 #          [The 553836c164/+378 figure was the count at the 230-242 batch.]
+# updated: 2026-10-28 (entries 250-254): HICACHE FILE-BACKEND TRANCHE --
+#          FAM-A1 of the wave-1 queue in wanted_stack.txt (file first
+#          committed today). Five OPEN-PR ports, one commit each on branch
+#          port-hicache-file (born at 6a726597e6), FF-landed as the
+#          byte-identical range 903910505e..d598eff7da -- 250 #42482
+#          pending-write reservation ownership in LRUFileEvictor, 251
+#          #42488 eviction continues after a failed unlink, 252 #44422
+#          storage-dir makedirs race (RED-proof: reverting the fix
+#          reproduces FileExistsError), 253 #42676 honor
+#          --file-storage-path on EVERY attach path (BEHAVIOR CHANGE:
+#          flag/extra-config outrank SGLANG_HICACHE_FILE_BACKEND_STORAGE_DIR
+#          when BOTH are set -- our run scripts set only the env, so prod
+#          is byte-for-byte unchanged; needle for future script edits),
+#          254 #44776 optional parallel page reads (EnvInt default 1 =
+#          OFF; union of our entry-24 page-degrade catch onto the parallel
+#          path). ALL CPU-GREEN at the landed tip, CVD=9: lru file
+#          45P/2sub, race file 4P, path file 1P/5sub, parallel-reads file
+#          5P, family battery 147P/50sub, whole test/registered/unit/
+#          mem_cache/ 2045P/3028S/0F/3969sub. Code tip d598eff7da, NOT
+#          pushed. LIVE ONLY AFTER RESTART (user-driven); default-OFF
+#          knobs keep the L3 read path serial until a window opts in.
 # updated: 2026-10-21 (entries 248-249): ONE FORK FIX + THE /root BATCH,
 #          NO UPSTREAM MERGE AND NO PORT. 1818e2c0fb normalizes the get_rope
 #          memo key so the target and the NEXTN draft share ONE cos/sin
@@ -5732,6 +5754,57 @@ STACK, IN BUILD ORDER (bottom first)
       #   STALE / L3 is parked" instruction as HISTORY. Every L3 needle and
       #   every HiCache arm is FIREABLE now -- which is precisely why the store
       #   isolation in (i) stopped being hygiene and became load-bearing.
+
+        250. 903910505e  PR #42482 (open, head 179a0ed4fb)  LRUFileEvictor.reserve refuses a key that already has a pending write -- a duplicate writer used to settle the FIRST writer's reservation and drift the cap
+      # https://github.com/sgl-project/sglang/pull/42482. WHAT: reserve()
+      # double-admitted -- a second reserve for a key with an outstanding
+      # pending write returned True and OVERWROTE the pending entry, so the
+      # duplicate's commit()/abort() settled the first writer's
+      # reservation: cap overshoot (bytes charged/released against the
+      # wrong outstanding write, max_size_bytes accounting drifting per
+      # occurrence) and wrong eviction accounting. THE FIX (+5/-1,
+      # storage/file/lru_file_evictor.py:192-195): under _lock,
+      # suffixed_key already in _pending_writes -> return False. Refusal
+      # is an EXISTING, documented outcome ("no-op miss" to the caller);
+      # the docstring's refusal list gains "the key already has a pending
+      # write". The second writer degrades instead of corrupting the
+      # first's state.
+      # WHY FOR US: the file backend is LIVE L3 on both arms (entry 249:
+      # the running boot carries --enable-hierarchical-cache; the 150G
+      # MAX_SIZE raise is restart-pending), and our 10-28 per-replica dir
+      # split means same-replica TP ranks still share one store -- any
+      # racing duplicate admit permanently moved the cap the eviction
+      # loop reasons over. Entries 250/251/252 are the store-health trio
+      # for that geometry.
+      # DEVIATIONS: none -- clean cherry-pick of open head 179a0ed4fb;
+      # rides with the +60-line CPU regression in
+      # test/registered/unit/mem_cache/test_hicache_file_lru_unit.py.
+      # BATTERY (numbers are at the FINAL tranche tip d598eff7da, the
+      # file covers entries 250+251 together):
+      # test_hicache_file_lru_unit.py 45P/2sub; family battery 147P/50sub;
+      # test/registered/unit/mem_cache/ 2045P/3028S/0F/3969sub, CVD=9.
+
+        251. dbae0166a1  PR #42488 (open, head 803e44812f)  a failed unlink is a bounded SKIP, not a STOP -- one undeletable oldest page used to pin the LRU head and refuse every later capacity write
+      # https://github.com/sgl-project/sglang/pull/42488. WHAT:
+      # _evict_oldest's OSError path re-pinned the victim at the LRU HEAD
+      # (move_to_end(last=False)) and returned "stop" -- the capacity
+      # eviction loop aborted and every later write needing eviction got
+      # refused. A single undeletable page (open handle, permission, IO
+      # error) was therefore permanent head-of-line blocking. THE FIX
+      # (+8/-8): keep the bytes charged (_total_bytes NOT decremented --
+      # they are still on disk), re-insert the entry at MRU instead of
+      # the head, return "skipped" so the bounded should_continue loop
+      # tries other victims. "stop" now means an empty index ONLY; the
+      # docstrings ("skipped": in-flight write OR failed unlink / "stop":
+      # empty index) were updated to match.
+      # WHY FOR US: entry 249's harness store-isolation work exists
+      # because arms silently booted against PROD's store; the symptom
+      # class this closes ("capacity writes refused" with the store
+      # visibly below cap) had a mechanical cause here -- 150G L3 makes
+      # capacity-driven eviction the COMMON path, not the corner case.
+      # DEVIATIONS: none -- clean cherry-pick of open head 803e44812f;
+      # +60-line CPU regression rides in the same lru test file (entry
+      # 250 carries the file-level battery numbers).
 
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
