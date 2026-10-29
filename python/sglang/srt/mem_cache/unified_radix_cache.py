@@ -62,6 +62,7 @@ from sglang.srt.mem_cache.hicache_storage import (
     PoolName,
     PoolTransfer,
     SidecarPoolSpec,
+    merge_source_transfers,
 )
 from sglang.srt.mem_cache.hybrid_cache.hybrid_cache_controller import (
     HybridCacheController,
@@ -113,6 +114,7 @@ from sglang.srt.mem_cache.unified_cache.unified_tree_core import (  # noqa: F401
     UnifiedTreeCore,
     UnifiedTreeNode,
 )
+from sglang.srt.observability.hicache_pool_stats import host_pool_eviction_counts
 from sglang.srt.observability.metrics_collector import (
     StorageMetrics,
     StorageMetricsCollector,
@@ -177,6 +179,16 @@ class _OngoingWriteThrough(NamedTuple):
 
     node_id: NodeId
     lock_params: Optional[DecLockRefParams]
+    publish_node_ids: list[NodeId]
+
+
+class _NodeBackupSpec(NamedTuple):
+    """One node's pending D->H backup: its transfers and the lock it holds."""
+
+    node_id: NodeId
+    lock_params: Optional[DecLockRefParams]
+    device_value: torch.Tensor
+    comp_xfers: dict[ComponentType, list[PoolTransfer]]
     publish_node_ids: list[NodeId]
 
 
@@ -320,7 +332,23 @@ class UnifiedRadixCache(BasePrefixCache):
         )
         self.pp_rank = params.pp_rank
         self.pp_size = params.pp_size
+        # Batched write-through backups (stack entry 199): queue per-node D2Hs
+        # and flush them merged under one fence. Default OFF (env), byte-
+        # identical to the per-node path.
+        self._batched_backup = envs.SGLANG_ENABLE_HICACHE_BATCHED_BACKUP.get()
         self.work_list: list[torch.distributed.Work] = []
+        # Cache-mode pending hits (entry 293's opt-in capacity wait) only exist
+        # on a single attention rank: a pending queue is local state and would
+        # diverge across TP.
+        self.enable_cache_mode_storage_hit_pending = self.pp_size == 1 and not any(
+            group is not None and torch.distributed.get_world_size(group=group) > 1
+            for group in (
+                self.tp_group,
+                self.attn_cp_group,
+                self.attn_tp_group,
+                self.pp_group,
+            )
+        )
 
         # HiCache D↔H defaults (overridden by init_hicache)
         self.cache_controller: Optional[HybridCacheController] = None
@@ -336,6 +364,10 @@ class UnifiedRadixCache(BasePrefixCache):
         self.prefetch_threshold = 256
         self.prefetch_timeout_base = 1.0
         self.prefetch_timeout_per_page = 0.25
+        # Opt-in host-capacity WAIT for full-hit staging (stack entry 293 /
+        # #46451): 0.0 = decline-and-retry exactly as before (byte-identical).
+        self.storage_prefetch_host_capacity_wait_ms = 0.0
+        self.storage_prefetch_retry_max_attempts = 8
         self.hicache_storage_pass_prefix_keys = False
         # Buffer-only host memory mode (host RAM as transient GPU↔storage
         # staging, not an L2 tier); resolved in init_hicache, which also
@@ -444,6 +476,9 @@ class UnifiedRadixCache(BasePrefixCache):
         self._discard_restore_backups()
         self.tree_core.reset()
         self.session_refs.reset()
+        # Settle (and forget) any in-flight deferred ready-count sync before the
+        # ack queues it voted over disappear (stack entry 294).
+        self._drop_deferred_ready_sync()
 
         # Reset Controller.
         self.session.slots.clear()
@@ -453,7 +488,10 @@ class UnifiedRadixCache(BasePrefixCache):
         self.prefetch_loaded_tokens_by_reqid: dict[CacheRequestHandle, int] = {}
         self.prefetch_loaded_storage_start_by_reqid: dict[CacheRequestHandle, int] = {}
         self.ongoing_prefetch: dict[CacheRequestHandle, _OngoingPrefetch] = {}
+        self.pending_storage_hits: dict[CacheRequestHandle, PrefetchOperation] = {}
         self._storage_prefetch_wait: dict[CacheRequestHandle, _StoragePrefetchWait] = {}
+        # Locked write-through nodes awaiting flush_pending_backups, in queue order.
+        self.queued_backups: dict[NodeId, Optional[DecLockRefParams]] = {}
         # Rank-agreed L3-hit tokens not yet resolved as usable or unfulfilled.
         # Cache-mode entries survive L3->L2 until H2D succeeds or admission
         # fails; buffer-mode entries survive staging until the H2D ack.
@@ -516,11 +554,9 @@ class UnifiedRadixCache(BasePrefixCache):
             ) = HybridCacheController.parse_storage_backend_extra_config(
                 get_memory().hicache_storage_backend_extra_config
             )
-            if server_args.file_storage_path:
-                storage_extra_config = dict(storage_extra_config or {})
-                storage_extra_config.setdefault(
-                    "file_storage_path", server_args.file_storage_path
-                )
+            # --file-storage-path is folded into the config by
+            # HiCacheController._generate_storage_config -- read on EVERY
+            # attach path there (stack entry 253), not per call site here.
         storage_prefetch_threshold = (
             self._storage_attachment.resolve_prefetch_threshold(
                 storage_prefetch_threshold
@@ -595,6 +631,16 @@ class UnifiedRadixCache(BasePrefixCache):
                 )
         self.load_back_threshold = 10
         self.prefetch_stop_policy = get_memory().hicache_storage_prefetch_policy
+        self.storage_prefetch_host_capacity_wait_ms = (
+            get_memory().hicache_storage_prefetch_host_capacity_wait_ms
+        )
+        if not 0 <= self.storage_prefetch_host_capacity_wait_ms < float("inf"):
+            raise ValueError(
+                "HiCache host capacity wait must be finite and nonnegative"
+            )
+        self.storage_prefetch_retry_max_attempts = (
+            get_memory().hicache_storage_prefetch_retry_max_attempts
+        )
 
         # Runtime attach/detach of the L3 backend (startup, admin API, atexit).
         atexit.register(self.shutdown)
@@ -1444,6 +1490,14 @@ class UnifiedRadixCache(BasePrefixCache):
         elif isinstance(action, BackupKV):
             if self.linker is not None:
                 self.linker.offload_nodes(action.node_ids)
+            elif (
+                self._batched_backup
+                and self.buffer_pipeline is None
+                and not self.is_write_back
+            ):
+                # Write-through backups are queued and merged at flush; write-back
+                # backs up only its target, so it stays at insert time.
+                self._queue_write_through_backup(action)
             else:
                 self._execute_and_commit_kv_backup(action)
         else:
@@ -1474,8 +1528,21 @@ class UnifiedRadixCache(BasePrefixCache):
             # is operation-owned (freed at each ack): nothing is evictable.
             return 0
         result = self.tree_core.drive_host_eviction(component_type, num_tokens)
+        self._record_host_pool_evictions(result.host_frees)
         self._apply_eviction_result(result)
         return result.tracker.get(component_type, 0)
+
+    def _record_host_pool_evictions(
+        self, host_frees: dict[ComponentType, list[torch.Tensor]]
+    ) -> None:
+        """Count host slots a host-eviction step frees, per host pool, before
+        _apply_eviction_result consumes them (sglang:hicache_host_pool_evicted_tokens_total,
+        stack entry 219). KV freed under mamba pressure is a host prefix lost
+        with its checkpoints."""
+        if self.metrics_collector is None or not host_frees:
+            return
+        for pool, freed in host_pool_eviction_counts(host_frees).items():
+            self.metrics_collector.increment_host_pool_evicted_tokens(freed, pool)
 
     # ---- Decode retraction ----
 
@@ -1792,6 +1859,86 @@ class UnifiedRadixCache(BasePrefixCache):
             written = len(host_indices)
         return written
 
+    def _build_node_backup_spec(
+        self, node_id: NodeId, lock_params: Optional[DecLockRefParams]
+    ) -> Optional[_NodeBackupSpec]:
+        """Read what a node still needs backed up; None (lock released) when nothing."""
+        device_value, comp_xfers = self.tree_core.build_backup_spec(node_id)
+        # Overlapping chain actions may revisit nodes with Full KV already
+        # backed up. Skip only when no transfer remains.
+        if device_value.numel() == 0 and not comp_xfers:
+            self._release_queued_backup(node_id, lock_params)
+            return None
+        return _NodeBackupSpec(
+            node_id,
+            lock_params,
+            device_value,
+            comp_xfers,
+            self._backup_publish_node_ids(node_id, comp_xfers),
+        )
+
+    def _backup_specs(
+        self, specs: list[_NodeBackupSpec], *, write_back: bool = False
+    ) -> Optional[int]:
+        """Full KV tokens written, or None if host alloc fails (locks stay held)."""
+        device_value, comp_xfers, groups = self._merge_backup_transfers(specs)
+        host_indices = self._execute_kv_backup(
+            -1,
+            device_value,
+            comp_xfers,
+            self._build_backup_sidecar(device_value, comp_xfers),
+            node_ids=[spec.node_id for spec in specs],
+        )
+        if host_indices is None:
+            return None
+        for merged, transfers in groups:
+            sizes = [len(t.device_indices) for t in transfers]
+            for transfer, host_slice in zip(
+                transfers, merged.host_indices.split(sizes)
+            ):
+                transfer.host_indices = host_slice
+        sizes = [len(spec.device_value) for spec in specs]
+        for spec, host_slice in zip(specs, host_indices.split(sizes)):
+            self.tree_core.commit_backup(spec.node_id, host_slice, spec.comp_xfers)
+            lock_params = spec.lock_params
+            if not write_back and lock_params is None:
+                lock_params = self.inc_lock_ref(spec.node_id).to_dec_params()
+            self._track_write_through_node(
+                spec.node_id, lock_params, publish_node_ids=spec.publish_node_ids
+            )
+        return len(host_indices)
+
+    @staticmethod
+    def _merge_backup_transfers(
+        specs: list[_NodeBackupSpec],
+    ) -> tuple[
+        torch.Tensor,
+        dict[ComponentType, list[PoolTransfer]],
+        list[tuple[PoolTransfer, list[PoolTransfer]]],
+    ]:
+        """Concatenate the nodes' transfers per (component, pool); each merged
+        transfer comes back paired with the per-node transfers it covers."""
+        if len(specs) == 1:
+            return specs[0].device_value, specs[0].comp_xfers, []
+        parts: dict[tuple[ComponentType, PoolName], list[PoolTransfer]] = {}
+        for spec in specs:
+            for component_type, transfers in spec.comp_xfers.items():
+                for transfer in transfers:
+                    parts.setdefault((component_type, transfer.name), []).append(
+                        transfer
+                    )
+        comp_xfers: dict[ComponentType, list[PoolTransfer]] = {}
+        groups = []
+        for (component_type, name), transfers in parts.items():
+            merged = PoolTransfer(
+                name=name,
+                device_indices=torch.cat([t.device_indices for t in transfers]),
+            )
+            comp_xfers.setdefault(component_type, []).append(merged)
+            groups.append((merged, transfers))
+        device_value = torch.cat([spec.device_value for spec in specs])
+        return device_value, comp_xfers, groups
+
     @staticmethod
     def _backup_publish_node_ids(
         node_id: NodeId, comp_xfers: dict[ComponentType, list[PoolTransfer]]
@@ -1812,8 +1959,10 @@ class UnifiedRadixCache(BasePrefixCache):
             CacheTransferPhase.BACKUP_HOST, kv_xfer, comp_xfers
         )
 
-    def _execute_kv_backup(self, node_id, device_value, comp_xfers, sidecar_xfers):
-        """Execute Backup action."""
+    def _execute_kv_backup(
+        self, node_id, device_value, comp_xfers, sidecar_xfers, *, node_ids=None
+    ):
+        """Allocate host slots and queue a single-node or batched D->H backup."""
         kv_tokens = len(device_value)
         anchor_entry = self.cache_controller.mem_pool_host.anchor_entry
         if (
@@ -1836,6 +1985,7 @@ class UnifiedRadixCache(BasePrefixCache):
             node_id=node_id,
             extra_pools=aux_xfers or None,
             flush=False,
+            node_ids=node_ids,
             **shard_kwargs,
         )
 
@@ -1919,6 +2069,15 @@ class UnifiedRadixCache(BasePrefixCache):
         }
         success = False
         try:
+            if any(p.rejected for p in preps.values()):
+                # A component refused this restore after poisoning its own state
+                # (see MambaComponent #39830 position fencing). Unwind like the
+                # other degrade paths: drop both locks, report a miss, and let
+                # the request re-prefill from the device boundary. The finally
+                # below recovers whatever the other components prepared.
+                self.dec_lock_ref(node_id, ancestor_lock_params)
+                self.dec_host_lock_ref(node_id, host_anchor_params)
+                return False
             success = self._load_back_transfers(
                 node_id=node_id,
                 mem_quota=mem_quota,
@@ -2025,24 +2184,17 @@ class UnifiedRadixCache(BasePrefixCache):
             if spec.indices_from_pool == PoolName.KV:
                 indices_source = kv_xfer
             else:
-                source_component = {
-                    PoolName.SWA: ComponentType.SWA,
-                    PoolName.MAMBA: ComponentType.MAMBA,
-                }.get(spec.indices_from_pool)
-                if source_component is None:
-                    raise AssertionError(
-                        f"Unsupported sidecar indices source pool "
-                        f"{spec.indices_from_pool}."
-                    )
-                matching_sources = comp_xfers.get(source_component, ())
-                if not matching_sources:
+                # merge_source_transfers() (stack entry 292 / #43110) resolves
+                # the source over EVERY independent transfer of that pool --
+                # one Mamba load-back restores a checkpoint into both a radix
+                # slot and a live request row, and the sidecar must cover all
+                # destinations; a lone transfer keeps its aliased tensors.
+                indices_source = merge_source_transfers(
+                    (x for xfers in comp_xfers.values() for x in xfers),
+                    spec.indices_from_pool,
+                )
+                if indices_source is None:
                     continue
-                indices_source = matching_sources[0]
-                if indices_source.name != spec.indices_from_pool:
-                    raise AssertionError(
-                        f"Sidecar indices source pool {spec.indices_from_pool} "
-                        f"resolved to {indices_source.name} during {phase}."
-                    )
 
             indices = (
                 indices_source.device_indices
@@ -3073,6 +3225,9 @@ class UnifiedRadixCache(BasePrefixCache):
         return info, hit_tokens - trim_tokens, original_hit_tokens
 
     def revoke_pending_prefetch(self, request: CacheRequestHandle) -> None:
+        pending = getattr(self, "pending_storage_hits", None)
+        if pending is not None:
+            pending.pop(request, None)
         self._finish_storage_prefetch(request, fulfilled_tokens=0, reason="dropped")
         info = self.ongoing_prefetch.get(request)
         if info is None:
@@ -3117,18 +3272,27 @@ class UnifiedRadixCache(BasePrefixCache):
                     yield item
 
         buffer_mode = self.host_memory_mode == "buffer_only"
+        wait_full = (
+            not buffer_mode
+            and getattr(self, "enable_cache_mode_storage_hit_pending", False)
+            and getattr(self, "storage_prefetch_host_capacity_wait_ms", 0) > 0
+        )
 
         def _try_alloc_storage_hit(operation) -> bool:
             """Allocate the hit-sized bounce and launch the transfer.
             Returns False when staging pressure defers the allocation
-            (buffer mode parks and retries; cache mode revokes)."""
+            (cache mode retries only within the opt-in capacity wait,
+            stack entry 293 / #46451)."""
             request = operation.handle
             info = self.ongoing_prefetch.get(request)
             hit_tokens = operation.storage_hit_count
-            if info is None:
+            if info is None or info.operation is not operation:
                 return True  # aborted/cleaned; nothing to retry
             if operation.is_terminated():
                 self.revoke_pending_prefetch(request)
+                return True
+            if not buffer_mode and info.host_indices is not None:
+                # A queued transfer already owns its staging; never allocate twice.
                 return True
 
             if buffer_mode and cc.prefetch_rate_limited():
@@ -3184,14 +3348,45 @@ class UnifiedRadixCache(BasePrefixCache):
                     operation, info, hit_tokens, aux_hit_tokens
                 )
             aux_hit_tokens = hit_tokens
-            host_indices, alloc_len = cc.allocate_storage_hit(
-                operation,
-                hit_tokens,
-                allow_partial=True,
-                min_tokens=self.prefetch_threshold,
-                evict_host=self.evict_host,
+            # Entry 293's opt-in full-hit staging wait: park the hit and retry
+            # on a cadence within the budget instead of partial-allocating (the
+            # allow_partial=False keeps the span whole); default wait 0 = the
+            # old decline-and-revoke.
+            now = time.monotonic()
+            deadline = getattr(operation, "host_capacity_deadline", None)
+            expired = wait_full and deadline is not None and now >= deadline
+            if (
+                wait_full
+                and not expired
+                and now < getattr(operation, "host_capacity_next_retry", 0)
+            ):
+                return False
+            host_indices, alloc_len = (
+                (None, hit_tokens)
+                if expired
+                else cc.allocate_storage_hit(
+                    operation,
+                    hit_tokens,
+                    allow_partial=not wait_full,
+                    min_tokens=self.prefetch_threshold,
+                    evict_host=self.evict_host,
+                )
             )
             if host_indices is None:
+                retries = getattr(operation, "host_capacity_retries", 0)
+                if (
+                    wait_full
+                    and not expired
+                    and retries < self.storage_prefetch_retry_max_attempts
+                ):
+                    wait_seconds = self.storage_prefetch_host_capacity_wait_ms / 1000
+                    if deadline is None:
+                        operation.host_capacity_deadline = now + wait_seconds
+                    operation.host_capacity_retries = retries + 1
+                    operation.host_capacity_next_retry = now + (
+                        wait_seconds / (self.storage_prefetch_retry_max_attempts + 1)
+                    )
+                    return False
                 self._finish_storage_prefetch(
                     request, fulfilled_tokens=0, reason="host_capacity"
                 )
@@ -3203,7 +3398,17 @@ class UnifiedRadixCache(BasePrefixCache):
                     max(alloc_len, aux_hit_tokens), "host_capacity"
                 )
                 return True
-            if not self._alloc_prefetch_aux_staging(info, aux_hit_tokens):
+            if not self._alloc_prefetch_aux_staging(
+                info,
+                # Aux staging follows the endpoint the KV span ACTUALLY got, not
+                # the query hit: sizing a capacity-shortened fetch to the full
+                # span over-claims (or fails) side-pool slots under host
+                # pressure, declining a prefetch a smaller endpoint would fit
+                # (stack entry 290's #46954-hunk (d), the highest-value one for
+                # a mamba-host-full prod boot; B3-2's clamp delivers the
+                # endpoint as alloc_len).
+                alloc_len,
+            ):
                 # Same outcome as a KV shortfall: nothing stays staged.
                 cc.append_host_mem_release(host_indices=host_indices)
                 self._finish_storage_prefetch(
@@ -3236,6 +3441,17 @@ class UnifiedRadixCache(BasePrefixCache):
                     if not _try_alloc_storage_hit(parked[0]):
                         break
                     parked.popleft()
+            else:
+                pending = getattr(self, "pending_storage_hits", {})
+                # Snapshot identities, not the queue object: revoke may remove the
+                # current or a later request. A deferred large hit does not stop
+                # smaller hits that fit from making progress in this pass.
+                for request, operation in tuple(pending.items()):
+                    if pending.get(request) is not operation:
+                        continue
+                    if _try_alloc_storage_hit(operation):
+                        if pending.get(request) is operation:
+                            pending.pop(request)
             for operation in _drain_queue(cc.prefetch_hit_queue, n_storage_hit):
                 self._invalidate_absent_from_hit_query(operation)
                 request = operation.handle
@@ -3244,6 +3460,10 @@ class UnifiedRadixCache(BasePrefixCache):
                 if info is None:
                     if hit_tokens > 0:
                         self.discard_storage_prefetch_accounting(request)
+                    continue
+                if info.operation is not operation:
+                    # A late query from a revoked attempt must not retire or
+                    # change the accounting of its replacement.
                     continue
                 if hit_tokens > 0:
                     self._record_storage_prefetch_hit(request, hit_tokens)
@@ -3281,9 +3501,13 @@ class UnifiedRadixCache(BasePrefixCache):
                     self.buffer_pipeline.pending_hit_allocs
                 )
                 if parked_ahead or not _try_alloc_storage_hit(operation):
-                    # Counted once at first parking, not per retry tick.
-                    self._prefetch_outcome_stats["declined_rate_limited"] += 1
-                    self.buffer_pipeline.pending_hit_allocs.append(operation)
+                    if buffer_mode:
+                        # Counted once at first parking, not per retry tick.
+                        self._prefetch_outcome_stats["declined_rate_limited"] += 1
+                        self.buffer_pipeline.pending_hit_allocs.append(operation)
+                    else:
+                        self._log_storage_prefetch_deferred(hit_tokens, "host_capacity")
+                        self.pending_storage_hits[request] = operation
 
         def _drain_ack_prefetch():
             for ack in _drain_queue(cc.ack_prefetch_queue, n_ack_prefetch):
@@ -3587,7 +3811,13 @@ class UnifiedRadixCache(BasePrefixCache):
 
         if write_back:
             # Blocking: submit what is still queued, then wait for every ack.
-            cc.start_writing()
+            # Fork (stack entries 199/218): the batched-backup drain queues its
+            # D2H with flush=False, so the single start_writing below submits
+            # both paths under the SAME forward fence (the #44800 half that
+            # keeps write-back host copies from racing the producing forward).
+            if self.queued_backups:
+                self._drain_queued_backups()
+            cc.start_writing(wait_for_forward=True)
             while self.ongoing_write_through:
                 for ack in cc.ack_write_queue:
                     ack.finish_event.synchronize()
@@ -3756,6 +3986,131 @@ class UnifiedRadixCache(BasePrefixCache):
                 )
         return failed
 
+    # ---- HiCache: deferred ready-count sync (--hicache-async-ready-sync) ----
+    #
+    # The ready-count all_reduce in _sync_hicache_ready_counts keeps the ranks'
+    # radix trees in lockstep: every rank consumes the same number of completed
+    # write / load acks per step. With the opt-in flag it is issued
+    # asynchronously on a dedicated gloo group in step N and consumed in step
+    # N + 1 instead of blocking the scheduler in every step. This stays in
+    # lockstep: acks complete in queue order and queues only grow at the tail,
+    # so a prefix that was ready on every rank in step N is still ready in step
+    # N + 1. Each rank remembers which ack ends its ready prefix in step N; in
+    # step N + 1 it consumes up to the agreed one if a blocking drain has not
+    # consumed it already, so a drain in between is safe. One op per step on
+    # its own group keeps the op order identical on every rank.
+    # (stack entry 294 / #45795; re-planted at B3 onto the merged sync path.)
+
+    def _deferred_ready_sync_group(self):
+        """The dedicated group, or None when the plain synchronous path applies."""
+        state = getattr(self, "_hcs_state", None)
+        if state and self.enable_storage:
+            # A storage backend was attached at runtime. Its queues are drained
+            # only on the synchronous path, so settle the in-flight sync and
+            # fall back for good; attach runs in the same step on every rank.
+            self._consume_deferred_ready_sync()
+            self._hcs_state = False
+            logger.warning(
+                "--hicache-async-ready-sync: storage backend attached; the "
+                "ready-count sync is synchronous from now on"
+            )
+            return None
+        if state is not None:
+            return state or None
+        self._hcs_state = False
+        if not get_memory().hicache_async_ready_sync:
+            return None
+        cc = self.cache_controller
+        cp = self.attn_cp_group
+        group = self.attn_tp_group if self.attn_tp_group is not None else self.tp_group
+        reason = None
+        if cc is None or self.linker is not None:
+            reason = "no host cache controller"
+        elif self.pp_size > 1:
+            reason = "pipeline parallelism"
+        elif self.enable_storage or self.host_memory_mode != "cache":
+            reason = "a storage backend / buffer-only host memory"
+        elif cp is not None and torch.distributed.get_world_size(group=cp) > 1:
+            reason = "attention context parallelism"
+        elif group is None or torch.distributed.get_world_size(group=group) <= 1:
+            reason = "a single attention rank"
+        if reason is not None:
+            logger.warning(
+                "--hicache-async-ready-sync: not applied (%s); the ready-count "
+                "sync stays synchronous",
+                reason,
+            )
+            return None
+        ranks = torch.distributed.get_process_group_ranks(group)
+        self._hcs_state = torch.distributed.new_group(
+            ranks, backend="gloo", use_local_synchronization=True
+        )
+        self._hcs_pending = None
+        logger.info(
+            "--hicache-async-ready-sync: deferred ready-count sync on its own "
+            "gloo group over ranks %s",
+            ranks,
+        )
+        return self._hcs_state
+
+    def _drop_deferred_ready_sync(self) -> None:
+        pending = getattr(self, "_hcs_pending", None)
+        if pending is not None:
+            pending[0].wait()
+        self._hcs_pending = None
+
+    @staticmethod
+    def _deferred_consume_count(queue, snapshot, agreed: int) -> int:
+        """How many acks to pop from the head of ``queue`` now: up to and
+        including the agreed last ready ack of step N (``snapshot[agreed - 1]``),
+        or 0 if a blocking drain consumed it in between."""
+        if agreed <= 0:
+            return 0
+        target = snapshot[agreed - 1]
+        for i, ack in enumerate(queue):
+            if ack is target:
+                return i + 1
+        return 0
+
+    def _consume_deferred_ready_sync(self) -> None:
+        pending = getattr(self, "_hcs_pending", None)
+        if pending is None:
+            return
+        cc = self.cache_controller
+        work, counts, write_snap, load_snap = pending
+        self._hcs_pending = None
+        work.wait()
+        write_n, load_n, digest_min, neg_digest_max = map(int, counts.tolist())
+        assert digest_min == -neg_digest_max, (
+            "write_back duplicate-reclaim victims diverged across TP ranks"
+        )
+        self.writing_check(
+            finish_count=self._deferred_consume_count(
+                cc.ack_write_queue, write_snap, write_n
+            )
+        )
+        self.loading_check(
+            finish_count=self._deferred_consume_count(
+                cc.ack_load_queue, load_snap, load_n
+            )
+        )
+
+    def _check_hicache_events_deferred(self, group) -> None:
+        cc = self.cache_controller
+        self._consume_deferred_ready_sync()
+        write_snap = cc.ack_write_queue[: self._count_ready_acks(cc.ack_write_queue)]
+        load_snap = cc.ack_load_queue[: self._count_ready_acks(cc.ack_load_queue)]
+        digest = self.tree_core.write_back_duplicate_reclaim_digest
+        counts = torch.tensor(
+            [len(write_snap), len(load_snap), digest, -digest],
+            dtype=torch.int64,
+            device="cpu",
+        )
+        work = torch.distributed.all_reduce(
+            counts, op=torch.distributed.ReduceOp.MIN, group=group, async_op=True
+        )
+        self._hcs_pending = (work, counts, write_snap, load_snap)
+
     def check_hicache_events(self) -> None:
         """Called per scheduler step to poll async HiCache events."""
         if self.linker is not None:
@@ -3780,6 +4135,13 @@ class UnifiedRadixCache(BasePrefixCache):
         # Backups queued outside process_batch_result: the chunked-prefill stash
         # in get_next_batch_to_run, abort_request, and the PD prefill release.
         self.flush_pending_backups()
+
+        deferred_group = self._deferred_ready_sync_group()
+        if deferred_group is not None:
+            self._check_hicache_events_deferred(deferred_group)
+            if self.buffer_pipeline is not None:
+                self.buffer_pipeline.flush_pending_writes()
+            return
 
         (
             write_finish_count,
@@ -3815,10 +4177,98 @@ class UnifiedRadixCache(BasePrefixCache):
             self.storage_metrics_collector.log_storage_metrics(storage_metrics)
 
     def flush_pending_backups(self) -> None:
-        """Submit pending D2H backups as a merged operation."""
+        """Back queued write-through nodes up and submit every pending D2H backup."""
         if self.linker is not None or self.cache_controller is None:
             return
+        if self.queued_backups:
+            self._drain_queued_backups()
         self.cache_controller.start_writing()
+
+    def _queue_write_through_backup(self, action: BackupKV) -> None:
+        for node_id in action.node_ids:
+            if node_id in self.queued_backups or node_id in self.ongoing_write_through:
+                continue
+            self.queued_backups[node_id] = self.inc_lock_ref(node_id).to_dec_params()
+
+    def _drain_queued_backups(self) -> None:
+        """Back queued nodes up ancestors first, merged as far as SWA windows allow;
+        like a failed BackupKV chain, a node whose parent stays unbacked is dropped."""
+        queued, self.queued_backups = self.queued_backups, {}
+        batch: list[_NodeBackupSpec] = []
+        batch_ids: set[NodeId] = set()
+        covered: set[NodeId] = set()
+        for node_id, lock_params in self._ancestors_first(queued).items():
+            spec = self._build_node_backup_spec(node_id, lock_params)
+            if spec is not None and not covered.isdisjoint(spec.publish_node_ids):
+                # A node already in the batch sits in this one's SWA window; commit
+                # the batch so the rebuilt spec sees it backed up, as node by node would.
+                self._backup_queued_batch(batch)
+                batch, batch_ids, covered = [], set(), set()
+                spec = self._build_node_backup_spec(node_id, lock_params)
+            if spec is None:
+                continue
+            if not self._parent_backed_up(node_id, batch_ids):
+                self._release_queued_backup(node_id, lock_params)
+                continue
+            batch.append(spec)
+            batch_ids.add(node_id)
+            covered.update(spec.publish_node_ids)
+        self._backup_queued_batch(batch)
+
+    def _ancestors_first(
+        self, queued: dict[NodeId, Optional[DecLockRefParams]]
+    ) -> dict[NodeId, Optional[DecLockRefParams]]:
+        """Queued nodes in an order that puts every unbacked or queued ancestor first.
+
+        A split can queue a parent behind its child or leave it unqueued (no lock
+        held). A queued ancestor with Full already backed up must still go first:
+        a descendant's SWA window would otherwise mark it pending under the
+        descendant's ack before its own incremental backup claims it."""
+        ordered: dict[NodeId, Optional[DecLockRefParams]] = {}
+        # Every node above a walked node was already placed or ruled out.
+        walked: set[NodeId] = set()
+        for node_id, lock_params in queued.items():
+            chain = []
+            parent = self.tree_core.get_parent_node_id(node_id)
+            while parent is not None and parent not in walked:
+                walked.add(parent)
+                if parent in queued or self._is_unbacked_node(parent):
+                    chain.append(parent)
+                parent = self.tree_core.get_parent_node_id(parent)
+            for ancestor in reversed(chain):
+                ordered[ancestor] = queued.get(ancestor)
+            ordered.setdefault(node_id, lock_params)
+        return ordered
+
+    def _is_unbacked_node(self, node_id: Optional[NodeId]) -> bool:
+        """A non-root node with no host backup yet."""
+        return (
+            node_id is not None
+            and not self.tree_core.is_root(node_id)
+            and not self.tree_core.is_backuped(node_id)
+        )
+
+    def _parent_backed_up(self, node_id: NodeId, batch_ids: set[NodeId]) -> bool:
+        parent = self.tree_core.get_parent_node_id(node_id)
+        return parent in batch_ids or not self._is_unbacked_node(parent)
+
+    def _release_queued_backup(
+        self, node_id: NodeId, lock_params: Optional[DecLockRefParams]
+    ) -> None:
+        if lock_params is not None:
+            self.dec_lock_ref(node_id, lock_params)
+
+    def _backup_queued_batch(self, batch: list[_NodeBackupSpec]) -> None:
+        if not batch or self._backup_specs(batch) is not None:
+            return
+        # The merged host allocation failed: retry node by node, ancestors first.
+        for spec in batch:
+            if not self._parent_backed_up(spec.node_id, set()):
+                self._release_queued_backup(spec.node_id, spec.lock_params)
+                continue
+            retry = self._build_node_backup_spec(spec.node_id, spec.lock_params)
+            if retry is not None and self._backup_specs([retry]) is None:
+                self._release_queued_backup(spec.node_id, spec.lock_params)
 
     def ready_to_load_host_cache(self) -> int:
         """Notify the cache controller to start the KV cache loading."""
@@ -4103,5 +4553,3 @@ class UnifiedRadixCache(BasePrefixCache):
 
     def dfs_weight_order(self, node_handles: Sequence[NodeId]) -> list[int]:
         return self.tree_core.dfs_weight_order(node_handles)
-
-# TODO(merge5): re-plant entry 30,90,199,217,218,219,253 semantics (batch B3); fork hunks saved /tmp/opencode/merge5-dossier/replant/python__sglang__srt__mem_cache__unified_radix_cache.py.fork-hunks.patch

@@ -40,6 +40,7 @@ from sglang.srt.mem_cache.unified_cache.component_type import ComponentType
 from sglang.srt.mem_cache.unified_radix_cache import UnifiedRadixCache
 from sglang.srt.runtime_context import publish, reset_context
 from sglang.srt.sampling.sampling_params import SamplingParams
+from sglang.test.tree_slots import tree_slots_of
 from sglang.srt.server_args import ServerArgs
 from sglang.test.ci.ci_register import register_cpu_ci
 from sglang.test.test_utils import CustomTestCase
@@ -217,7 +218,7 @@ class TestRealCacheChunkedPublishRetract(CustomTestCase):
                 req_to_token_pool=req_to_token_pool,
                 token_to_kv_pool_allocator=allocator,
                 page_size=PAGE,
-                tree_components=(ComponentType.FULL,),
+                tree_slots=tree_slots_of((ComponentType.FULL,)),
                 tree_core_backend=backend,
             )
         )
