@@ -36,6 +36,7 @@ from sglang.srt.mem_cache.unified_radix_cache import (
 from sglang.srt.mem_cache.utils import get_hash_str
 from sglang.srt.observability.req_time_stats import SchedulerReqTimeStats
 from sglang.test.ci.ci_register import register_cpu_ci
+from sglang.test.test_utils import CustomTestCase
 from sglang.test.tree_slots import index_slots
 
 register_cpu_ci(est_time=46, suite="base-a-test-cpu")
@@ -756,6 +757,341 @@ class TestStagedPrefetchLifecycle(unittest.TestCase):
         collector.log_storage_prefetch_unfulfilled_tokens.assert_called_once_with(
             6, "unservable_prefix"
         )
+
+
+class _CapacityHostPool:
+    def __init__(self, available):
+        self.available = available
+        self.anchor_entry = SimpleNamespace(host_pool=SimpleNamespace())
+        self.allocations = []
+        self.attempts = []
+
+    def alloc(self, size):
+        self.attempts.append(size)
+        if size > self.available:
+            return None
+        self.available -= size
+        indices = torch.arange(
+            len(self.allocations) * 100, len(self.allocations) * 100 + size
+        )
+        self.allocations.append(indices)
+        return indices
+
+    def available_size(self):
+        return self.available
+
+
+def _capacity_wait_fixture(available=0, wait_ms=100.0):
+    cache = _hit_drain_fixture()
+    cache.host_memory_mode = "cache"
+    cache.tree_core = SimpleNamespace(page_size=2)
+    cache.buffer_pipeline = None
+    cache.pending_storage_hits = {}
+    cache.enable_cache_mode_storage_hit_pending = True
+    cache.storage_prefetch_host_capacity_wait_ms = wait_ms
+    cache.storage_prefetch_retry_max_attempts = 2
+    cache.components = {}
+    cache.evict_host = Mock(return_value=0)
+    # The real revoke, accounting and allocation paths are essential here.
+    del cache.revoke_pending_prefetch
+    del cache._record_storage_prefetch_hit
+    cache.enable_storage_metrics = True
+    cache.storage_metrics_collector = Mock()
+    controller = HybridCacheController.__new__(HybridCacheController)
+    controller.page_size = 2
+    controller.prefetch_tokens_occupied = 0
+    controller.mem_pool_host = _CapacityHostPool(available)
+    for name in [
+        "prefetch_hit_queue",
+        "ack_prefetch_queue",
+        "ack_backup_queue",
+        "host_mem_release_queue",
+        "prefetch_buffer",
+    ]:
+        setattr(controller, name, Queue())
+    controller.extra_host_mem_release_queues = {}
+    cache.cache_controller = controller
+    return cache
+
+
+def _capacity_hit(cache, rid, size, generation=0):
+    handle = CacheRequestHandle(rid, generation)
+    operation = PrefetchOperation(handle, list(range(size)))
+    operation.storage_hit_count = size
+    operation.stats_requested_tokens = size
+    operation.storage_start = 0
+    operation.hash_value = [f"{rid}-{i}" for i in range(size // cache.page_size)]
+    cache.ongoing_prefetch[handle] = _OngoingPrefetch(
+        0, RadixKey(array("q", range(size))), None, operation, None, {}
+    )
+    cache.cache_controller.prefetch_tokens_occupied += size
+    cache.cache_controller.prefetch_hit_queue.put(operation)
+    return operation
+
+
+def _drain_capacity_hits(cache, now):
+    with patch(
+        "sglang.srt.mem_cache.unified_radix_cache.time.monotonic", return_value=now
+    ):
+        cache._drain_storage_control_queues_impl(None, 0, 0, 0, {}, False)
+
+
+class TestCacheModeCapacityWait(CustomTestCase):
+    def test_expired_head_does_not_submit_next_request_twice(self):
+        """Revoking a parked head must not leave its successor queued after submission."""
+        cache = _capacity_wait_fixture()
+        head = _capacity_hit(cache, "head", 8)
+        _drain_capacity_hits(cache, 0.0)
+        following = _capacity_hit(cache, "following", 4)
+        _drain_capacity_hits(cache, 0.05)
+        self.assertEqual(len(cache.pending_storage_hits), 2)
+
+        cache.cache_controller.mem_pool_host.available = 4
+        _drain_capacity_hits(cache, 0.11)
+        _drain_capacity_hits(cache, 0.12)
+
+        self.assertNotIn(head.handle, cache.ongoing_prefetch)
+        self.assertEqual(cache.pending_storage_hits, {})
+        self.assertEqual(cache.cache_controller.prefetch_buffer.qsize(), 1)
+        self.assertIs(cache.cache_controller.prefetch_buffer.get_nowait(), following)
+        self.assertEqual(len(cache.cache_controller.mem_pool_host.allocations), 1)
+        self.assertEqual(cache.cache_controller.prefetch_tokens_occupied, 4)
+
+    def test_cancel_head_or_middle_preserves_other_requests(self):
+        """Real cancellation must release occupancy and never revive the removed operation."""
+        for cancelled_index in (0, 1):
+            with self.subTest(cancelled_index=cancelled_index):
+                cache = _capacity_wait_fixture()
+                operations = [_capacity_hit(cache, str(i), 4) for i in range(3)]
+                _drain_capacity_hits(cache, 0.0)
+                cancelled = operations[cancelled_index]
+                cache.revoke_pending_prefetch(cancelled.handle)
+                cache.cache_controller.mem_pool_host.available = 16
+                _drain_capacity_hits(cache, 0.05)
+                _drain_capacity_hits(cache, 0.06)
+                submitted = [
+                    cache.cache_controller.prefetch_buffer.get_nowait()
+                    for _ in range(2)
+                ]
+                self.assertEqual(
+                    [op.handle for op in submitted],
+                    [op.handle for op in operations if op is not cancelled],
+                )
+                self.assertEqual(cache.pending_storage_hits, {})
+                self.assertNotIn(cancelled.handle, cache.ongoing_prefetch)
+                self.assertEqual(cache.cache_controller.prefetch_tokens_occupied, 8)
+
+    def test_terminated_pending_operation_is_not_transferred(self):
+        cache = _capacity_wait_fixture()
+        operation = _capacity_hit(cache, "cancel", 8)
+        _drain_capacity_hits(cache, 0.0)
+        operation.mark_terminate()
+        cache.cache_controller.mem_pool_host.available = 16
+        _drain_capacity_hits(cache, 0.01)
+        self.assertEqual(cache.pending_storage_hits, {})
+        self.assertEqual(cache.ongoing_prefetch, {})
+        self.assertEqual(cache.cache_controller.prefetch_buffer.qsize(), 0)
+        self.assertEqual(cache.cache_controller.prefetch_tokens_occupied, 0)
+
+    def test_cancelled_request_id_can_be_reused_without_reviving_old_hit(self):
+        cache = _capacity_wait_fixture()
+        cancelled = _capacity_hit(cache, "reuse", 4, generation=0)
+        _drain_capacity_hits(cache, 0.0)
+        cache.revoke_pending_prefetch(cancelled.handle)
+        replacement = _capacity_hit(cache, "reuse", 4, generation=1)
+        # A late hit notification from the cancelled generation is harmless.
+        cache.cache_controller.prefetch_hit_queue.put(cancelled)
+        cache.cache_controller.mem_pool_host.available = 8
+        _drain_capacity_hits(cache, 0.01)
+        _drain_capacity_hits(cache, 0.05)
+        self.assertEqual(cache.cache_controller.prefetch_buffer.qsize(), 1)
+        self.assertIs(cache.cache_controller.prefetch_buffer.get_nowait(), replacement)
+        self.assertEqual(list(cache.ongoing_prefetch), [replacement.handle])
+        self.assertEqual(cache.cache_controller.prefetch_tokens_occupied, 4)
+
+    def test_large_deferred_hit_does_not_block_smaller_hit(self):
+        cache = _capacity_wait_fixture(available=4)
+        large = _capacity_hit(cache, "large", 8)
+        small = _capacity_hit(cache, "small", 4)
+        _drain_capacity_hits(cache, 0.0)
+        self.assertEqual(list(cache.pending_storage_hits), [large.handle])
+        self.assertIs(cache.cache_controller.prefetch_buffer.get_nowait(), small)
+
+    def test_late_cancelled_attempt_does_not_revoke_replacement(self):
+        cache = _capacity_wait_fixture()
+        old = _capacity_hit(cache, "retry", 4)
+        _drain_capacity_hits(cache, 0.0)
+        old.mark_terminate()
+        cache.revoke_pending_prefetch(old.handle)
+        current = _capacity_hit(cache, "retry", 4)
+        # Storage retries retain the request handle but replace the operation.
+        cache.cache_controller.prefetch_hit_queue.put(old)
+        cache.cache_controller.mem_pool_host.available = 8
+        _drain_capacity_hits(cache, 0.01)
+        _drain_capacity_hits(cache, 0.05)
+        self.assertEqual(cache.cache_controller.prefetch_buffer.qsize(), 1)
+        self.assertIs(cache.cache_controller.prefetch_buffer.get_nowait(), current)
+        self.assertIs(cache.ongoing_prefetch[current.handle].operation, current)
+        self.assertEqual(cache.cache_controller.prefetch_tokens_occupied, 4)
+
+    def test_deadline_expires_without_spinning_or_truncating_hit(self):
+        cache = _capacity_wait_fixture()
+        operation = _capacity_hit(cache, "timeout", 8)
+        hashes = list(operation.hash_value)
+        _drain_capacity_hits(cache, 0.0)
+        attempts = len(cache.cache_controller.mem_pool_host.attempts)
+        _drain_capacity_hits(cache, 0.001)
+        self.assertEqual(len(cache.cache_controller.mem_pool_host.attempts), attempts)
+        _drain_capacity_hits(cache, 0.101)
+        self.assertEqual(cache.ongoing_prefetch, {})
+        self.assertEqual(cache.pending_storage_hits, {})
+        self.assertEqual(cache.cache_controller.prefetch_tokens_occupied, 0)
+        self.assertEqual(operation.storage_hit_count, 8)
+        self.assertEqual(operation.hash_value, hashes)
+
+    def test_default_and_distributed_paths_keep_partial_staging(self):
+        for wait_ms, single_engine in ((0, True), (100, False)):
+            with self.subTest(wait_ms=wait_ms, single_engine=single_engine):
+                cache = _capacity_wait_fixture(available=4, wait_ms=wait_ms)
+                cache.enable_cache_mode_storage_hit_pending = single_engine
+                operation = _capacity_hit(cache, "partial", 8)
+                _drain_capacity_hits(cache, 0.0)
+                self.assertEqual(operation.storage_hit_count, 4)
+                self.assertEqual(cache.pending_storage_hits, {})
+                self.assertEqual(cache.cache_controller.prefetch_buffer.qsize(), 1)
+
+
+class TestStoragePrefetchDeadlineAnchor(CustomTestCase):
+    """B3 re-home (stack entries 217/293): the timeout-budget cases the
+    upstream rewrite of this file dropped. Same production paths, same
+    fixtures; class name suffixed to mark provenance."""
+
+    def test_budget_starts_at_first_wait_and_survives_refetch(self):
+        """The budget is sized from the first requested span at the first
+        blocked poll and is kept across re-issues until admission or abort."""
+        for mode in ("buffer_only", "cache"):
+            with self.subTest(mode=mode):
+                cache, operation = _timeout_fixture(mode)
+                operation.start_time = 0.0
+                with patch("time.perf_counter", return_value=100.0):
+                    self.assertFalse(cache.check_prefetch_progress(_REQ))
+                self.assertEqual(
+                    cache._storage_prefetch_wait[_REQ].timer.started_at, 100.0
+                )
+                self.assertEqual(cache._storage_prefetch_wait[_REQ].timeout_s, 2.0)
+                # A shorter hit cannot reduce the original four-page allowance.
+                operation.hash_value = ["hit"]
+                with patch("time.perf_counter", return_value=101.5):
+                    self.assertFalse(cache.check_prefetch_progress(_REQ))
+                    cache.revoke_pending_prefetch(_REQ)
+                    cache.prefetch_from_storage(_REQ, 0, list(range(4)))
+                    refetch = cache.ongoing_prefetch[_REQ].operation
+                    self.assertIsNot(refetch, operation)
+                    self.assertFalse(cache.check_prefetch_progress(_REQ))
+                self.assertEqual(
+                    cache._storage_prefetch_wait[_REQ].timer.started_at, 100.0
+                )
+                self.assertEqual(cache._storage_prefetch_wait[_REQ].timeout_s, 2.0)
+                with patch("time.perf_counter", return_value=102.1):
+                    self.assertTrue(cache.check_prefetch_progress(_REQ))
+                self.assertTrue(refetch.deadline_expired)
+                self.assertNotIn(_REQ, cache.ongoing_prefetch)
+                cache.storage_prefetch_retries.refetch(_REQ.rid)
+                cache.prefetch_from_storage(_REQ, 0, list(range(8)))
+                self.assertNotIn(_REQ, cache.ongoing_prefetch)
+                self.assertFalse(cache.storage_prefetch_retries._pending)
+                cache.finish_storage_prefetch_admission(_REQ, 0, None)
+                self.assertFalse(cache._storage_prefetch_wait)
+                cache.prefetch_from_storage(_REQ, 0, list(range(8)))
+                with patch("time.perf_counter", return_value=200.0):
+                    self.assertFalse(cache.check_prefetch_progress(_REQ))
+                self.assertEqual(
+                    cache._storage_prefetch_wait[_REQ].timer.started_at, 200.0
+                )
+                self.assertEqual(cache._storage_prefetch_wait[_REQ].timeout_s, 2.0)
+                cache.release_aborted_request(_REQ)
+                self.assertFalse(cache._storage_prefetch_wait)
+
+    def test_timeout_preserves_complete_kv_with_pending_sidecar(self):
+        """A lapsed budget must not cut a read whose KV already landed and
+        only waits on a sidecar: cutting it would salvage nothing."""
+        for mode in ("buffer_only", "cache"):
+            for remaining_pages in (0, 2):
+                with self.subTest(mode=mode, remaining_pages=remaining_pages):
+                    cache, operation = _timeout_fixture(mode)
+                    with patch("time.perf_counter", return_value=100.0):
+                        self.assertFalse(cache.check_prefetch_progress(_REQ))
+                    operation.hash_value = ["hit"] * remaining_pages
+                    operation.host_indices = torch.arange(remaining_pages * 2)
+                    operation.completed_tokens = remaining_pages * 2
+                    operation.pool_transfers = [PoolTransfer(name=PoolName.SWA)]
+                    operation.pool_transfers_done = False
+                    with patch("time.perf_counter", return_value=200.0):
+                        self.assertFalse(cache.check_prefetch_progress(_REQ))
+                    self.assertFalse(operation.deadline_expired)
+
+    def test_stop_policies_distinguish_deadline_from_storage_failure(self):
+        """Only the timeout policy marks a deadline cut; a storage failure
+        under any policy terminates without the deadline flag."""
+        for policy in ("timeout", "wait_complete", "best_effort"):
+            for failed in (False, True):
+                with self.subTest(policy=policy, failed=failed):
+                    cache, operation = _timeout_fixture(policy=policy)
+                    operation.hash_value = ["a", "b", "c", "d"]
+                    operation.host_indices = torch.arange(8)
+                    operation.completed_tokens = 2
+                    cache._handle_prefetch_result = Mock()
+                    with patch("time.perf_counter", return_value=100.0):
+                        cache.check_prefetch_progress(_REQ)
+                    if failed:
+                        operation.mark_terminate()
+                    with patch("time.perf_counter", return_value=200.0):
+                        self.assertEqual(
+                            cache.check_prefetch_progress(_REQ),
+                            failed or policy != "wait_complete",
+                        )
+                    self.assertEqual(
+                        operation.deadline_expired, policy == "timeout" and not failed
+                    )
+                    if policy != "timeout":
+                        self.assertFalse(cache._storage_prefetch_wait)
+
+    def test_metric_episodes_do_not_restart_the_timeout(self):
+        """Closing a wait-metric episode on readiness must not restart the
+        timeout budget: a refetch keeps the budget until admission."""
+        for enable_metrics in (False, True):
+            with self.subTest(enable_metrics=enable_metrics):
+                cache, _ = _timeout_fixture()
+                stats = SchedulerReqTimeStats(
+                    enable_metrics=enable_metrics, metrics_collector=Mock()
+                )
+                stats.set_wait_queue_entry_time(99.0)
+
+                def poll(now):
+                    with patch("time.perf_counter", return_value=now):
+                        ready = cache.check_prefetch_progress(_REQ)
+                        stats.observe_storage_prefetch_ready(ready)
+                    return ready
+
+                self.assertFalse(poll(100.0))
+                self.assertFalse(poll(100.5))
+                # Readiness closes a metric episode; a subsequent refetch must
+                # retain the timeout budget until the request is admitted.
+                cache.revoke_pending_prefetch(_REQ)
+                self.assertTrue(poll(101.0))
+                cache.prefetch_from_storage(_REQ, 0, list(range(8)))
+                self.assertFalse(poll(101.5))
+                self.assertTrue(poll(102.1))
+                self.assertTrue(cache._storage_prefetch_wait[_REQ].expired)
+                # Post-merge req_time_stats restructure: the scheduler-side
+                # export moved to to_output_time_stats() (None when metrics
+                # are off), carrying the same storage_prefetch_wait episode sum.
+                out = stats.to_output_time_stats()
+                if enable_metrics:
+                    self.assertIsNotNone(out)
+                    self.assertAlmostEqual(out.storage_prefetch_wait, 1.6)
+                else:
+                    self.assertIsNone(out)
 
 
 if __name__ == "__main__":
