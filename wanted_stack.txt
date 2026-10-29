@@ -509,7 +509,10 @@
 # =============================================================================
 #
 # S-RACE  (STACK-OWNED, fork test)  ADOPT THE #38355 REFUTATION AS A
-#         REGISTERED CPU TRIPWIRE -- ** QUEUE: SMALL FORK-OWNED COMMIT,
+#         REGISTERED CPU TRIPWIRE -- ** SEE THE SECTION-R S-RACE STATUS
+#         UPDATE: an implementation commit ALREADY EXISTS (port-srace
+#         a2da29a726); this item is now rebase-and-register, not author. **
+#         -- ** QUEUE: SMALL FORK-OWNED COMMIT,
 #         DO IT AFTER MERGE #5 LANDS (do not interleave it with merge
 #         conflict resolution; it is a test-only file).** Source draft (not
 #         yet in-tree): /tmp/opencode/race38355/test_chunked_radix_insert_
@@ -564,6 +567,16 @@
 #  = full_slot // ratio, "lifecycle rides the full-KV allocator and radix
 #  tree"), so the QSA-amplification claim reduces to the full-KV question
 #  answered in (iii). Tripwire: S-RACE above. State: EXCLUDED(MISDIAGNOSED)
+#  S-RACE STATUS UPDATE, same day: ** THE IMPLEMENTATION ALREADY EXISTS AS
+#  AN IN-FLIGHT WORKER COMMIT -- port-srace @ a2da29a726 (2026-10-29 00:37,
+#  "[Test] mem_cache: pin chunked publish/release slot disjointness against
+#  #38355"): ONE new file test/registered/unit/mem_cache/
+#  test_chunked_publish_release_disjointness.py, 366 lines, branched off
+#  e2c44b2984 (the entry-279 landed sha), with ZERO file overlap against
+#  the whole 275-295 diff (verified -- it rebases onto the 295 tip
+#  cleanly). ** DO NOT RE-AUTHOR THE TEST: the S-RACE task is now LAND-
+#  REBASE plus the T1/T3-CPU-vs-T2-GPU registration split above, AFTER
+#  merge #5. **
 #  #33029 (open STALE, head 54c6ee41fa, "[Fix] HiCache prefetch progress TP
 #  all_reduce deadlock") -- ** NOT-NEEDED, CLOSED 2026-10-29 from the
 #  FAM-A3b queue.** Its edit target is the mamba_radix_cache.py file
