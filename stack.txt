@@ -1,6 +1,10 @@
 # stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
 #
-# STACK: qwennext-stack-312+merge5-b4-2026-10-29 (main @ 2a6c204570, MERGE #5 TAKEN -- see synced; B3+B4 RE-PLANTED, entries 311/312)
+# STACK: qwennext-stack-315-2026-10-29 (main @ 2a6c204570, MERGE #5 TAKEN + ALL RE-PLANT BATCHES LANDED -- entries 310-315)
+#   ** MERGE-ERA-CLOSED 2026-10-29 (session 3 / B6): B1-B6 ALL CLOSED, B2/B3/B4/B5 marker
+census ZERO, damage driven to env-class + documented survivors; the branch is BOOT-READY
+pending OPERATOR execution of the BOOT_DELTA first-boot choreography (see CAVEATS top
+current-state bullet + entry 315). **
 #   main+pr36787+pr37275+pr38144+pr38209+pr36644+pr39862+pr39809+pr39893+local_hicache_qsa_fixes
 #   +pr39614+pr39978+pr40002+pr39065+pr40501+pr40175+pr40362+pr39391+pr37061+pr39333+pr33778
 #   +pr38977+pr39977+pr40480+pr39880+pr40235+pr39807+cpu-triage+boot-fix+plan_updates_perf
@@ -36,7 +40,24 @@
 #    pricing reconciliation (177/266/268/269/270), spec cluster (eagle_decode
 #    103 + replayssm 102/120 + grammar-mask 195), misc markers+runner-zone
 #    merge damage -- 5 integration commits, see entry 312)
-#   (entries 1-312; *=squash/ported, see commit messages. 10-10 added
+#   +merge5-b5-2026-10-29(B5 moe reconciliation: fold probe #44993 re-adapt,
+#    flashinfer_cutlass #44993/#44994 FOLD into the fork-owned file (pair_
+#    w2_weight field -- boot-integrity), entry-230 warn-once + b12x arm re-
+#    plant, qwen4_exp PLE router-API re-homes, gdn replayssm EXTEND half in
+#    full, #45092 wrapper reuse + #43524 scale arms + #43356 spec-workspace
+#    pool pair, qsa folds incl. the CP K/V side-stream prefetch machinery,
+#    SM120-FP8-KV trtllm fail-loud -- 5 commits, see entry 313)
+#   +merge5-b2-2026-10-29(B2 test re-home: kits CPU honest-skip gate (the
+#    1056F storm -> skips), URC 357-line fork body into the topic files +
+#    kits, hybrid_pool_assembler 5 fork classes, page_interleave 9 fork
+#    cases (+ take_decode rotation-forward PRODUCTION FIX), fused_moe_-
+#    triton_config 2-case restore, pp_sync_drain recovered, qsa_kv_pool
+#    KEEP audited, 29 markers -> 0 -- 3 commits, see entry 314)
+#   +merge5-b6-2026-10-29(B6 closeout: server_args 7F->0F field-order re-
+#    pins, C0a/Section-C closure + parked-queue re-triage (RELEASED: #42689;
+#    HELD: KV route), CAVEATS master re-pin table at the 315 tip, graph_
+#    pool_borrow honest skip, marker census -- see entry 315)
+#   (entries 1-315; *=squash/ported, see commit messages. 10-10 added
 #   entries 157-161: parser batch A (Qwen3-Coder tool-call fixes + sampling
 #   upper bounds), on top of upstream merge #3 (see synced). 10-10b added
 #   entries 162-166: SM120 batch B (#42863 PCIe-IPC vocab gathers, #42566
@@ -373,6 +394,11 @@
 #          RE-APPLY the fail-safe reads (upstream reads model_config raw
 #          and still leaves `auto` on unreadable expert lists).
 #          FIFTH MERGE TAKEN (2026-10-29, session 1): main @ ** 2a6c204570 **
+#          [MERGE ERA COMPLETE -- SESSIONS 1/2A/2B/3 ALL DELIVERED: session 1 the
+#          merge+B1 (310); 2A B3 mem_cache re-plant (311); 2B B4 scheduler re-plant
+#          (312); 3 B5 moe (313) + B2 test re-home (314) + B6 closeout (315). The
+#          102-marker plan executed to ZERO for B2-B6; B1's 15 diffusion markers
+#          survive as the documented exception (entry 315).]
 #          (+1,120 commits since 12dc623102) merged as ** ae6ee527ba ** on
 #          top of the 309 tip 3cdba955a4; follow-up B1 a688f11ac9 (LTX docs
 #          fold; diffusion battery env-class failures recorded). CONFLICTS:
@@ -418,6 +444,43 @@
 #          the ban itself STAYS until sessions 2B/3 + operator judgment.]
 #          [B4 LANDED -- entry 312; managers+spec damage closed to ENV-class
 #          residue; the ban STAYS (B2/B5/B6 + operator judgment remain).]
+# updated: 2026-10-29 (entries 313-315): MERGE-5 SESSION 3 -- BATCHES B5, B2 AND THE
+#          B6 CLOSEOUT. THE MERGE ERA IS CLOSED. B5 (313): all 23 moe-zone markers
+#          consumed -- 4 true re-plants (entry-230 canary+b12x arm, layer.py routed-
+#          defer pair, qwen4_exp PLE reads, gdn replayssm extend half), 2 boot-
+#          integrity folds (cutlass pair_w2_weight field; SM120 FP8-KV fail-loud),
+#          the #44993/#44994 fold into the fork-owned flashinfer_cutlass, the qsa
+#          folds (CP K/V prefetch machinery -- qwen4_exp calls it: dead-on-arrival
+#          as merged), 175/208/233 flashinfer re-plants + the SPEC-WORKSPACE POOL
+#          PAIR (B3-8's dedupe was wrong-direction; its test proves the route), and
+#          an honest per-file env baseline re-derivation (195F damage -> 194F with
+#          mem_pool_ep's 1F CLOSED and mega's 1F now an honest skip). B2 (314): the
+#          kits build_fixture CPU honest-skip gate collapses the 1056F URC-split
+#          storm to skips at zero coverage cost (P-axis EXACTLY preserved: 1861 ->
+#          1885 with the re-homes), the 357-line urc-unittest fork body re-homed
+#          into the topic files (+kits), the 5 hybrid_pool_assembler fork classes,
+#          9 page_interleave fork cases -- which CAUGHT A LIVE PRODUCTION REGRESSION
+#          (take_decode dropped the rotation-base forward: sharded-QSA decode died on
+#          the allocator's own assert as merged; FIXED), the fused_moe_triton_config
+#          2-case restore, pp_sync_drain RECOVERED not just recorded, the qsa KEEP
+#          audit, a second production catch (the PLE graph-break must return None
+#          under upstream's tightened wrapper), the mamba_cache_kl server-boot gates
+#          (they were BOOTING on CPU runs), and 29/29 markers -> 0. B6 (315):
+#          server_args 7F->0F (all test-side; fork defaults verified intact; the two
+#          fork fields PROMOTED to explicit slots in arg_groups/field_order per its
+#          own append rule), C0a re-affirmed CLOSED and Section C driven to zero
+#          open code items, the full parked-queue re-triage against the merged tip
+#          (#42689 RELEASED; #44342-family/#46153/#41624/#37106/#42660/#42525/
+#          #45391/#32479/#44462/#35617/#39845-class STILL-OPEN with heads+conflict
+#          state on record; #43356/#46452/#43240/#43471 HOLD STANDS -- step-1
+#          precondition met; #44732's purge premise lapsed), the CAVEATS master
+#          re-pin table dated at this tip (incl. the cargo UNVERIFIED-debt, explicit),
+#          #45090 downgraded to check-nice-to-have with reasoning, the marker census
+#          (B2-B6 ZERO; the 15 B1 DIFFUSION markers CONSCIOUSLY SURVIVE with per-
+#          family reasons -- the route is unmeasurable from this CPU seat; replay
+#          patches on record), BOOT_DELTA.md refreshed to the 315 reality (needles,
+#          241-gate obsolescence, trailing_endpoint-17P PRE-BOOT gate, §6 closure),
+#          and the boot-ban disposition now a single operator judgment.
 # updated: 2026-10-29 (entry 312): MERGE-5 SESSION 2B -- BATCH B4 RE-PLANT
 #          COMPLETE (5 integration commits, 9bd9007c81..5cde7a5ede, this docs
 #          commit above). All **23** TODO(merge5) B4 markers consumed (the
@@ -8932,6 +8995,328 @@ STACK, IN BUILD ORDER (bottom first)
 
       # absorption).
 
+        313. bea28f0839..a8a6c62e33  STACK-OWNED  ** MERGE-5 B5: moe/quant/dispatcher reconciliation (SESSION 3, BATCH B5) **
+      # ALL 23 B5 MARKERS CONSUMED (census B5=0; the tsv's 34-row file map
+      # covered -- verdict per marker below). Five cluster commits:
+      # B5-1 bea28f0839 fold-contract probe re-adapted to #44993's 2-ARG
+      #   predicate: _fuses_routed_scaling_factor_in_topk(quant_method,
+      #   runner_backend) -- the probe now mirrors the LAYER's call shape
+      #   (method.get_moe_runner_backend -> explicit arg), every "what we
+      #   believe" assertion preserved, +NEW lora_marlin pin for the widened
+      #   exclusion. 6P/2F -> **9P** (8P-or-new-count green, as asked).
+      # B5-2 b3207c799e THE THREE BOOT-INTEGRITY ITEMS: (i) flashinfer_cutlass
+      #   FOLD: #44993/#44994's in-range delta woven INTO the fork-owned file
+      #   (pair_w2_weight FIELD -- modelopt_quant:3826 PASSED it: unexpected-
+      #   kwarg TypeError on the CUDA FP4 cutlass route as merged, B3-class;
+      #   the sm120 native MTP-MMA route + fail-loud paired guard; the all-
+      #   gather Standard delegation; the tune-helper had already arrived at
+      #   the merge). b12x route + D-3 constants untouched. (ii) standard.py:
+      #   entry-225's rescue VERIFIED-ABSORBED (#44993 keys mapping off the
+      #   BUILT runner), the experimental_sgl_trtllm loss = UPSTREAM'S OWN
+      #   churn (is_flashinfer_trtllm now COVERS the value by design --
+      #   proven via mem_pool_ep's green re-pin), the b12x arm RE-PLANTED
+      #   (fork-only route; EP>1 misroute without it) + the entry-230
+      #   warn-once canary re-anchored on the new shape (published-vs-built
+      #   convention divergence; fp4-allgather still keys off published).
+      #   (iii) qwen4_exp.py BOTH old-API reads re-homed onto layer_router
+      #   NGRAM_PART (get_ngram_context died with #46970..#46991 --
+      #   AttributeError-class; .context via the part view; ONE read feeds
+      #   both consumers) + its packed_short_conv test seam.
+      # B5-3 a8a6c62e33 moe-core + kernels census: topk.cu(28) ABSORBED-by-
+      #   rewrite (legacy_radix_topk::select gates coarse_population BEFORE
+      #   staging -- the fork's post-staging overflow detect is structurally
+      #   subsumed); attention/utils(194) + elementwise(166) + kvcache(186)
+      #   VERIFIED-PRESENT (function re-sited with all consumers / clamp
+      #   intact on the guard_or_false refactor / the merge's own
+      #   store_cache_fp8 graft); hash_topk+topk.py(296-300) VERIFIED-PRESENT
+      #   (all four wave PRs MERGED upstream and arrived IN RANGE -- git-log-
+      #   proven ancestors; every fork symbol counted); flashinfer_trtllm(165)
+      #   SUPERSEDED (upstream's own deferred rewrite, fail-LOUDER; the #6077
+      #   autotune buffer deliberately NOT restored -- old-shape perf
+      #   workaround, defer+routed is not our production arm); mega_moe(296)
+      #   wrapper redirect RE-PLANTED; layer.py(165/206/239) routed-defer
+      #   PROPERTY RE-PLANTED (upstream's packed_nvfp4_routed covers TRTLLM
+      #   only) + the dsv2 format-ternary consumer restored to the 309 shape.
+      # B5-4 a8a6c62e33 attention zone: gdn_backend RE-PLANTED IN FULL (the
+      #   replayssm EXTEND fold, lossless (u,k,g) tuple plumbing + tree-
+      #   refusal assert + kernel guard, VERIFY_NUM_STAGES pin -- B4's
+      #   spec_utils twins verified live, the hybrid accept-side twin
+      #   survived); flashinfer_backend: 233 WRAPPER-REUSE RE-PLANTED on both
+      #   per-bs dicts (graph_variants double-capture is ACTIVE on this stack
+      #   -- the wrong-output class was back), 208's None-if-workspace scale
+      #   arms RE-PLANTED at both forward_extend consumers (the merged pool
+      #   global-scales in dequantize_prev_kv -- unconditional k_scale_float
+      #   double-scaled), 175's spec-workspace SPLIT re-planted incl. the
+      #   MHATokenToKVPool method + the HybridLinear + SWA delegations --
+      #   ** B3-8's 'no caller' dedupe was WRONG-DIRECTION: the callers are
+      #   this route + its test; upstream's orphaned
+      #   dequantize_speculative_prefix_to_workspace seam is now CONSUMED **;
+      #   trtllm_mha: 64 ABSORBED by layer_router, 178 SM120-FP8-KV fail-loud
+      #   RE-PLANTED; hybrid_linear fold ALREADY-APPLIED (patch dry-run
+      #   proves it; the side-state getattr rides memory_pool's compat
+      #   properties :1721-34); qsa metadata SUPERSEDED (the merged pack-
+      #   kernel path is beyond the window delta), qsa_indexer FOLDED
+      #   (project_qk ensure_cos_sin_cache param -- CP caller TypeError-class
+      #   -- + guarded sizing net at both sites), sparse_attn FOLDED (the
+      #   SLOT_INDICES int64 overflow guard), qwen_sparse FOLDED the CP K/V
+      #   side-stream PREFETCH MACHINERY (qwen4_exp:2614 CALLS prefetch_cp_kv
+      #   -- AttributeError-class dead-on-arrival as merged) + leak guard +
+      #   join + release order + sync-free slot-table + device-built cu_k +
+      #   max_q + upstream's in-place paged fast path WITH a fork FP8 guard
+      #   (our scaled stores need the descale pack loop; unscaled pools take
+      #   the fast path as upstream intends); dsv4 wrapper redirect; glm5
+      #   fold verified-present.
+      # B5-5 a8a6c62e33 battery red-file attribution: scales 2F = the entry-244
+      #   stub block the merge dropped (kwargs evaluate before the gate --
+      #   restored VERBATIM); fp4_gemm 3F = #44842/#42973 in-range gate
+      #   growth (test re-anchored, beliefs unchanged); round_robin 38F ==
+      #   documented 37 + 1 upstream-grown CUDA case, ALL 'No CUDA GPUs'
+      #   (env).
+      # DAMAGE->AFTER (moe 43-file battery, CVD=9, prod venv): damage
+      #   637P/683S/201F/558sub -> after B5: 650P/684S/195F/560sub -> FINAL
+      #   post-B2 tree ** 650P/684S/194F/560sub **: every F env-documented
+      #   (trtllm 8 == 8, fused_gate 52 == ~52, triton_fused 96 == ~96,
+      #   round_robin 38 ~= 37+1-upstream, mega 1 -> now an honest skip),
+      #   mem_pool_ep 1F CLOSED at 49P. Named gates: standard_dispatcher 12P
+      #   -> 16P -> **21P/45sub** (grew twice upstream, ALL green), overrides
+      #   **121P/1S/210sub EXACT**, kernels_namespace **107P EXACT**, b12x
+      #   **67P/46sub EXACT (entry 247 holds)**, runner_backend 16P, smallm
+      #   28P/66sub, fold probe 9P. Zero GPU, zero boot; the pre-merge honest
+      #   baseline was 573P/682S/195F/444sub -- F PARITY, +77P/+116sub from
+      #   upstream growth + this batch's additions.
+
+        314. e6f2d343fb..125785dc5c  STACK-OWNED  ** MERGE-5 B2: test re-home + the kits CPU honest-skip gate (SESSION 3, BATCH B2) **
+      # ALL 29 B2 MARKERS CONSUMED (27 test + the 2 python/-zone kits
+      # inspection files -- their get_parent_node_id/_build_backup_kv_action
+      # hunks VERIFIED PRESENT: the entry-199 API is live at
+      # unified_tree_core_interface:226 + adapter:1082 + kits :32/:34).
+      # THE HEADLINE FIX: B3 proved the post-merge mem_cache residue is
+      # 1056F of URC-split kits calling get_device() at build_fixture on CPU
+      # -- the split's topic files are CUDA/AMD-CI registered UPSTREAM
+      # (register_cuda_ci stage-b 1-gpu-small), so a CPU run must SKIP, not
+      # fail. ONE gate at the kits' SINGLE device choke point
+      # (fixtures.build_fixture -> pytest.skip when torch.cuda is
+      # unavailable) mirrors the sibling kernels/qsa module convention
+      # WITHOUT deleting coverage: the device-free surfaces keep running
+      # (topic dir 40P/1255S/0F), a GPU seat executes everything. THE DIR
+      # COLLAPSED from 1209F to the PURE ENV SET: ** 1885P/153F/1447S/
+      # 4518sub/2err ** (153F == cargo/torch-sys 130F+2err byte-identical +
+      # no-CUDA ~23F: kv_layer_router/kv_storage_lifecycle/kv_layer_access/
+      # pricing_property/decode_retraction -- the documented classes,
+      # nothing else; P-AXIS EXACTLY PRESERVED at B3's 1861 + 24 re-homed/
+      # recovered cases). NEW DEFINITIVE PIN (the 241-era pins OBSOLETE per
+      # B3; the 295-era 3047S honest-skip reality returns on the S axis).
+      # CARRIED CONTENT RE-HOMED: (1) the 357-line urc-unittest fork body
+      # from the preremove snapshot: the 6-case TestUnifiedRadixCache-
+      # BatchedWriteThrough -> hicache topic (+kits drop_hicache_atexit_pin
+      # translation; B3-3's ONE-fence batched family now has its CPU-visible
+      # contract again), the sidecar storage roundtrip -> the storage SUITE
+      # (register_host_pool_entry + sidecar_pool_specs verified LIVE
+      # production), and the walk-backup/batched-backup H-leaf PAIR ->
+      # insert_walk as a matched pair (the shared _build_host_full_on_path_
+      # h_leaf(batched=) helper extracted VERBATIM; the already-re-homed
+      # twin rewritten onto it 1:1). (2) fused_moe_triton_config's 2 fork
+      # cases (entry 3 tuner-filename contract + entry-235 RTX PRO 6000
+      # config fleet pin) RESTORED SLIM after upstream's own #45672 deleted
+      # the monolith; the CI lint trio all rc=0. (3) hybrid_pool_assembler's
+      # FIVE fork classes re-planted (entry 73/219-era: mamba host-share +
+      # coverage-line + build_pool_entry call-site keywords + host_capacity_
+      # bytes CHECKPOINT-ONLY pin + _Pool/_DevicePool/_fake_mamba_pool
+      # scaffolding) with upstream's OWN pruned pair NOT restored
+      # (byte-identical pre-merge copies -- B4-audit precedent) and the
+      # stale tip stubs that shadowed re-homed fixtures stripped; 44P ->
+      # **52P/36sub** (>= the 295-wave 53P/31sub shape net upstream's
+      # prune). (4) test_qsa_kv_pool KEEP AUDIT: the file is a PURE
+      # SUPERSET -- upstream's single mooncake-scope test (#45672's file
+      # deletion would otherwise have LOST it) + the 5 fork cases (125/200
+      # sharding budget + 285-287 ring); est_time stands. (5) pp_sync_drain:
+      # the lost TestPPSyncDrain class ** RECOVERED, not just recorded **
+      # (_drain_async_work UNCHANGED at unified_radix_cache.py:416 -- both
+      # cases + helpers transplanted, 2P -> 4P). (6) page_interleave's 9
+      # entry-200 fork cases re-homed VERBATIM (helpers byte-identical; 5
+      # module-level sharding/localization/configurator functions + 4
+      # decode methods; upstream's pruned pair NOT restored per audit) --
+      # and the decode pair went RED FOR A REAL REASON: the merged
+      # StaticKVStorage.take_decode lost the rotation-base FORWARD while
+      # PageInterleavePoolAllocator.alloc_decode ASSERTS one base per
+      # request -> ** sharded-QSA decode was dead-on-arrival as merged **;
+      # PRODUCTION FIX RE-PLANTED (take_decode forwards
+      # [req.kv_rotation_base] under shard>1, mirroring take_extend's
+      # existing forwarding + the tip's helper contract). 80P/17F ->
+      # **91P/17F/56sub** (17F == the _1_rust cargo class EXACTLY).
+      # (7) mamba_path_state_cap batched-backup trio + prefill_memory_
+      # budget TestContinuingChunkCap + ngram TestVerifyIntermediateState-
+      # Indices (the padding-rows-reserved-scratch pin -- production helper
+      # verified live in linear/utils) patch-landed clean. (8) mamba_cache_
+      # kl's CLASS-level skipUnless-CUDA gates RESTORED -- without them the
+      # server-boot tests were LITERALLY BOOTING against port 30000 in CPU
+      # runs (4F + a real footgun -> 3S honest); the file's 2 missing fork
+      # lines WERE those gates. (9) elastic + fp4-gemm stub re-anchors
+      # (device='cpu' for the SM120 prewarm read; the #44842/#42973 gate
+      # growth), and the VERIFIED-PRESENT sweep consumed the fused_shared_
+      # expert_scaling/deepgemm_ue8m0/mamba_cache_kl/unified_tri_pool/
+      # multi_tokenizer/mamba_checkpoint_depth/schedule_batch_out_of_place/
+      # mega_moe/moe_fused_gate/page_interleave/test_qsa/qsa_fused_kv_
+      # prepare/req_custom_params/mamba_donated/brp_spec_grammar/
+      # hicache_file_lru/draft_entry_hook/model_fast_paths/fp8_blockwise/
+      # urc-core markers (per-file token audits + battery rc=0 + the
+      # upstream-side dry-runs reporting previously-applied). (10) mega_moe's
+      # documented 1F got an HONEST SKIP at its true dependency (the wrapper
+      # re-exports the layout transform only under an enabled JIT-deep_gemm
+      # config -- gate added on the file's OWN skipUnless pattern): the
+      # belief is intact, GPU seats still run it, CPU seats skip.
+      # SECOND PRODUCTION CATCH of the batch (in B2-3, with the elastic/
+      # prefill-helpers fix): qwen4_exp's _breakable_prepare_ple_batch
+      # RETURNED THE HOLDER while upstream's tightened eager_on_graph (in-
+      # range) asserts every graph break returns None -> every PLE break
+      # replay tripped the assert; fixed to the contract (holder refilled,
+      # None returned), the current holder-based test green.
+      # BATTERY ACTUALS: mem_cache dir above; unified_radix_cache topic dir
+      # 40P/1255S; assembler 52P/36sub; page_interleave 91P/17F-cargo;
+      # storage topic 2P/282S; hicache topic 9P/375S; ngram 10P/6sub;
+      # pp_sync_drain 4P; fused_moe_config 2P; qsa_cp+spec-workspace pair
+      # 71P; path_state_cap 5P/7S; budget 17P+1cargo-F; managers batch green.
+      # Zero GPU, zero boot, sole writer held.
+
+        315. 244a992339..(docs)  STACK-OWNED  ** MERGE-5 B6: final re-pins, C0a, CAVEATS, census, queue re-triage, BOOT_DELTA -- **MERGE ERA CLOSED** (SESSION 3, BATCH B6) **
+      # (1) SERVER_ARGS 7F -> 0F (244a992339): all seven TEST-SIDE, each
+      #   verified individually -- 5 index-shift subtests (upstream's
+      #   in-range append block lands BEHIND the fork's watermark extension,
+      #   which upstream itself grew to 8 fields at 530-537; the five pinned
+      #   slots moved +3 to 538-542, the positional slice 536->543; slots
+      #   95/96/97 and every earlier pin byte-verified UNMOVED) + the
+      #   builtin-tuple pin (the two fork fields qsa_cache_sharding_size
+      #   @entry 284 + hicache_mamba_size_gb @entry-288-era were riding
+      #   collect_input_fields' unlisted-extension FALLBACK -- position by
+      #   accident; PROMOTED to explicit tail slots per field_order.py's own
+      #   documented append rule, order identical, fork defaults VERIFIED
+      #   intact: 1 / None). 459P/7F/271sub -> **461P/0F/276sub**. Plus
+      #   f5c8a9ea23: test_graph_pool_borrow's CPU honest-skip -- upstream's
+      #   OWN sibling pattern (the file gates its device-dependent cases at
+      #   :242/:344/:456/:591/:632/:671 and missed this one; graph_pool_-
+      #   borrow_enabled's is_cuda() short-circuit makes it CPU-impossible;
+      #   the file is CUDA-CI registered) -- PROVEN merge-era (fails
+      #   identically at ae6ee527ba in a detached checkout; another dir
+      #   session 1's checkpoint battery skipped, same class as B4-5's
+      #   runner-zone find). unit/model_executor dir finally PINNED:
+      #   **517P/0F/18S/301sub**.
+      # (2) ENVIRON/C0A: the environ.py union landed COMPLETE at the merge
+      #   (B6 carries ZERO code markers -- census confirms). C0a CLOSED (its
+      #   arrival shas recorded at entry 310: #37625@c5bf3aafbc, #39741->
+      #   #37941@86f4ede4fb, #44849@3fc08b939a [--enable-hicache alias now
+      #   EXISTS], #39727@9ea5472833 OPT-IN verified; #43927 landed ahead as
+      #   entry 259). ** SECTION C NOW CARRIES NO OPEN CODE ITEMS:
+      #   C1/C2/C3/C4/C5/C9 CLOSED against batch evidence (arrival shas
+      #   git-log-proven in 12dc623102..2a6c204570); C6's PR ARRIVED
+      #   in-range @b74fd392e1 (B4 re-planted the gdn half) leaving ONLY its
+      #   named first-boot MEASUREMENT remainder; C10's riders annotated
+      #   item-by-item (#44029/#44280 -> B2's page_interleave re-pin,
+      #   #46543 -> B5-2 fold + B2-3 return-None contract, #45559/#46674 ->
+      #   the cargo UNVERIFIED-debt carried below, #45090 downgraded per (2c)
+      #   -- the rest were merge-#5 ANNOTATION asks, discharged). **
+      #   (2c) #45090 OPERATOR CHECK DOWNGRADED check-required ->
+      #   check-nice-to-have, reasoning ON RECORD: #45090 arrived in-range
+      #   @15e8e687db and REMOVED SGLANG_ENABLE_UNIFIED_RADIX_TREE from
+      #   environ.py -- the env is GONE from the module, so any /root harness
+      #   export is now INERT, not load-bearing; the check protects nothing
+      #   anymore (upstream's own docs snippets deepseek-v4.jsx/glm-5.2.jsx
+      #   still export it upstream-side; harmless against this tree).
+      # (3) CAVEATS MASTER RE-PIN TABLE dated at the 315 tip -- see the
+      #   'MERGE-#5 CLOSEOUT RE-PIN (315 tip)' bullet: managers
+      #   1056P/2F/9S/474sub (B4 pin HOLDS -- re-measured EXACT), spec
+      #   389P/0F/21S/242sub (+ngram re-home; the ONE ordered dflash_mla
+      #   flake sighting recorded, B4-debt-4 pointer), mem_cache NEW post-B2,
+      #   moe 43-file post-B5, server_args FINAL, distributed 156P/1S/35sub
+      #   GREEN (entry-310 row holds), model_executor NEW, observability +
+      #   function_call re-pinned (678P/5F env == damage reading), qsa set,
+      #   b12x 67P/46sub EXACT, dispatcher/overrides/probe, kernels_namespace
+      #   107P, ** cargo UNVERIFIED-debt EXPLICIT ** (932P pin carries
+      #   unverified from this seat's torch-sys/libtorch gap -- run
+      #   `cargo test -p sglang-radix-tree` on a matching-libtorch seat;
+      #   FIRST thing to trust-check re L3 rust behavior on the boot).
+      # (4) MARKER CENSUS: tree-wide grep TODO(merge5): B2/B3/B4/B5/B6 =
+      #   ** ZERO ** each. SURVIVORS: exactly the 15 '(batch B1)' markers,
+      #   ALL in python/sglang/multimodal_gen/** (the 13 files named below),
+      #   CONSCIOUSLY LEFT with one shared reason: the DIFFUSION runtime has
+      #   NEVER executed at this seat (the imageio-broken import chain is
+      #   B4-5-documented), its batteries are import-dead on CPU, and
+      #   token-audit shows their fork content genuinely NOT-present
+      #   (launch_server 15%, longcat 21%, wanvideo 17%, disagg 6%, gpu_cases
+      #   0%, flux_2 89% with the remaining misses being the REAL XPU fast-
+      #   path + SAGE_ATTN content -- not drift) -- a blind patch-add would
+      #   plant UNVERIFIABLE code into the serving tree's dead zone. THE
+      #   REPLAY ROUTE is on record: each marker names its entries +
+      #   replant/ patch; run WITH a bootable diffusion battery. Families:
+      #   disagg (orchestrator/scheduler_mixin/launch_server/server_args/
+      #   disagg/gpu_cases/test_disagg_server), dits (flux_2/longcat_image/
+      #   wanvideo), pipelines (composed_pipeline_base/parallel_executor/
+      #   denoising/minimax_h3 denoising), lora (test_lora_pipeline).
+      #   NOTHING in the LLM serving path carries merge debt -- the merge
+      #   era closed with 15 DOCUMENTED diffusion markers, and 15 only.
+      # (5) PARKED-QUEUE RE-TRIAGE (full table + per-block tags in
+      #   wanted_stack.txt; verdicts one line each): #42689 **RELEASED-BY-
+      #   MERGE** (@7a632cf998, in-range); #44342 **STILL-OPEN** (gh OPEN,
+      #   head 98bfcbd450 unchanged, NOT in range -- and post-#46970x its
+      #   once-auto-merging files now conflict); #43356/#46452/#43240/#43471
+      #   **HOLD STANDS** (operator binding; all OPEN upstream, none in
+      #   range; the record's step-1 'MERGE #5 lands first' is NOW MET --
+      #   re-visit only with the post-merge PCIe-IPC measurement); #46153
+      #   **STILL-OPEN/CONFLICTING**; #41624 **STILL-OPEN**; #37106
+      #   **STILL-OPEN/STALE** (head unchanged, CONFLICTING); #42689 done
+      #   above; #42660/#42525 **STILL-OPEN** (heads unchanged); #45391
+      #   **STILL-OPEN/CONFLICTING** (head moved fcd0805a03); #32479
+      #   **STILL-OPEN/CONFLICTING**; #44462 **STILL-OPEN** (queue position
+      #   'NEXT' stands, now on the merged base); #35617 **STILL-OPEN**
+      #   (entry-302 landing narrowed its gap); #39845-class (HiCache watch
+      #   series #39845/#39856/#39745/#39747/#39395/#40512/#40576)
+      #   **STILL-OPEN-WATCH**, none in range; #46191 **STILL-OPEN-WATCH**
+      #   (re-evaluate against the LANDED ring shape -- B2's KEEP audit
+      #   documents it); #44732: its 'one purge if done WITH merge #5'
+      #   premise LAPSED (the merge completed without it) -- later execution
+      #   costs the SAME single purge once; operator scheduling call, no
+      #   penalty either way.
+      # (6) BOOT_DELTA.md refreshed to the 315 reality: §3n line-cites moved
+      #   to the MERGED hicache_storage.py (_build_config_suffix :783-792,
+      #   _init_config_suffix :803, model fallback :867 -- #39727 anti-
+      #   needle RE-VERIFIED at merged code, OPT-IN/legacy-default naming
+      #   intact, no purge expected); trailing_endpoint **17P = PRE-BOOT
+      #   GATE** added to §3(m) (8P/9F was the damage reading; B3 proved
+      #   17P, B4/B5/B2 re-verified); the entry-241 CPU build_fixture gate
+      #   recorded **OBSOLETE** (B2's kits gate replaces it; 3047S lives on
+      #   as the new pin's S axis); NCCL needle UNCHANGED (still current);
+      #   §3(l) per-pool gauges + §3(k) default-ON watches stand as the boot
+      #   expectations; 'no tactic=-1' stays REMOVED (§3o, entry-259 rule);
+      #   S-EXT1=304/LLGUARD=308/ENVREG=309 landing labels + the [AR]
+      #   PCIe-IPC=true/LL=false needle already correct; §5 gained the
+      #   310-315 read-against-merged warning; §6 REWRITTEN: MERGE #5 DONE,
+      #   ban disposition = this entry + the CAVEATS all-batches-closed
+      #   declaration, operator scheduling is the only remaining gate.
+      # (7) HEADER -> **qwennext-stack-315-2026-10-29** with the MERGE-ERA-
+      #   CLOSED line + the b5/b2/b6 wave blocks + the session-3 updated:
+      #   block; tip line: sessions ran 53d4eae8c7 -> this commit (12
+      #   commits: bea28f0839 b5-1, b3207c799e b5-2, b8f308c6a5 b5-3,
+      #   b9c8efc81d b5-4, a8a6c62e33 b5-5, e6f2d343fb b2-1, d9346afc06
+      #   b2-2, 125785dc5c b2-3, 244a992339 b6-1, a4b8e21c6d b6-2,
+      #   f5c8a9ea23 b6-1b, docs commit below docs). NEVER pushed; tree clean at every
+      #   commit boundary; zero GPU; zero boots; sole writer (B3/B4 zones
+      #   diff-clean except the two production seams this session NAMED and
+      #   fixed: memory_pool/swa/spec-workspace pair + static_kv_storage
+      #   take_decode forward + qwen4_exp return-None).
+      # BOOT-READINESS STATEMENT (the question entry 310's OWED line asked):
+      #   YES -- the branch is boot-ready PENDING OPERATOR EXECUTION of the
+      #   BOOT_DELTA first-boot choreography: §1a cold-autotune sequencing,
+      #   the §3 needles (incl. the NEW trailing_endpoint 17P PRE-BOOT gate
+      #   and the §3n stem-snapshot anti-needle), /metrics per-pool gauge
+      #   shape, and the two boot-time MEASUREMENTS C6/entries-263-268 name.
+      #   Honest caveats riding along: cargo UNVERIFIED at this seat (table
+      #   (3)); the ordered dflash_mla flake class (recurrence sighted in a
+      #   two-dir sweep, standalone clean -- B4-debt-4 start-here pointer);
+      #   diffusion merge-debt survives as the 15 B1 markers; the default-ON
+      #   restart watches (#45472/#46643/entry-201) are owed at the FIRST
+      #   restart; #44901-era GPU-window double-scale e2e stays GPU debt
+      #   (entry 298's own text). The merge era is CLOSED.
+
+
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
 ==============================================================================
@@ -9162,8 +9547,21 @@ WATCH LIST (re-evaluate before next sync)
 CAVEATS
 ==============================================================================
 
-  * ** MERGE-#5 ERA -- SESSIONS 2/3 IN PROGRESS (2026-10-29). PRODUCTION BOOT
-    IS FORBIDDEN UNTIL BATCH B3 COMPLETES. ** Hard rule with teeth: the
+  * ** MERGE-#5 ERA CLOSED (2026-10-29, session 3 / batch B6). ALL BATCHES
+    B1-B6 LANDED (entries 310-315). PRODUCTION BOOT READINESS: the FORBIDDEN
+    rule's code halves are ALL MET -- B3's clamp/ordering (17P trailing_
+    endpoint), B4's scheduler/spec closure, B5's moe/dispatcher/cutlass
+    folds + boot-integrity field, B2's kits honest-skip + the two production
+    catches (take_decode rotation forward; PLE return-None), B6's re-pins --
+    the ban is now a SINGLE OPERATOR JUDGMENT: execute BOOT_DELTA §1/§3
+    choreography (cold-autotune sequencing, trailing_endpoint 17P PRE-BOOT
+    GATE, gauges, stem anti-needle) + run the two named boot-time
+    MEASUREMENTS (C6 #45472 flag-off behavior; entries 263/268/201 default-
+    ON watches). ** #45090 DOWNGRADED THIS SESSION from check-required to
+    check-nice-to-have: #45090 arrived in-range (@15e8e687db) and REMOVED
+    SGLANG_ENABLE_UNIFIED_RADIX_TREE from environ.py -- the env is GONE from
+    the module, so any /root harness export is now INERT; the check protects
+    nothing anymore. ** Hard rule with teeth: the
     entry-209 trailing-endpoint clamp (no restorable trailing sidecar +
     deferred{deadline} policy) and the entry-218 write-back ordering live in
     files that TOOK UPSTREAM STRUCTURE at the merge (#46970..#46991 KV
@@ -9183,11 +9581,65 @@ CAVEATS
     at merge time -- first-boot /metrics must show
     hicache_host_pool_{used,total}_tokens{pool}), and #45520 (entry 302)
     arrived with the merge? **NO -- still OPEN upstream, fail-safe layer
-    intact.** Marker census 102 (B1 15 / B2 29 / B3 12 / B4 23 / B5 23);
-    every marker names its batch and its replant patch. [B3 RECOUNT: the tree
-    carried 15 "(batch B3" markers, not 12 (the 3 rust ones were counted
-    outside the Python census); ALL 15 CONSUMED at entry 311 -- B3 markers
-    now ZERO, B2/B4/B5/B6 markers diff-audited intact.]
+    intact.** Original marker plan 102 (B1 15 /
+    B2 29 / B3 15 / B4 23 / B5 23 / B6 0); FINAL CENSUS 2026-10-29: tree-wide
+    grep TODO(merge5) = ** 15, ALL '(batch B1)' DIFFUSION markers in
+    python/sglang/multimodal_gen/** -- consciously left with reasons and the
+    replay route in entry 315(4); B2/B3/B4/B5/B6 markers ALL ZERO. Nothing in
+    the LLM serving path carries merge debt.**
+
+
+  * ** MERGE-#5 CLOSEOUT RE-PIN @ THE 315 TIP (2026-10-29, B6; per-file
+    method, CVD=9, prod venv, PYTHONPATH=python; supersedes the 296-309-tips
+    table above for the named rows; values NOT repeated here UNMOVED) **
+      managers   ** 1056P/2F/9S/474sub ** (B4 pin RE-MEASURED EXACT; 2F =
+        the KNOWN order-dependent test_mm_process_config env pair)
+      spec       ** 389P/0F/21S/242sub ** (B4 388P/238sub + ngram re-home
+        +1P/+4sub; ONE ordered dflash_mla flake sighting in a two-dir sweep,
+        standalone CLEAN -- B4-debt-4 class, start at cross-file runtime-
+        context state if it recurs; 0F at the definitive pin)
+      mem_cache  ** 1885P/153F/1447S/4518sub/2err ** NEW DEFINITIVE (B2):
+        from B3's 1861P/1209F/364S -- the kits CPU gate converts the 1056F
+        URC-split storm to HONEST SKIPS at ZERO coverage cost (P +24 == the
+        re-homed cases exactly); 153F == cargo 130F+2err + no-CUDA ~23F,
+        PURE ENV, nothing else
+      unified_radix_cache topic dir  ** 40P/1255S/0F ** (the honest-skip
+        reading of the same block)
+      moe 43-file  ** 650P/684S/194F/560sub ** (damage 637P/683S/201F/
+        558sub; 194F ALL env-documented: trtllm 8, fused_gate 52,
+        triton_fused 96, round_robin 38 (+1 upstream-grown CUDA case vs the
+        documented 37), mega 1 -> honest skip; mem_pool_ep 1F CLOSED 49P;
+        pre-merge parity was 195F -- zero NEW non-env F)
+      server_args  ** 461P/0F/276sub ** FINAL (damage 459P/7F; all seven
+        test-side, fork defaults verified intact)
+      unit/distributed  ** 156P/1S/35sub ** GREEN (entry-310 row holds)
+      unit/model_executor  ** 517P/0F/18S/301sub ** NEW PIN (never in a
+        damage row; one honest CUDA gate added B6-1b)
+      observability  ** 170P/36S/18sub ** UNMOVED (B3's DI-suite fix holds)
+      function_call  ** 678P/5F/2473sub ** (5F == the deepseek-recipe wheel
+        env class, entry-310 reading; damage == after)
+      qsa set: test_qsa 84P/140S UNMOVED; qsa_cp_unit ** 65P/0F ** (50F
+        damage CLOSED by the CP-prefetch fold); nvfp4_speculative ** 6P/0F **
+        (6F CLOSED); qsa_kv_pool 8P (KEEP audited); mamba_cache_kl 3S honest
+      b12x  ** 67P/46sub EXACT ** (entry 247 holds through the merge era)
+      dispatcher/overrides/probe: standard_dispatcher ** 21P/45sub **,
+        runner_backend ** 16P **, model_overrides ** 121P/1S/210sub **,
+        fold probe ** 9P ** (8P-or-new-count satisfied)
+      kernels_namespace  ** 107P/0F ** (entry-310 union gate holds)
+      trailing_endpoint  ** 17P ** PRE-BOOT GATE (B3 proof; B4/B5/B2 re-
+        verified unmoved)
+      fused_moe_triton_config (restored) 2P; hybrid_pool_assembler ** 52P/
+        36sub **; page_interleave ** 91P/17F-cargo **; pp_sync_drain ** 4P **
+      CARGO sglang-radix-tree  ** UNVERIFIED-DEBT, EXPLICIT: the 932P/0F
+        pin CARRIES UNMEASURED from this seat (torch-sys/libtorch gap byte-
+        identical pre-AND post-merge); RUN `cargo test -p sglang-radix-tree`
+        ON A MATCHING-LIBTORCH SEAT BEFORE TRUSTING L3 RUST BEHAVIOR ON THE
+        BOOT (B3-7 debt #2, now the merge era's only open verification).
+      LINT: check_registered_tests / check_no_bare_pytest_main /
+        check_no_registered_tests_in_package rc=0 (after the fused_moe_
+        config restore + every re-home); ruff F821+E9+format clean on every
+        file this session touched; import sglang proven from the tree at
+        every cluster boundary.
 
   * CPU-BATTERY BASELINES RE-PINNED 2026-10-29 ** AT THE 296-309 TIP **
     (3cdba955a4). SECOND TABLE OF THE SAME 10-29 DAY: this SUPERSEDES the

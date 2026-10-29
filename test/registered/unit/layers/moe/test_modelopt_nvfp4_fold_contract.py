@@ -69,7 +69,9 @@ def _layer_fold_verdict(backend: MoeRunnerBackend) -> bool:
     # Same call shape as FusedMoE.__init__: the method resolves its runner,
     # the predicate receives it explicitly.
     method = _nvfp4_stub(backend)
-    return _fuses_routed_scaling_factor_in_topk(method, method.get_moe_runner_backend(None))
+    return _fuses_routed_scaling_factor_in_topk(
+        method, method.get_moe_runner_backend(None)
+    )
 
 
 class TestFoldPredicateNvfp4Cutlass(CustomTestCase):

@@ -5797,4 +5797,3 @@ def _fuse_deepseek_v4_wqkv_a_pair(
             )
         return q
     return torch.cat([q, kv], dim=0)
-

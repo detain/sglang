@@ -262,4 +262,3 @@ class UnifiedTreeCoreInspector(UnifiedTreeCore, UnifiedTreeCoreInspectionInterfa
         return self._build_backup_kv_action(
             self.node_by_id(node_id), write_back
         ).node_ids
-

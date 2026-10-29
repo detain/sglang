@@ -256,4 +256,3 @@ class TestMambaSpecTruncationKL(MambaCacheKLMixin, DefaultServerBase):
 
 if __name__ == "__main__":
     unittest.main()
-

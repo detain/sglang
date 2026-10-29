@@ -594,4 +594,3 @@ class TestModeloptFp8PerTensorLinear(_LinearBackendCheck):
 if __name__ == "__main__":
     unittest.main()
 
-# TODO(merge5): re-plant entry 176 semantics (batch B2); fork hunks saved /tmp/opencode/merge5-dossier/replant/test__registered__unit__layers__quantization__test_fp8_blockwise_linear_backends.py.fork-hunks.patch

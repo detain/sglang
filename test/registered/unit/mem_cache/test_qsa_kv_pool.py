@@ -213,4 +213,3 @@ def test_pending_state_transfer_item_covers_the_whole_ring(monkeypatch):
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
-

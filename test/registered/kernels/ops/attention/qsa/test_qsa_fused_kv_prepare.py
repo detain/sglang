@@ -560,4 +560,3 @@ def test_defer_expansion_metadata(mode_name, ratio, budget, monkeypatch):
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
-

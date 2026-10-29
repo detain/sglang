@@ -2130,4 +2130,3 @@ class TRTLLMHAAttnMultiStepDraftBackend(FlashInferMultiStepDraftBackend):
         for i in range(self.speculative_num_steps - 1):
             with self._step_writes(inner_fb, i):
                 self.attn_backends[i].init_forward_metadata_in_graph(inner_fb)
-

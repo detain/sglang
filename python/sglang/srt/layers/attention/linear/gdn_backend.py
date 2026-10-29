@@ -1847,5 +1847,3 @@ class GDNAttnBackend(MambaAttnBackendBase):
         )
         # Match the recurrent target_verify output shape (== value.shape).
         return out.reshape(value.shape)
-
-

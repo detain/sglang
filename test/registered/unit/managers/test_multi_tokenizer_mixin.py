@@ -570,4 +570,3 @@ class TestMultiTokenizerMixin(CustomTestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

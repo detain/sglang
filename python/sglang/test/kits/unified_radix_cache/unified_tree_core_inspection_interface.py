@@ -238,4 +238,3 @@ class UnifiedTreeCoreInspectionInterface(UnifiedTreeCoreInterface):
     ) -> list[NodeId]:
         """Build the ordered node list for a device-to-host backup."""
         ...
-
