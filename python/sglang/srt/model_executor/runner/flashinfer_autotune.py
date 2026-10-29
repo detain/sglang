@@ -516,7 +516,15 @@ def maybe_flashinfer_autotune_extend(
         f"({batch_size} seqs x {per_req} tokens).",
     )
     try:
-        run_flashinfer_autotune_forward(mr, forward_fn, run_lm_head=False)
+        # The extend buffers were just allocated zero-filled: the exact
+        # one-expert routing lie autotune_dummy_input_ids fixed for the
+        # decode pass. Same fix, same helper, so the seeded ids stay equal
+        # across ranks; the buffer is zeroed again before the finally frees
+        # it, matching what the fresh-allocation owner expects.
+        with autotune_dummy_input_ids(
+            buffers.input_ids, vocab_size=mr.model_config.vocab_size
+        ):
+            run_flashinfer_autotune_forward(mr, forward_fn, run_lm_head=False)
     except torch.OutOfMemoryError:
         if sync_group is not None:
             # Tuning is collective: this rank has stopped reducing while its

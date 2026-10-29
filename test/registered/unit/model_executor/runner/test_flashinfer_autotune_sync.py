@@ -384,6 +384,95 @@ class TestAutotuneDummyInputIds(CustomTestCase):
             self.assertEqual(ids.unique().numel(), 8)
 
 
+EXTEND_TOKENS = 16384
+EXTEND_SEQS = 256
+
+
+def _ids_seen_by_the_extend_forward(
+    *, buffers_box: list | None = None, fail_forward: bool = False
+) -> torch.Tensor:
+    """Run the EXTEND autotune pass on a fake runner; return ids at the forward."""
+    seen = []
+
+    def _dummy_run(**kw):
+        ids = kw["buffers"].input_ids
+        if buffers_box is not None:
+            buffers_box.append(ids)
+        seen.append(ids.clone())
+        if fail_forward:
+            raise RuntimeError("tuning failed")
+
+    runner = SimpleNamespace(
+        model_runner=SimpleNamespace(
+            canary_manager=None,
+            model_config=SimpleNamespace(vocab_size=VOCAB),
+            is_generation=True,
+            is_draft_worker=False,
+            req_to_token_pool=SimpleNamespace(size=EXTEND_SEQS, max_context_len=8192),
+            attn_backend=SimpleNamespace(extend_dummy_seqs_capped_by_req_pool=True),
+        ),
+        _alloc_dummy_decode_buffers=lambda max_bs, *, num_tokens_per_req, **kw: (
+            SimpleNamespace(
+                input_ids=torch.zeros(max_bs * num_tokens_per_req, dtype=torch.int64)
+            )
+        ),
+        _dummy_run=_dummy_run,
+    )
+    with patch.multiple(
+        autotune,
+        run_flashinfer_autotune_forward=lambda mr, fn, **kw: fn(),
+        max_prefill_buffer_tokens=lambda: EXTEND_TOKENS,
+        get_schedule=lambda: SimpleNamespace(max_prefill_tokens=EXTEND_TOKENS),
+        get_disagg=lambda: SimpleNamespace(disaggregation_mode="null"),
+        get_parallel=lambda: SimpleNamespace(
+            attn_tp_size=1, tp_group=SimpleNamespace(world_size=1)
+        ),
+    ):
+        autotune.maybe_flashinfer_autotune_extend(runner, decode_num_tokens=EXTEND_SEQS)
+    return seen[0]
+
+
+class TestExtendAutotuneDummyInputIds(CustomTestCase):
+    """The entry-176 EXTEND pass must tune on the same seeded rows (#45543).
+
+    Its dummy buffers are allocated fresh and zero-filled, so without the
+    helper every row of the prefill-shaped dummy embedded token 0, the MoE
+    router sent them all to the same experts, and FlashInfer ranked the
+    extend-bucket tactics — now cached under the v2_default key (#44514) —
+    on a pattern no real prefill produces. The pass must reuse the decode
+    pass's helper, not a second implementation.
+    """
+
+    def test_extend_pass_tunes_on_distinct_in_vocab_rows(self):
+        box = []
+        ids = _ids_seen_by_the_extend_forward(buffers_box=box)
+        self.assertEqual(ids.numel(), EXTEND_TOKENS)
+        self.assertEqual(ids.unique().numel(), EXTEND_TOKENS)
+        self.assertTrue(bool((ids >= 0).all()) and bool((ids < VOCAB).all()))
+        # The pass frees its buffers when tuning ends; they are released zeroed.
+        self.assertTrue(bool((box[0] == 0).all()))
+
+    def test_extend_pass_uses_the_same_seeded_ids_as_the_helper(self):
+        # A divergent second seeding implementation would silently retune on a
+        # different (or per-rank-inconsistent) route pattern.
+        expected = torch.zeros(EXTEND_TOKENS, dtype=torch.int64)
+        with autotune_dummy_input_ids(expected, vocab_size=VOCAB):
+            reference = expected.clone()
+        self.assertTrue(torch.equal(_ids_seen_by_the_extend_forward(), reference))
+
+    def test_extend_pass_every_rank_tunes_on_the_same_rows(self):
+        # Ranks reduce their timings per tactic, so they must profile the same routes.
+        runs = [_ids_seen_by_the_extend_forward() for _ in range(2)]
+        self.assertTrue(torch.equal(runs[0], runs[1]))
+        self.assertEqual(runs[0].unique().numel(), EXTEND_TOKENS)
+
+    def test_extend_buffers_zeroed_when_the_forward_fails(self):
+        box = []
+        with self.assertRaises(RuntimeError):
+            _ids_seen_by_the_extend_forward(buffers_box=box, fail_forward=True)
+        self.assertTrue(bool((box[0] == 0).all()))
+
+
 @unittest.skipUnless(torch.cuda.is_available(), "FlashInfer requires CUDA")
 class TestAutotuneCachePhases(CustomTestCase):
     """Loaded target tactics survive draft warmup, unless cache reuse is off."""
