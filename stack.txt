@@ -1,6 +1,6 @@
 # stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
 #
-# STACK: qwennext-stack-309+merge5-2026-10-29 (main @ 2a6c204570, MERGE #5 TAKEN -- see synced)
+# STACK: qwennext-stack-311+merge5-b3-2026-10-29 (main @ 2a6c204570, MERGE #5 TAKEN -- see synced; B3 RE-PLANTED, entry 311)
 #   main+pr36787+pr37275+pr38144+pr38209+pr36644+pr39862+pr39809+pr39893+local_hicache_qsa_fixes
 #   +pr39614+pr39978+pr40002+pr39065+pr40501+pr40175+pr40362+pr39391+pr37061+pr39333+pr33778
 #   +pr38977+pr39977+pr40480+pr39880+pr40235+pr39807+cpu-triage+boot-fix+plan_updates_perf
@@ -27,7 +27,11 @@
 #   +riders2-2026-10-29(pr46127*+pr45923*)
 #   +srace-2026-10-29(S-RACE)
 #   +llguard-2026-10-29(LLGUARD+ENVREG)
-#   (entries 1-309; *=squash/ported, see commit messages. 10-10 added
+#   +merge5-b3-2026-10-29(B3 re-plant: hicache_storage/fast_file, hybrid+manager
+#    controllers, URC clamp/deadline/wait/batching/294-sync, pool_host+swa+
+#    components mamba, memory_pool fp8-store/ring, kv_cache_builder 288/289,
+#    rust bindings+mamba guard -- 9 integration commits, see entry 311)
+#   (entries 1-311; *=squash/ported, see commit messages. 10-10 added
 #   entries 157-161: parser batch A (Qwen3-Coder tool-call fixes + sampling
 #   upper bounds), on top of upstream merge #3 (see synced). 10-10b added
 #   entries 162-166: SM120 batch B (#42863 PCIe-IPC vocab gathers, #42566
@@ -265,7 +269,7 @@
 #   make --enable-mixed-chunk safe and fix the QSA verify ring collision.
 #   * = picked with local modifications, see the entries)
 # branch : qwennext-stack
-# tip    : d76b8d0f45   (MERGE #5 ae6ee527ba + B1 a688f11ac9 + kvcache-registry graft; docs sit above)
+# tip    : 1dc41b2723   (MERGE-5 SESSION 2A: B3 re-plant commits 2a5646b230..1dc41b2723 -- hicache L3/controllers/URC/pools/components/rust; entry 310's merge/B1/kvcache-graft history sits below; docs entry 311 above)
 # base   : upstream sgl-project/sglang main @ 7ad55e4386 ([HiCache] TMA-staged
 #          host<->device KV transfer kernel (sm_90+) (#40278), 2026-09-21)
 # synced : upstream main @ f209e67767 (#39643, 2026-09-28) MERGED IN as
@@ -405,7 +409,35 @@
 #          B5 moe/quant/dispatcher (incl. flashinfer_cutlass flipped fork-
 #          owned -- upstream #44993 hunks are a 95-line FOLD patch, not a
 #          re-plant), B6 environ+C0a+CAVEATS re-pin. PROD BOOT FORBIDDEN
-#          until B3 completes.
+#          until B3 completes. [B3 LANDED -- entry 311; gate 17P proven;
+#          the ban itself STAYS until sessions 2B/3 + operator judgment.]
+# updated: 2026-10-29 (entry 311): MERGE-5 SESSION 2A -- BATCH B3 RE-PLANT
+#          COMPLETE (9 integration commits, 2a5646b230..1dc41b2723, this docs
+#          commit above). All 15 TODO(merge5) B3 markers consumed (merge
+#          census said 12; the tree carried 15 incl. the 3 rust ones --
+#          recount at the merge commit proves 15). THE ENTRY-209 GATE IS
+#          BACK: trailing_endpoint 8P/9F -> 17P/0F AT EVERY CLUSTER CHECKPOINT
+#          AFTER B3-2. unit/mem_cache FULL-DIR RE-PIN under the new layout
+#          (per-file battery, CVD=9, prod venv): 1753P/1351F/364S/4439sub/4err
+#          -> ** 1861P/1209F/364S/4514sub/2err ** -- F -142, err 4->2 (both
+#          B3-caused collection errors cleared: async_ready_sync +
+#          storage_format_tag); the 1209 residue is 100% ENV CLASS by
+#          per-file error taxonomy: 1056F = the upstream URC-split kits'
+#          fixtures.py build_fixture -> get_device() "No accelerator" (entry
+#          310's "the URC split files themselves are GREEN, honest skips"
+#          DOES NOT REPRODUCE -- its own battery log shows core 27P/465F;
+#          the claim is corrected here, the residue is the no-CUDA class,
+#          and the kits' honest-skip DEFECT is B2/kit scope, recorded not
+#          fixed), 130F+2err = the cargo/torch-sys breakage documented
+#          byte-identical at the pre-merge tip, 23F = No-CUDA-gated fork/
+#          upstream tests (kv_layer_router 3F class + kv_storage_lifecycle
+#          9F + kv_layer_access 5F + pricing_property 4F + decode_retraction
+#          2F). ZERO non-env failures remain in the directory. FULL DETAIL:
+#          ENTRY 311. PROD BOOT: the B3 half of the merge-era rule (clamp +
+#          ordering) is PROVEN, but sessions 2B/3 (B2/B4/B5/B6) remain and
+#          the boot ban is NOT lifted by this batch alone.
+#          wanted_stack: NO S-item changed (S-EXT1/S-RACE states untouched;
+#          the #43727-arrival dedupe is a merge-ledger fact, recorded in 311).
 # updated: 2026-10-29 (entries 296-309): FIVE-WAVE INTEGRATION BATCH,
 #          14 picks + 1 integrator rider = 15 code commits, ** ZERO CONFLICTS
 #          AT THE INTEGRATOR ** (every documented union held; nothing
@@ -8433,6 +8465,20 @@ STACK, IN BUILD ORDER (bottom first)
       #     58F, dcp_host_pool 24F, explicit_budget 5F, file-path-unit 5F,
       #     hybrid_storage_sparse 13F, lru_unit, kv_layer_router 3F = NO-
       #     CUDA ENV CLASS, rust_tree_core 2F) = EXPECTED-REPLANT B3.
+      #     [RESOLVED-AT-B3 (entry 311): 1351F -> 1209F, and the residue is
+      #     100% ENV CLASS by per-file taxonomy -- 1056F URC-split kits
+      #     get_device no-accelerator (the "URC split files are GREEN" claim
+      #     in THIS line's own text does not reproduce: this log's own per-
+      #     file rows show core 27P/465F; kits' honest-skip defect = B2),
+      #     130F+2err cargo/torch-sys (byte-identical pre-merge), 23F No-CUDA
+      #     (kv_layer_router class + kv_storage_lifecycle/kv_layer_access/
+      #     pricing_property/decode_retraction). Every named hicache-family
+      #     file in the line above went to ZERO failures: fast_file 58F->0,
+      #     dcp 24F->0, explicit_budget 5F->0, file-path-unit 5F->0,
+      #     hybrid_storage_sparse 13F->0, lru_unit + directory_race +
+      #     ckpt_fence + sidecar_restore + mamba_donated + mamba_value +
+      #     ple_offload + storage_format_tag(err) + async_ready_sync(err)
+      #     ALL GREEN. New pin: 1861P/1209F/364S/4514sub/2err.]
       #   unit/managers    1027P/2F/3S/935sub -> 1009P/81F/9S/412sub/2err:
       #     13 red files, 81F = prefill_adder 39F (#46977 pricing vs fork
       #     arms), dcp_logical 7F, mixed_mamba_track 7F, grammar_mixed_tail,
@@ -8473,6 +8519,11 @@ STACK, IN BUILD ORDER (bottom first)
       #     clamp half is DEAD against the rewritten controllers exactly as
       #     the MERGE-ERA CAVEATS bullet predicts. 8P survive on the
       #     hicache_storage side; B3's completion test = back to 17P.
+      #     [RESOLVED-AT-B3: **17P/0F PROVEN** (B3-2; re-verified standalone
+      #     at the final tree, incl. the two 2-rank gloo cases; and unmoved
+      #     at every cluster checkpoint after). The clamp half lives again in
+      #     the controller against the rewritten structure; entry-218's ONE-
+      #     fence ordering rule + entry-209's decline-and-retry are BACK.]
       #   cargo sglang-radix-tree: UNMEASURABLE -- torch-sys/libtorch build
       #     probe FAILS REPRODUCIBLY at the PRE-MERGE tip too (byte-ident
       #     error in a scratch worktree) = pre-existing ENV breakage from
@@ -8485,6 +8536,143 @@ STACK, IN BUILD ORDER (bottom first)
       # post-merge tip reads 475 '+' (the 31 '-' at the 309 tip stop
       # being reported once origin/main is an ancestor -- tool artifact,
       # NOT a regression: the dedupe facts are the merge's own 1,120-commit
+      # absorption).
+
+        311. 2a5646b230..1dc41b2723  STACK-OWNED  ** MERGE-5 B3: HiCache/mem_cache re-plant (SESSION 2A, BATCH B3) **
+      # THE re-plant of the HiCache/mem_cache layer onto the #46970x structure the
+      # merge took: 9 cluster commits, one per file-cluster, each with its
+      # battery ACTUALS in the commit body (damage-state -> after, per named
+      # file). Sole-writer discipline held: no pushes (branch ahead of
+      # detain/qwennext-stack by the 9 + this docs commit), no GPU execution
+      # (CPU batteries only, CVD=9, prod venv, PYTHONPATH=python), the #46977
+      # scheduler trio (schedule_policy/scheduler/schedule_batch) UNTOUCHED
+      # (B4 zone), and every deleted TODO(merge5) marker was "(batch B3" --
+      # B2/B4/B5/B6 markers intact (diff-audited: 15 removed, 0 foreign).
+      # CLUSTERS: B3-1 2a5646b230 hicache_storage (24,60,209,252,253,254 +
+      #   merge_source_transfers + fast_file _build_config_suffix revival ->
+      #   fast_file 58F->0, dcp 24F->0, unified_key 5F->0, storage-path/race/
+      #   lru green; entry-209's batch_exists_v2 RESTORABLE-SET query was
+      #   ALREADY PRESENT upstream via #41187 -- deduped, not duplicated);
+      #   B3-2 2ea265a099 hybrid_cache_controller (THE CLAMP + fork collective
+      #   layout + reports + 90-shortfall + 199 node_ids + 291/292 + 168
+      #   VERIFIED-PRESENT via staged_write_back 27P) -- ** trailing_endpoint
+      #   17P ** + entry-219 PRODUCER-DICT closure (see DEDUPE below);
+      #   B3-3 95f7325236 unified_radix_cache (deadline family VERIFIED
+      #   ABSORBED; 294 deferred ready-sync PLANTED (async_ready_sync 1err->
+      #   7P), 199/218 batched-backup family VERBATIM incl. the ONE-fence
+      #   writing_check rule, 293 capacity-wait + pending_storage_hits,
+      #   **290(d) aux-staging sized to the ACTUAL endpoint** (sparse 12P/1F
+      #   ->13P/0F), 30 reject-unwind, 253 fold moved to cache_controller);
+      #   B3-4 3bf4920c6a pool_host/group + components/swa (entry-90 shortfall
+      #   x2, #43110) + allocation/runner_ids/unified_memory_pool markers
+      #   CONSUMED AS ABSORBED (static_kv_storage.py:165-230 rotation-bases
+      #   loop; runner_ids num_token_blocks AUTO-SIZED upgrade; lossless
+      #   reject moved to attention_hook:568) + the node_ids=None call-shape
+      #   repair + page_interleave fail-loud re-anchor (79P/18F->80P/17F, the
+      #   17F = the _1_rust cargo class);
+      #   B3-5 e1e90780e1 MambaComponent (30 fencing FULL incl. poison via
+      #   the widened _evict_component_and_detach_lru, 90 staging shortfall,
+      #   196 misaligned guard + mamba_value_seqlen, 197 skip-checkpoint +
+      #   recorder, 198 MambaCowAllocError raise -- **CROSS-NOTE B4: the
+      #   prefill-admission CATCHER for it is still missing in managers;
+      #   test_scheduler_hybrid_ssm_admission_retry awaits it**, 216 VERIFIED
+      #   ABSORBED -- donated 13P/8F->17P/0F/14sub >= 295 pin 16P, fence
+      #   12P/3F->15P EXACT, value_alignment 3P);
+      #   B3-6 547c458c22 kv_cache_builder (288 explicit_host_memory_budget
+      #   HOOK -- the context manager survived in pool_host/base.py:154, only
+      #   its call site was dropped; 289 the SIDECAR draft-budget CALL SITE --
+      #   the helpers were grafted but the block that calls them was NOT, the
+      #   "Adjusting --hicache-size" boot line was unreachable; explicit
+      #   0P/5F->5P, mamba_budget 1P/5F->4P via stub re-anchor);
+      #   B3-7 7a28dc9e4a rust sglang-radix-tree (bindings mamba_value_seqlen
+      #   + parent_node_id -- BOTH were live adapter-contract breaks:
+      #   adapter.py:837 PASSES the kwarg and :1083 CALLS the renamed method;
+      #   the crate as merged could not even compile -- components/mamba.rs
+      #   #39209 guard; tests renamed/fielded; rustfmt --edition 2024 clean
+      #   x3 = the CPU-checkable bar; ** CARGO DEBT: torch-sys build-script
+      #   fails (no LIBTORCH; with LIBTORCH pointed at the venv torch 2.14.1,
+      #   tch 0.24.0's C++ shim fails = the documented seat gap, byte-
+      #   identical at the pre-merge tip): the 932P/0F pin STILL CARRIES
+      #   UNVERIFIED -- run cargo test -p sglang-radix-tree on a seat with a
+      #   matching libtorch (session 3) **);
+      #   B3-8 dfe636dcb9 memory_pool (THE LAST B3 MARKER; 18 fused
+      #   store_cache_fp8 + eager saturate + _safe_zeros + SM89 gate; 192
+      #   capture guards x2; **203 lossless ring PLANTED IN FULL + CPU-
+      #   PROVEN: MambaPool builds the (u,k,g) fp32 ring on cpu, the topk
+      #   guard raises -- and the BOOT-INTEGRITY repair: every CALLER of
+      #   enable_linear_lossless_verify landed with THEIRS (configurator
+      #   1523/1602, decode.py:361 -> _init_mamba_pool) while the pool-side
+      #   signatures were the dropped half = every hybrid PD-decode boot
+      #   TypeErrors as merged**; 263/295 host_capacity_bytes = PERSISTENT
+      #   CHECKPOINTS ONLY; 178 resolved-head_dim fix; dequant-workspace +
+      #   async-h2d hunks DEDUPED (upstream landed get_flashinfer_decode_
+      #   ..., no caller for the fork twin; ping-pong absorbed in kv/
+      #   state_storage.py:112); + the B3-1 fallout repairs: _get_file back
+      #   to its 2-arg mockable surface (miss taxonomy moved into get();
+      #   unified_file_chunks 6P/1F->7P), the lru-unit DCP sync case
+      #   RETARGETED to the fork layout (45P/1F->46P), ple-offload stub via
+      #   real StateStorage (5P/1F->6P); B3-9 1dc41b2723 storage_prefetch_
+      #   lifecycle RE-HOME: the class-A merge took upstream's replacement
+      #   file and silently DROPPED the fork's 12 entry-217/293 cases -- the
+      #   whole capacity-wait/pending family + timeout-budget anchors;
+      #   re-homed verbatim, ALL PASS UNMODIFIED against B3-3's machinery
+      #   (16P->28P/31sub, 295 pin 23P/28sub EXCEEDED; the sole adaptation =
+      #   req_time_stats' renamed scheduler export to_output_time_stats).
+      # #46954 VERDICT + DEDUPE TABLE (load-bearing, per entry 290's map):
+      # #46954 ITSELF NEVER MERGED UPSTREAM (open PR; our port lives only on
+      # the unlanded port-hicache-ctrl branch) -- what arrived in-range is
+      # #41187's RE-IMPLEMENTATION of the mask reduce, which COLLAPSES TO THE
+      # DEEPEST ENDPOINT (loses the set the clamp needs) and lands no aux-
+      # staging sizing. Per hunk: (a) endpoint-at-alloc -> OURS RE-PLANTED
+      # (the indices_from_pool-None gate delta stays the documented non-
+      # union); (b) retain-common-set -> OURS KEPT, with the recorded UNION
+      # REFINEMENT: the mask packs ONLY when the span has a TRAILING_PAGES
+      # transfer (rank-invariant), keeping non-trailing collectives BIT-
+      # IDENTICAL to upstream's 1+len(PoolName) payload -- that refinement is
+      # what collapsed the upstream PP-suite breakage from 18F to the single
+      # genuinely-trailing case, retargeted per the entry-290 precedent (all
+      # allocation/drain expectations kept, pp_prefetch_ticket back 17P/19sub);
+      # (c) assume_stored endpoint-only proof -> RE-PLANTED ([kv_hit_pages]
+      # for trailing, None else); (d) aux-staging alloc_len sizing -> RE-
+      # PLANTED in B3-3 (the 295 record's "highest-value hunk for prod").
+      # ENTRY-219 PRODUCER CLOSURE: #43727 (entry 189's PR) DID land upstream
+      # in-range (26a1e5110d) and re-arrived as gauge-less SchedulerStats
+      # fields + a reporter entry_map read-back + a resurrected guard class;
+      # entry 219's ledger is authoritative ("no duplicate registration
+      # survives") -> the dead layer DELETED (fields, block, class), the
+      # per-pool hicache_host_pool_{used,total}_tokens{pool} serving schema
+      # stays the ONLY host-occupancy producer (collect_host_pool_stats +
+      # derived_pools wiring was already complete: CONFIRMED, not duplicated;
+      # hicache_best_practices.mdx watch-sentence re-pointed to {pool=
+      # "mamba"}; observability DI suite 7F->30P/0F).
+      # NAMED-GATE STATUS (DoD c, 295 pins): trailing_endpoint 17P=17P;
+      # storage_prefetch_lifecycle 28P/31sub>=23P/28sub; buffer_mode_sidecar
+      # 6P/6sub=6P/6sub; fast_file 54P/13sub=54P/13sub; pp_prefetch_ticket
+      # 17P/19sub=17P/19sub; staged_write_back 27P/1S>=21P/1S; mamba_sizing
+      # 30P/17sub=30P/17sub; auto_size 3P/2sub green (was green; UNMOVED).
+      # UPSTREAM-REMOVED TESTS RECORDED: pp_sync_drain lost its
+      # TestPPSyncDrain class (2 cases, _drain_async_work) to the upstream
+      # file replacement -- NOT re-homed here (PP-send-drain tests are not
+      # B3-entry semantics; the surviving TestUnifiedPPSyncBatching carries
+      # the queued_backups stub); hybrid_pool_assembler 44P/36sub vs the 295
+      # wave's 53P/31sub: the TEST file is B2's (tsv: DRIVER:THEIRS+REPLANT,
+      # its B2 marker at :1716 INTACT, the 520-line fork patch awaits B2);
+      # the urc-unittest 44P/2885S pin died with the split (B2's re-home).
+      # REMAINING B3 MARKERS: ** ZERO ** (15/15). REMAINING B3 DEBTS: (1)
+      # the #46954-vs-#41187 layout means the fork collective payload shape IS
+      # the serving contract now -- any future upstream pick touching
+      # _sync_prefetch_hit_query must resolve against OUR layout (this batch's
+      # retargeted cases are the tripwires); (2) rust compile/test unmeasur-
+      # able at this seat (above); (3) entry-198's MambaCowAllocError RAISER
+      # landed, the scheduler-side CATCHER is B4's (cross-noted); (4) the URC
+      # split kits' get_device honest-skip defect is B2's; (5) memory_pool's
+      # NVFP4 dequant-workspace fork method deliberately NOT restored
+      # (superseded, no caller) -- revisit ONLY if an NVFP4-KV trial wants it.
+      # DIR PIN (new layout, this is the pin B3 re-derives -- per-file method,
+      # NEVER mega): unit/mem_cache ** 1861P/1209F/364S/4514sub/2err ** with
+      # the env-class decomposition in the header updated-bullet; re-measure
+      # after B2's kits fix (the 1056F block should fall to honest skips).
+
       # absorption).
 
 ==============================================================================
@@ -8726,7 +8914,11 @@ CAVEATS
     replant/*.fork-hunks.patch, a prod boot would run the HiCache L3 path
     with fork semantics LOST -- the trailing_endpoint gate reads RED pre-B3
     by design (battery evidence in entry 310; when that file returns 17P on
-    re-plant, B3's load-bearing half is proven back). Also boot-relevant in
+    re-plant, B3's load-bearing half is proven back). **B3 LANDED (entry 311,
+    2026-10-29 session 2A): trailing_endpoint reads 17P AT THE FINAL TREE --
+    the HiCache-side boot condition of this rule is MET (clamp + ordering
+    proven); the ban itself STAYS until the orchestrator/user lift it, as
+    B2/B4/B5/B6 remain and this batch explicitly did NOT boot-verify.** Also boot-relevant in
     this window: environ.py took #45090's removal (operator owed: confirm no
     /root harness exports SGLANG_ENABLE_UNIFIED_RADIX_TREE; the upstream docs
     snippets deepseek-v4.jsx/glm-5.2.jsx STILL export it upstream-side), the
@@ -8735,7 +8927,10 @@ CAVEATS
     hicache_host_pool_{used,total}_tokens{pool}), and #45520 (entry 302)
     arrived with the merge? **NO -- still OPEN upstream, fail-safe layer
     intact.** Marker census 102 (B1 15 / B2 29 / B3 12 / B4 23 / B5 23);
-    every marker names its batch and its replant patch.
+    every marker names its batch and its replant patch. [B3 RECOUNT: the tree
+    carried 15 "(batch B3" markers, not 12 (the 3 rust ones were counted
+    outside the Python census); ALL 15 CONSUMED at entry 311 -- B3 markers
+    now ZERO, B2/B4/B5/B6 markers diff-audited intact.]
 
   * CPU-BATTERY BASELINES RE-PINNED 2026-10-29 ** AT THE 296-309 TIP **
     (3cdba955a4). SECOND TABLE OF THE SAME 10-29 DAY: this SUPERSEDES the
