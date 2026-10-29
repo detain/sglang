@@ -114,6 +114,9 @@ def _autotune_gate(backend, *, quantization="modelopt_fp4"):
     runner = SimpleNamespace(
         device="cuda",
         model_config=SimpleNamespace(quantization=quantization),
+        # In-range gate growth: _serves_block_fp8_as_mxfp8_on_flashinfer walks
+        # the module tree; an empty one keeps the FP8 pre-check honest on CPU.
+        model=SimpleNamespace(modules=lambda: []),
         spec_algorithm=SimpleNamespace(is_speculative=lambda: False),
         is_draft_worker=False,
     )
@@ -121,6 +124,13 @@ def _autotune_gate(backend, *, quantization="modelopt_fp4"):
     try:
         with (
             patch.object(autotune, "get_exec", return_value=exec_ns),
+            # Upstream #42973 (in-range): the gate now first consults the
+            # parallel context for the KV-sharding exclusion.
+            patch.object(
+                autotune,
+                "get_parallel",
+                return_value=SimpleNamespace(enable_kv_cache_sharding=False),
+            ),
             patch("torch.cuda.get_device_capability", return_value=(12, 0)),
         ):
             return autotune.should_run_flashinfer_autotune(runner)

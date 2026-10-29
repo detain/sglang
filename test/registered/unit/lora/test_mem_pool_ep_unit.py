@@ -929,8 +929,17 @@ class TestModuleLevelHelpers(unittest.TestCase):
             backends.FLASHINFER_CUTEDSL,
             backends.FLASHINFER_MEGAMOE,
             backends.HPC_OPS,
+            # Entry 247: the b12x route translates global ids through its own
+            # per-call expert_map, so the dispatcher must keep them global.
+            # The pre-merge battery's documented 1F was this arm missing here.
+            backends.FLASHINFER_B12X_W4A16,
         }
-        lora_global_ids = dispatcher_global_ids - {backends.FLASHINFER_MEGAMOE}
+        # Neither megamoe (no LoRA runner) nor b12x (no LoRA path) is in the
+        # LoRA pool's global-id contract.
+        lora_global_ids = dispatcher_global_ids - {
+            backends.FLASHINFER_MEGAMOE,
+            backends.FLASHINFER_B12X_W4A16,
+        }
         config = types.SimpleNamespace(
             num_experts=8,
             num_local_experts=2,

@@ -99,6 +99,15 @@ def _nvfp4_loader_layer(*, is_gated=True, tp_rank=0):
     layer.use_presharded_weights = False
     layer.moe_tp_size = 2
     layer.moe_tp_rank = tp_rank
+    # The upstream stub predates this fork's SM120 small-M workspace gate, which
+    # reads placement attributes in process_weights_after_loading (entry 244).
+    # On SM120 the gate is consulted for the CUTLASS subTest; give it the real
+    # per-rank numbers so eligibility (and the EP refusal) resolves correctly.
+    layer.num_local_experts = 1
+    layer.num_fused_shared_experts = 0
+    layer._num_global_routed = 1
+    layer.moe_ep_rank = 0
+    layer.moe_ep_size = 1
     layer.dispatcher = SimpleNamespace(set_quant_config=lambda config: None)
     num_shards = 2 if is_gated else 1
     for name, data in {
