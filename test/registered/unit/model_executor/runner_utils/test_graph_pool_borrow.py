@@ -101,6 +101,12 @@ class TestGraphPoolBorrow(CustomTestCase):
             ):
                 self.assertEqual(pool.graph_pool_borrow_can_fit(payload), expected)
 
+    # B2 closeout: this case needs a REAL is_cuda() True inside
+    # graph_pool_borrow_enabled() (borrow_graph_pool no-ops on CPU, so the
+    # scope clash never forms) -- upstream gated its device-dependent cases
+    # at :242/:344/:456-:671 and simply missed this one; the file is CUDA-CI
+    # registered and CPU seats skip it honestly now.
+    @unittest.skipUnless(torch.cuda.is_available(), "requires CUDA")
     def test_graph_replay_fails_during_active_pool_borrow(self):
         graph = Mock()
         backend = object.__new__(FullCudaGraphBackend)
