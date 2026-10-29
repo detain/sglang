@@ -296,7 +296,10 @@ from sglang.srt.managers.utils import (
 )
 from sglang.srt.mem_cache import kv_cache_builder
 from sglang.srt.mem_cache.allocator.page_interleave import page_interleave_shard_size
-from sglang.srt.mem_cache.base_prefix_cache import CacheRequestOutcome
+from sglang.srt.mem_cache.base_prefix_cache import (
+    CacheRequestOutcome,
+    MambaCowAllocError,
+)
 from sglang.srt.mem_cache.common import (
     checkpoint_kv_cache,
     discard_kv_cache_backup,
@@ -1990,6 +1993,7 @@ class Scheduler(
         # Engine init (graph capture, warmups) is done; from here on any
         # Triton kernel device-load is a lazy first-use at serving time.
         triton_load_watch.install()
+        triton_load_watch.prewarm_device_loads(self.model_worker)
         triton_load_watch.mark_serving_started()
 
         if use_mlx():
@@ -2090,6 +2094,13 @@ class Scheduler(
                 self._record_scheduler_state_for_paused_engine()
                 continue
 
+            # Mamba prefix insertion can replace req_to_token entries with
+            # canonical cached slots and free the duplicate slots. Publish that
+            # mapping before preparing a dependent decode/verify batch.
+            processed_prefill_cache = self._has_pending_mamba_cache_update()
+            if processed_prefill_cache:
+                pop_and_process()
+
             # Get the next batch to run
             plan = self.get_next_batch_to_run(
                 running_batch=self.running_batch, last_batch=self.last_batch
@@ -2097,14 +2108,16 @@ class Scheduler(
             self.running_batch = plan.running_batch
             batch = plan.batch_to_run
             self.cur_batch_for_debug = batch
-            disable_overlap_for_batch = self.is_disable_overlap_for_batch(
-                batch, last_batch=self.last_batch
+            disable_overlap_for_batch = (
+                not processed_prefill_cache
+                and self.is_disable_overlap_for_batch(batch, last_batch=self.last_batch)
             )
 
             # If we do not need to overlap the current batch with the last batch,
             # we can process the last batch immediately.
-            if disable_overlap_for_batch:
-                pop_and_process()
+            if disable_overlap_for_batch or processed_prefill_cache:
+                if not processed_prefill_cache:
+                    pop_and_process()
                 # Opportunistic flush at the disable_overlap sync boundary:
                 # forward_stream is idle (prev forward drained, next not launched),
                 # so `_flush`'s non-urgent guard compacts freely. Sync-free, best-effort.
@@ -2126,7 +2139,7 @@ class Scheduler(
 
             # Process the last batch
             if self.last_batch:
-                if not disable_overlap_for_batch:
+                if not disable_overlap_for_batch and not processed_prefill_cache:
                     pop_and_process()
             elif batch is None:
                 # When the server is idle, do self-check and re-init some states
@@ -2142,6 +2155,31 @@ class Scheduler(
 
             if envs.SGLANG_ENABLE_STRICT_MEM_CHECK_DURING_BUSY.get():
                 self.invariant_checker.self_check_during_busy()
+
+    def _has_pending_mamba_cache_update(self) -> bool:
+        if not self.result_queue:
+            return False
+        pending_batch = self.result_queue[0][0]
+        if not pending_batch.forward_mode.is_extend():
+            return False
+        # DP/MLP-sync ranks need a collective decision; retain their overlap path.
+        if (
+            self.require_mlp_sync
+            or getattr(self.tree_cache, "disable", True)
+            or not getattr(self.tree_cache, "enable_mamba_extra_buffer", False)
+        ):
+            return False
+        return any(
+            req.kv.mamba_last_track_seqlen is not None
+            and not req.finished()
+            and not req.is_retracted
+            and not req.skip_radix_cache_insert
+            and (
+                not pending_batch.decoding_reqs
+                or req not in pending_batch.decoding_reqs
+            )
+            for req in pending_batch.reqs
+        )
 
     def is_disable_overlap_for_batch(
         self, batch: ScheduleBatch, last_batch: Optional[ScheduleBatch]
@@ -2165,20 +2203,15 @@ class Scheduler(
             and last_batch_is_extend
         )
 
-        # Sync so the FSM advance lands before the next batch's bitmask. Permanent
-        # path for host-draft algorithms, not a pending migration.
+        # Advance pending grammar before building the next mask.
         need_grammar_sync = (
             batch
             and not batch.spec_algorithm.is_none()
             and batch.grammar_needs_sync()
-            and batch.forward_mode.is_decode()
+            and (batch.forward_mode.is_decode() or batch.forward_mode.is_mixed())
             and len(self.result_queue) > 0
         )
 
-        # Algorithms that support grammar overlap advance the FSM inside verify()
-        # via the grammar barrier (overlapping the target forward), which resolves
-        # whatever result is still pending in the queue — including the
-        # extend->decode boundary — so no grammar-specific overlap disable is needed.
         return disable_overlap_for_batch or need_grammar_sync
 
     def _advance_pending_grammar(self):
@@ -2530,7 +2563,7 @@ class Scheduler(
                 has_window=self.is_hybrid_swa,
                 has_state=self.is_hybrid_ssm,
                 # Match the allocator and radix counters' logical units.
-                token_capacity=self.max_total_num_tokens * self.kv_shard_widening,
+                token_capacity=self.max_total_num_tokens,
                 full_tokens_per_layer=self.full_tokens_per_layer,
                 swa_tokens_per_layer=self.swa_tokens_per_layer,
             ),
@@ -2610,8 +2643,8 @@ class Scheduler(
         self.load_inquirer = SchedulerLoadInquirer(
             disaggregation_mode=self.disaggregation_mode,
             server_args=self.server_args,
-            # The worker reports logical DCP capacity; add KV shard widening.
-            max_total_num_tokens=self.max_total_num_tokens * self.kv_shard_widening,
+            # The worker already reports logical DCP / page-interleave capacity.
+            max_total_num_tokens=self.max_total_num_tokens,
             max_running_requests=self.max_running_requests,
             pool_stats_observer=self.pool_stats_observer,
             tp_worker=self.tp_worker,
@@ -2792,9 +2825,8 @@ class Scheduler(
         )
         # PrefillAdder reserves one page per shard; the allocator reserves one.
         # Subtract the other N - 1 pages to keep queue admission schedulable.
-        token_capacity = (
-            self.max_total_num_tokens * self.kv_shard_widening
-            - self.page_size * (self.kv_shard_widening - 1)
+        token_capacity = self.max_total_num_tokens - self.page_size * (
+            self.kv_shard_widening - 1
         )
         max_new_tokens = self.token_to_kv_pool_allocator.max_new_tokens_for_memory(
             input_len,
@@ -4163,13 +4195,11 @@ class Scheduler(
             for req in ready_grammar_requests:
                 self._add_request_to_queue(req)
 
-        if self.enable_priority_preemption or self.is_hybrid_swa:
-            # Reset batch_is_full to try preemption with a prefill adder.
-            running_batch.batch_is_full = False
-        if running_batch.is_empty():
-            # An empty batch has no request left to leave, and only a leaving
-            # request clears the flag elsewhere, so admission would stay shut.
-            running_batch.batch_is_full = False
+        # A latched flag is otherwise only cleared when the running batch shrinks,
+        # stalling the queue until an unrelated finish. PrefillAdder enforces limits.
+        # (#46643; subsumes the entry-198 hybrid-SSM per-round reset and the
+        # priority-preemption / is_empty arms.)
+        running_batch.batch_is_full = False
 
         if (
             running_batch.batch_is_full or len(self.waiting_queue) == 0
@@ -4338,21 +4368,28 @@ class Scheduler(
                     # marks the staged span below once it is surfaced.
                     req.host_hit_is_storage = False
 
-            req.init_next_round_input(self.tree_cache)
-            if self.enable_hicache_storage and (
-                self._prefetch_after_device_hit_loss(req)
-            ):
-                continue
-            if self.enable_hicache_storage and buffer_pipeline is not None:
-                staging_ready = buffer_pipeline.prepare_staged_prefetch(req)
-                req.time_stats.observe_storage_staging_ready(staging_ready)
-                if not staging_ready:
+            try:
+                req.init_next_round_input(self.tree_cache)
+            except MambaCowAllocError:
+                # Mamba capacity can shrink after an earlier refusal (e.g. decode
+                # consumes a shared pool), so a prefix hit may find no slot for
+                # its state copy. Refuse admission and keep the request queued.
+                res = AddReqResult.NO_TOKEN
+            else:
+                if self.enable_hicache_storage and (
+                    self._prefetch_after_device_hit_loss(req)
+                ):
                     continue
-            res = adder.add_one_req(
-                req,
-                has_chunked_req=(self.chunked_req is not None),
-                truncation_align_size=self.truncation_align_size,
-            )
+                if self.enable_hicache_storage and buffer_pipeline is not None:
+                    staging_ready = buffer_pipeline.prepare_staged_prefetch(req)
+                    req.time_stats.observe_storage_staging_ready(staging_ready)
+                    if not staging_ready:
+                        continue
+                res = adder.add_one_req(
+                    req,
+                    has_chunked_req=(self.chunked_req is not None),
+                    truncation_align_size=self.truncation_align_size,
+                )
 
             if self.enable_lora:
                 running_loras.add(req.lora_id)
@@ -4569,6 +4606,9 @@ class Scheduler(
                 else None
             )
             retracted_reqs, new_token_ratio, reqs_to_abort = batch.retract_decode()
+            # Unclipped max_new_tokens can put the estimate below the floor;
+            # keep the floor that decay_step and reset also keep.
+            new_token_ratio = max(new_token_ratio, self.new_token_ratio_tracker.min)
             new_available_tokens = self.token_to_kv_pool_allocator.available_size()
             new_token_gained = new_available_tokens - old_available_tokens
             mamba_num_gained = (
@@ -6505,5 +6545,6 @@ def _make_abort_req(
             num_output_tokens=len(req.output_ids),
         ),
     )
+
 
 # TODO(merge5): re-plant entry 107,122,177,198,200,211,215,218,220,267,268,270 semantics (batch B4); fork hunks saved /tmp/opencode/merge5-dossier/replant/python__sglang__srt__managers__scheduler.py.fork-hunks.patch

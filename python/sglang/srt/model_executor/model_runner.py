@@ -1520,7 +1520,8 @@ class ModelRunner:
         """Request-token capacity in logical tokens, not per-rank DCP rows."""
         return self.req_to_token_pool.schedulable_token_capacity(
             self.kv_cache_configurator.logical_token_capacity(
-                max_total_num_tokens=self.max_total_num_tokens
+                max_total_num_tokens=self.max_total_num_tokens,
+                allocator=self.token_to_kv_pool_allocator,
             )
         )
 
@@ -2696,5 +2697,6 @@ def _gather_block_fp8_linear(layer: torch.nn.Module, group) -> torch.nn.Module:
     replica.quant_method = layer.quant_method
     layer.quant_method.process_weights_after_loading(replica)
     return replica
+
 
 # TODO(merge5): re-plant entry 300,187(#43527) semantics (batch B4); fork hunks saved /tmp/opencode/merge5-dossier/replant/python__sglang__srt__model_executor__model_runner.py.fork-hunks.patch

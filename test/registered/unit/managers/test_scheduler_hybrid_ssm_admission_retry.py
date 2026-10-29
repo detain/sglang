@@ -97,6 +97,7 @@ def _scheduler(*, is_hybrid_ssm: bool) -> Scheduler:
     )
     s.waiting_queue = [_req()]
     s.chunked_req = None
+    s.disagg_prefill_bootstrap_queue = None
     s.min_free_slots_delayer = None
     s.get_num_allocatable_reqs = lambda *args, **kwargs: 1
     s.policy = MagicMock()
@@ -181,7 +182,14 @@ class TestMambaCowAllocRefusal(CustomTestCase):
         # evictable, so the copy-on-write slot cannot be allocated.
         node = SimpleNamespace(id=3)
         locks = []
+        # The component reads its slots through the cache's kv_storage seam
+        # (#46970x layout, MERGE-5 B3-5); an empty pool takes every slot.
+        storage = SimpleNamespace(
+            tree_sub_pool=lambda ct: "mamba",
+            take_state_slots=lambda sub_pool, n: None,
+        )
         cache = SimpleNamespace(
+            kv_storage=lambda: storage,
             req_to_token_pool=SimpleNamespace(
                 mamba_allocator=SimpleNamespace(alloc=lambda n: None)
             ),
