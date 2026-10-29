@@ -1,6 +1,6 @@
 # stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
 #
-# STACK: qwennext-stack-254-2026-10-28
+# STACK: qwennext-stack-260-2026-10-28
 #   main+pr36787+pr37275+pr38144+pr38209+pr36644+pr39862+pr39809+pr39893+local_hicache_qsa_fixes
 #   +pr39614+pr39978+pr40002+pr39065+pr40501+pr40175+pr40362+pr39391+pr37061+pr39333+pr33778
 #   +pr38977+pr39977+pr40480+pr39880+pr40235+pr39807+cpu-triage+boot-fix+plan_updates_perf
@@ -11,7 +11,9 @@
 #    +pr36399+pr36767+pr37460*+pr38650+pr39212+pr40493+pr40588+pr40755+pr41340*
 #    +pr41944+pr42249+pr42928*+pr43028*+pr43064*)
 #   +hicache-file-2026-10-28(pr42482+pr42488+pr44422+pr42676*+pr44776*)
-#   (entries 1-254; *=squash/ported, see commit messages. 10-10 added
+#   +comm-2026-10-28(pr44448*+pr39605*)
+#   +autotune-2026-10-28(pr40420*+pr45543*+pr43927+pr44514)
+#   (entries 1-260; *=squash/ported, see commit messages. 10-10 added
 #   entries 157-161: parser batch A (Qwen3-Coder tool-call fixes + sampling
 #   upper bounds), on top of upstream merge #3 (see synced). 10-10b added
 #   entries 162-166: SM120 batch B (#42863 PCIe-IPC vocab gathers, #42566
@@ -249,7 +251,7 @@
 #   make --enable-mixed-chunk safe and fix the QSA verify ring collision.
 #   * = picked with local modifications, see the entries)
 # branch : qwennext-stack
-# tip    : 0df18e97a0   (the stack.txt commits sit above it)
+# tip    : 2705ebb0a6   (the stack.txt commits sit above it)
 # base   : upstream sgl-project/sglang main @ 7ad55e4386 ([HiCache] TMA-staged
 #          host<->device KV transfer kernel (sm_90+) (#40278), 2026-09-21)
 # synced : upstream main @ f209e67767 (#39643, 2026-09-28) MERGED IN as
@@ -320,6 +322,57 @@
 #          MERGE #5 STILL OWED (refreshed at the 248/249 docs commit):
 #          origin/main is now 1dd0f361b8 = +435 commits since 12dc623102.
 #          [The 553836c164/+378 figure was the count at the 230-242 batch.]
+# updated: 2026-10-28 (entries 255-260): TWO WAVES FROM THE SAME SWEEP
+#          QUEUE, BOTH CLEAN (ZERO conflicts vs the landed hicache-file
+#          tranche -- disjoint files as the FAM split planned; no other
+#          in-flight worker's commits are in these numbers).
+#          comm-2026-10-28 (port-comm, both OPEN ports, code tip
+#          0df18e97a0): 255 #44448* stages VMM graph inputs through v1's
+#          pre-registered IPC buffer -- THREAT MODEL ON RECORD: our entry-75
+#          VMM-allocator REFUSAL is what ACTUALLY guards the imminent TP2
+#          boot; the staging fix is DEFENSE-IN-DEPTH (reachable only via VMM
+#          inputs despite a non-VMM init probe, e.g. symm-mem pools); the
+#          shipped "CPU" test is really a 2-GPU torchrun test (registered
+#          multi-GPU) -- CPU side exercised COLLECTION ONLY; fork skip-
+#          branch added to _init_comm; run-script needle (i) stays valid
+#          VERBATIM. 256 #39605* TP2-only host-staged + LL all-reduce,
+#          world_size==2 gates (INERT ON TP4) -- opt-in envs read via RAW
+#          os.environ.get, NOT registered in environ.py (PR as-is; a fork-
+#          convention deviation, FLAGGED FOR THE OPERATOR). COLLISION
+#          WARNING: HOST-STAGED claims only eager >=1MiB outside capture and
+#          COMPLEMENTS PCIe-IPC; LL claims bf16 <=64KiB with NO capture
+#          guard and COLLIDES with PCIe-IPC's autotune size class -- DO NOT
+#          arm SGLANG_LL_ALLREDUCE on a TP group with SGLANG_ENABLE_PCIE_IPC_
+#          ALLREDUCE=1 (both prod scripts export it, entry 245); documented
+#          at the dispatch site (5-line comment). The Dynamo/auto-op path
+#          NEVER sees either transport (trace-time evaluation vs the fork's
+#          defer-into-op design) -- upstream follow-up worth filing.
+#          autotune-2026-10-28 (port-autotune, two OPEN ports + two merged
+#          picks, code tip 2705ebb0a6): 257 #40420* EP autotune-cache digest
+#          fix -- per-rank caches no longer dropped EVERY startup (RED-proof
+#          2F -> 2P). 258 #45543* decode MoE tactics tuned on SEEDED
+#          DISTINCT dummy token ids (zero-filled dummies routed every row to
+#          one expert); upstream-only TestModelPrefillAutotune NOT carried
+#          in -- autotune_prefill_kernels doesn't exist in our tree, grep-
+#          verified. 259 #43927 (merged pick) default tactic joins startup
+#          tuning -- PARTIALLY SATISFIES the C0a entry-227 sweep-gap record;
+#          CONSEQUENCE: entry-243/246's "no tactic=-1" PASS-needles are
+#          STALE (CAVEATS bullet added). 260 #44514 (merged pick) cache-key
+#          bump -> exactly ONE cold autotune boot at next restart, then
+#          warm (entry-228 boot-cost practice). NEW DEBT ON RECORD: S-EXT1
+#          (wanted_stack FAM-A1, State: TODO) -- our entry-176 EXTEND
+#          autotune pass STILL tunes MoE on fresh zero-filled dummies, the
+#          exact bug #45543 fixed for decode; wrap-or-decline is an open
+#          decision. FAM-A6a LANDED: #44342's parallel_state.py hold
+#          RELEASED for its later FAM-A3b wave. Verified at the landed tips,
+#          prod venv, CVD=9: comm named set 114P/1S/30sub (EXACT worker
+#          match), whole unit/distributed dir 120P/1S/35sub 0F, the three
+#          new comm files collect 18; sync+gate 22P/1S/5sub, runner dir
+#          89P/1S/47sub, MoE set 139P/22S/141sub, qwen4_exp_ple_staging 37P
+#          -- ALL EXACT. NOTHING pushed; LIVE ONLY AFTER RESTART
+#          (user-driven). The comm transports are env-gated OFF and leave
+#          prod byte-identical; the autotune tranche CHANGES the next boot
+#          (one expected cold retune).
 # updated: 2026-10-28 (entries 250-254): HICACHE FILE-BACKEND TRANCHE --
 #          FAM-A2a of the wave-1 queue in wanted_stack.txt (file first
 #          committed today). Five OPEN-PR ports, one commit each on branch
@@ -5996,6 +6049,81 @@ STACK, IN BUILD ORDER (bottom first)
       # both transports default-off => prod behavior byte-identical until
       # an operator arms an env on a TP2 boot.
 
+        257. f46e547498  PR #40420 (open, head 10c6feba6f, ported)  FlashInfer autotune caches no longer get DROPPED EVERY STARTUP under expert parallelism -- the sync digest hashes the load DECISION, not the whole per-rank file
+      # https://github.com/sgl-project/sglang/pull/40420. WHAT: under EP the
+      # per-rank autotune cache files legitimately DIFFER (each rank tunes
+      # its expert slice), but the cross-rank sync digest hashed the WHOLE
+      # per-rank file -- ranks saw different digests, the agreement check
+      # failed, and every rank's cache was unlinked at EVERY boot: EP arms
+      # re-tuned cold forever. THE FIX (+7/-3, runner/flashinfer_autotune.py)
+      # digests the decision the ranks must agree on instead of the payloads
+      # they may differ on.
+      # REGRESSION PROOF (worker, machine-checked RED): old digest code +
+      # the two new tests = 2F; with the fix = 2P.
+      # WHY FOR US: both prod arms run EP4 with autotune DEFAULT-ON (entry
+      # 176), so this is the highest value-per-line pick of the 2026-10-28
+      # sweep -- every EP prod boot to date paid a full cold retune.
+      # BATTERY (numbers at the FINAL batch-2 tip 2705ebb0a6, prod venv,
+      # CVD=9; the file covers entries 257+258+259+260): sync+gate
+      # 22P/1S/5sub; runner dir 89P/1S/47sub; MoE set 139P/22S/141sub;
+      # qwen4_exp_ple_staging 37P.
+
+        258. 894d4a78d2  PR #45543 (open, head 44b7dfd793, ported)  the decode-shaped FlashInfer autotune dummy forward runs on SEEDED DISTINCT token ids -- zero-filled dummies routed every row to ONE expert and FlashInfer ranked its MoE tactics on that lie
+      # https://github.com/sgl-project/sglang/pull/45543. WHAT: new
+      # autotune_dummy_input_ids(buffers.input_ids, vocab_size=...) context
+      # manager (+24 flashinfer_autotune.py) fills seeded distinct ids and
+      # ZEROES THE BUFFER AFTER; base_runner.py +7/-3 wraps the decode-shape
+      # autotune call. Claimed 13-16%/layer faster MoE at 24-32 rows -- on
+      # Kimi-K3 MXFP4 8xB300, a DIFFERENT box: direction, not measurement.
+      # FORK UNION: base_runner's import block KEEPS our entry-176
+      # maybe_flashinfer_autotune_extend call site alongside the new import;
+      # the EXTEND path is UNTOUCHED -- and it STILL tunes on fresh
+      # zero-filled dummy buffers, the exact bug this PR fixes for decode.
+      # That debt is recorded as S-EXT1 (wanted_stack.txt FAM-A1, State:
+      # TODO), stack-owned, decide-or-decline.
+      # NOT CARRIED IN (grep-verified): the PR's upstream-only
+      # TestModelPrefillAutotune class drives autotune_prefill_kernels,
+      # which DOES NOT EXIST in our tree -- 0 hits in python/ AND test/ at
+      # the landed tip. The test-file conflict with #40420 resolved as a
+      # LOCAL UNION: entry 257's disjoint-shape tests kept ALONGSIDE the new
+      # dummy-token tests.
+      # CACHE CONSEQUENCE: tuned caches tuned on the one-expert lie are
+      # suspect; they are invalidated wholesale by entry 260's key bump, so
+      # ONE cold retune boot pays for both.
+
+        259. 6c866f3529  PR #43927 (MERGED 2026-10-15 @ origin/main 33618d4f00)  FlashInfer's DEFAULT tactic now JOINS the startup tuning race -- autotune_v2(mode="tune") wraps the tuning context -- and this REFUTES our own "no tactic=-1" PASS-needles
+      # https://github.com/sgl-project/sglang/pull/43927, cherry-pick -x of
+      # origin/main 33618d4f00 (+3 lines in flashinfer_autotune.py, +1 test
+      # line): autotune_v2(mode="tune", persistent_cache=False) added to the
+      # stacked tuning context.
+      # PARTIALLY SATISFIES the C0a sweep-gap record (wanted_stack.txt):
+      # #43927 merged INSIDE 12dc623102..417606527d but was absent from
+      # entry-227's skip record; this ACCELERATE pick lands it ahead of
+      # merge #5. C0a's other names (#37625/#37941/#39727/#44849) stay owed
+      # at the merge.
+      # **STALE-NEEDLE CORRECTION (ENTRIES 243/246)**: entry 243's
+      # cache-inspection PASS evidence "(d) ... 21 buckets M=1..8192, no
+      # tactic=-1", and the entry-246 harness reading built on it, are STALE
+      # FROM THIS PICK ON: a default-tactic WINNER is now a LEGITIMATE cache
+      # entry, so "no tactic=-1" can flag a CORRECT fully-tuned boot and no
+      # longer proves engagement. Use the entry-246 re-pinned RANKS-based
+      # "autotuned N shape(s)" NEEDLEs instead. Mirrored as a CAVEATS bullet.
+
+        260. 2705ebb0a6  PR #44514 (MERGED 2026-10-20 @ origin/main 1897575ce1)  the autotune cache key gains candidate_selection=v2_default -- existing tuned caches MISS -> exactly ONE cold autotune boot after this batch, then warm forever
+      # https://github.com/sgl-project/sglang/pull/44514, cherry-pick -x of
+      # origin/main 1897575ce1 (+2 lines): flashinfer_autotune_cache_path()
+      # appends "candidate_selection=v2_default" to the model key parts --
+      # the companion of entry 259: caches tuned BEFORE the default tactic
+      # joined the race must not be reused after it.
+      # BOOT-COST EXPECTATION (entry-228 practice): the NEXT boot after this
+      # lands is EXPECTED-COLD on every arm -- old rank_tpX_ppY_dpZ.json
+      # keys miss, so ONE full retune per rank (prefill-sized dummy forwards
+      # included, entry 176), then warm. With 257+258+259 in, that single
+      # cold boot is the boot you WANT: first tune on distinct tokens,
+      # EP-preserved, default-tactic-inclusive. Do NOT read the extra
+      # startup seconds as a regression -- and do NOT re-pin boot-time
+      # budgets off old warm-cache numbers until this boot has happened.
+
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
 ==============================================================================
@@ -6225,6 +6353,20 @@ WATCH LIST (re-evaluate before next sync)
 ==============================================================================
 CAVEATS
 ==============================================================================
+
+  * STALE PASS-NEEDLES + COLD BOOT 2026-10-28 (entries 259/260, branch
+    port-autotune landed @ 2705ebb0a6): the "no tactic=-1" cache-inspection
+    evidence recorded in ENTRY 243 point (d) -- and the entry-246 harness
+    narrative that leans on "autotune engaged" reads of the cache files --
+    is NO LONGER A PASS CRITERION. With #43927 in the tree, FlashInfer's
+    default tactic is a legitimate tuning CANDIDATE, so a correct, fully
+    tuned boot may now carry default-tactic entries: an absence-of--1 test
+    can flag a HEALTHY boot. Engagement proof is the entry-246 re-pinned
+    RANKS-based "autotuned N shape(s)" NEEDLEs, not the -1 absence. And the
+    NEXT boot after this batch is EXPECTED-COLD (entry 260's cache-key
+    bump): one full retune per rank, then warm -- entry-228 boot-cost
+    practice applies; do not treat the extra startup seconds as a
+    regression or re-pin boot budgets off old warm-cache numbers first.
 
   * CPU-BATTERY DIFFS 2026-10-21 (entry 248, measured on main at 1818e2c0fb IN
     THE PROD VENV /root/sglang/.venv, per-file, CVD=9, PYTHONPATH=/root/sglang/

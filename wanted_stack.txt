@@ -51,22 +51,20 @@
 #
 # --- FAM-A1  port-autotune (files: srt runtime flashinfer autotune,
 #     base_runner.py, environ.py; context entries 174/176/191/228/229/243/246)
-# #40420  open (head 10c6feba6f, re-pull) [Fix] FlashInfer autotune cache
-#         dropped every startup under expert parallelism -- digest hashes the
-#         whole per-rank file; under EP2 our cache is unlinked EVERY boot.
-#         +7/-3 in runner/flashinfer_autotune.py + 2 regressions. Highest
-#         value-per-line of the sweep. State: IN-WT(port-autotune)
-# #45543  open (head 44b7dfd793) [Perf] Tune FlashInfer MoE tactics on distinct
-#         dummy tokens -- zero-filled dummies route every row to one expert;
-#         13-16%/layer claimed. +24 autotune, +7/-3 base_runner. Cache reuse:
-#         retune once after landing. State: IN-WT(port-autotune)
-# #43927  merged 2026-10-15 (W1 sweep-gap, arrive via merge #5; accelerate)
-#         [Feat] include FlashInfer default tactic in startup tuning. REFUTES
-#         entry-243's "no tactic=-1" PASS-needle -- integrator records that.
-#         State: IN-WT(port-autotune)
-# #44514  merged 2026-10-20 (companion) [Fix] version FlashInfer caches for
-#         default-tactic tuning (candidate_selection=v2_default key -> one
-#         cold autotune boot at landing). Order AFTER #43927. State: IN-WT(port-autotune)
+#     ALL FOUR LANDED 2026-10-28 as entries 257-260 @ code tip 2705ebb0a6;
+#     branch port-autotune kept for forensics. SIDE-EFFECTS ON RECORD: ONE
+#     cold autotune boot expected at next restart (entry 260's cache-key
+#     bump); entry-243/246's "no tactic=-1" PASS-needles are STALE (entry
+#     259 + CAVEATS bullet).
+# S-EXT1  (STACK-OWNED, not upstream)  our entry-176 EXTEND autotune pass
+#         (maybe_flashinfer_autotune_extend -- base_runner.py:295/299, NOT
+#         wrapped) still tunes MoE on fresh ZERO-FILLED dummy buffers: the
+#         exact bug #45543 fixed for the DECODE pass (entry 258 wraps that
+#         call in autotune_dummy_input_ids). Decide: wrap the EXTEND pass
+#         with autotune_dummy_input_ids semantics OR record a decline
+#         rationale (extend dummies may legitimately differ). Verify the
+#         buffer lifecycle at the extend site before choosing -- the decode
+#         fix zeroes AFTER the context. State: TODO
 #
 # --- FAM-A2a  port-hicache-file (files: mem_cache file backend:
 #     hicache_storage.py, lru_file_evictor, storage-path plumbing; context
@@ -382,6 +380,9 @@
 #      rescan top-k family -- the follow-up our entry-28 note named), #39727,
 #      #43927, #44849 merged INSIDE 12dc623102..417606527d but are absent from
 #      the 227 skip record. State: TODO
+#      [10-28 PARTIAL: #43927 LANDED ahead of merge #5 as entry 259 (port-
+#       autotune) -- gap correction for it is IN the ledger; the other four
+#       names remain owed as docs at merge #5.]
 #  C0b Record stale-decision refreshes: #44030 skip rationale ("inert while L3
 #      parked") OBSOLETE -- L3 live now, re-evaluate at merge #5; #44858 was
 #      REVERSED by #45289 (entry-227 note stale); #44115 permanently N/A;
