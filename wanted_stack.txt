@@ -123,20 +123,22 @@
 # --- FAM-A2b  QSA pending index-key ring (after FAM-B234; files:
 #     qsa/graph_metadata.py, qsa/metadata.py, qwen_sparse_attn_backend.py,
 #     mem_cache/qsa_kv_pool.py; context entries 16/31/53/184/200/210-213)
-# #47051  open (head f78ee79014) [Fix] QSA: keep TWO groups in the pending
-#         index-key ring under TARGET_VERIFY -- documents a SECOND cross-step
-#         failure mode entry-184 does not cover (nothing restores the ring
-#         after acceptance; rejected row's key read as pending member next
-#         step; corrupted compressed keys persist for the request). NEXTN
-#         3/1/4 = W4 = ratio is our exact geometry. State: TODO
-# #46125  open (head 85cb8d0af7) [Fix] QSA: stop spec verify overwriting the
-#         ring -- MUTUALLY EXCLUSIVE alternative remedy to #47051. Take its
-#         497-line verify-ring test either way. Operator verdict needed: which
-#         remedy; default = 47051 + 46125's tests. State: TODO
-# #45865  open (head c022f8a104) [Fix] qsa: carry QSA indexer state through
-#         cpu_tensor retraction (resumed request ran with ANOTHER request's
-#         compressed index keys + pending ring). +62/0 qsa_kv_pool.py --
-#         batch with the ring work. State: TODO
+#     #47051/#46125/#45865 LANDED 2026-10-28/29 as entries 285-287 @ code
+#     tip 73d049a7a7 (branch port-qsa-ring kept for forensics; 3 picks,
+#     ZERO conflicts, all 11 files byte-identical to the worker tip).
+#     REMEDY ADJUDICATED: **#47051 CHOSEN**, #46125 imported as the TEST
+#     ORACLE ONLY (32 active bit-equal GPU targets / 3 individually
+#     skipped internals of the untaken remedy) -- entry 285 carries the
+#     layout-equivalence proof and the 9 condensed union notes, entry 287
+#     the BOTH-RING-GROUPS retraction carry (a one-group carry would
+#     REINTRODUCE the #47051 corruption after any retraction -- the
+#     load-bearing interaction between 285 and 287). QSA_RING_GROUPS lives
+#     in qsa_kv_pool and is RE-EXPORTED by qsa/metadata to dodge the
+#     entry-200 import cycle; entry-184 read-before-store KEPT (still
+#     needed); prewarm fallback synced so no stale one-group
+#     specialization warms; contract tests renamed (285).
+#     GPU DEBT: the 32 oracle cases + every device-cuda qsa suite only
+#     COLLECT on this box. #45867 REMAINS OPEN below.
 # #45867  open (head c6983d9c2c) [Fix] preserve FP4 MHA block scales during
 #         CPU retraction (needs cpu_tensor retraction backend; gate: only for
 #         the NVFP4-KV trialings). Drop the PD hunks. State: TODO
@@ -144,37 +146,38 @@
 # --- FAM-A4  GDN/ReplaySSM/spec-state correctness (after FAM-A5 + B234;
 #     files: fla/*, kernels/gdn_*, linear/utils.py, components/mamba.py,
 #     memory_pool.py; context entries 102/185/196-198/203/210/213/216/234)
-# #46839  open (head 7705f6c3ff) [Fix] gdn: honour the fp32 radix track
-#         snapshot in Triton extend -- SUCCESSOR to our entry-185 (#44195);
-#         our triton prefill never fires the fp32 snapshot path without it.
-#         +12 chunk.py, +16 gdn_triton.py, 199-line test. Take first. State: TODO
-# #42688  open (head b6448d1708) [Fix] mask unused ReplaySSM history before
-#         checkpoint arithmetic (0*inf contamination -> acceptance-length
-#         drift signature). +24/-15 one kernel + 111 GPU cases (port CPU-safe
-#         subset; GPU run = window debt). State: TODO
-# #36014  open (head ede0919405) [Fix] align GDN target-verify beta semantics
-#         with packed decode (bf16 materialization vs fp32 = direct
-#         accept-length loss on NEXTN-over-GDN; KL-consistency class).
-#         +4/-1 + Triton-verify unit test; rebase-check (Sept branch). State: TODO
+#     #46839/#42688/#36014/#46856/#46633 LANDED 2026-10-28/29 as entries
+#     279-283 (with #43216 from Section B as entry 284) @ code tip
+#     41b7d5afb4; branch port-gdn-core kept for forensics; 6 picks, ZERO
+#     conflicts. CARRIED IN THE ENTRIES: 279 = ** THE MISSING CONSUMER OF
+#     ENTRY-185 ** (the fp32 snapshot path never FIRED on our tree before
+#     it; the entry-185 fork case retargeted to ..._forwards_nothing; the
+#     PR's graph_table_args hunks are FOREIGN here and were NOT pulled);
+#     280 = the 111-case suite behind a MODULE-LEVEL SKIP -- ** GPU DEBT,
+#     NOT PASSING COVERAGE **; 281 = ** CHANGES GDN TARGET-VERIFY OUTPUT
+#     BITS BY DESIGN (accept-length win) **, our MATCH_CUTEDSL_DECODE
+#     elif kept as the leading branch, owed the 1-case verify==packed
+#     atol-0 KL NEEDLE; 282 = graph-padding table ceiling + the ONLY mover
+#     of the spec-dir pin (335 -> 336P); 283 = default 2 == BYTE-
+#     IDENTICAL until armed, test import adapted attention.linear ->
+#     attention.fla. GPU DEBT: 279's numeric parity, 280's 111 cases,
+#     281's KL needle. ITEMS STILL OPEN IN THIS FAMILY: #43749, #42525,
+#     #38494, #42660 (below).
 # #43749  open DRAFT (head 5be80c75be) [Fix] reject unflushed ReplaySSM cache
 #         checkpoints at donation (warm/cold KL 0.087 vs 0.055; stated
 #         INDEPENDENT of #43387/entry-169). Ships the full-vocab warm/cold KL
 #         oracle we can reuse for entries 210/213 GPU debt. +7/-8
 #         components/mamba.py, +2/-2 memory_pool.py. State: TODO
-# #46856  open (head 199d187354) [Fix] attention: cover CUDA-graph padding in
-#         verify state indices (+15/-9 linear/utils.py -- graph alignment can
-#         exceed eager max; our bs<=48 buckets + 4-row verify). State: TODO
 # #42525  open DRAFT (head 7bb6a140d2) [Bugfix] zero padded rows of GDN/KDA
 #         recurrent output -- READ, likely wait-for-merge (thin body).
-#         Its +8/-1 fla/fused_sigmoid_gating_recurrent.py hunk is adjacent to
-#         #36014 -- sequence 36014 -> read 42525. State: TODO
+#         Its +8/-1 fla/fused_sigmoid_gating_recurrent.py hunk is adjacent
+#         to #36014 -- WHICH LANDED AS ENTRY 281 (beta bf16 rounding in the
+#         verify-only branch of that same file): re-read 42525 against the
+#         landed shape, the old 36014-then-42525 sequence note is spent.
+#         State: TODO
 # #38494  open (head 95462642ae) [Fix] preserve pending ReplaySSM updates
 #         during CPU retraction (+32/0 schedule_batch.py; rebase vs our
 #         entries 196-198). State: TODO
-# #46633  open DRAFT (head bb267e6b09) [Perf] gdn: SGLANG_GDN_REPLAYSSM_VERIFY_
-#         _NUM_STAGES knob (default 2; measured recipe = Qwen3.8-Flash-Next;
-#         regression seen only on fp32 SSM -- we run bf16). Port as A/B
-#         instrument. +4/0 gdn_backend + 1 env. State: TODO
 # #42660  open DRAFT (head 511bc4eed9) [Mamba] --radix-cache-skip-decode-insert
 #         (59 MB/slot on Qwen3.8-Flash-Next named in body; concurrency lever
 #         at max-mamba 256; hurts deep multi-turn). 12 files incl.
@@ -184,44 +187,48 @@
 # --- FAM-A3b  HiCache controller/URC tranche (after FAM-A2a; files:
 #     unified_radix_cache.py, hybrid_cache_controller.py, hicache_storage.py
 #     key scheme, parallel_state.py -- HIGH divergence surface, strict serial)
-# #46954  open (head a23ba8303b) [Fix] hicache: preserve sparse restore
-#         checkpoints under host pressure -- upstream GENERALIZATION of our
-#         entry-209; re-read our local delta, retire the subsumed half. +40/-7
-#         hybrid_cache_controller.py (same file as entries 209/217). State: TODO
-# #46707  open (head 4095308888) [Fix] restore sidecars to EVERY Mamba
-#         destination (live request kept stale side state). +22/-13, real
-#         build_hicache_transfers() regression. State: TODO
-# #43110  open (head 15f6d77792) [Fix] resolve derived sidecars over every
-#         SOURCE transfer (mirror bug + byte accounting; broader -- touches
-#         hicache_storage.py, pool_host/group.py, unified_radix_cache.py).
-#         After 46707. State: TODO
-# #46451  open (head 9e61b77766) [Perf] bound full-hit staging waits
-#         (--hicache-storage-prefetch-host-capacity-wait-ms, default 0;
-#         cancellation/expiry hardening our decline-and-retry lacks; supersedes
-#         closed #40361). +90/-11 unified_radix_cache.py. State: TODO
-# #45795  open (head 6ffe9cd46c) [Perf] opt-in async ready-count sync
-#         (--hicache-async-ready-sync kills a per-step blocking gloo collective
-#         -- TP2 short-decode-step critical path; default OFF). +132
-#         unified_radix_cache.py; order vs in-stack #40363 (entry 199) in the
-#         same file. State: TODO
+#     #42912/#35875/#46954/#46707/#43110/#46451/#45795/#47040 LANDED
+#     2026-10-28/29 as entries 288-295 @ code tip 44134b30aa (branch
+#     port-hicache-ctrl kept for forensics; 8 picks, ZERO conflicts -- the
+#     workers' per-hunk union analyses WERE the resolution spec and nothing
+#     exceeded them; all landed files byte-identical to the worker tip
+#     except memory_pool.py, whose entry-295 hunk is patch-id-equal).
+#     MUST-READS IN THE ENTRIES: ** entry 290 = THE ENTRY-209 SUBSUMPTION
+#     MAP ** (hunks a/b already ours and KEPT, incl. our throttled
+#     reporting + the sidecar_hash_values pin guard; c assume_stored =
+#     endpoint-only proof, UPSTREAM WINS; d the NEW aux-staging sizing =
+#     THE HIGHEST-VALUE HUNK at prod's 361/361-full mamba host pool; the PP
+#     companion test NOT portable -- our design ships folded-count-only;
+#     the gate delta ANY-TRAILING_PAGES vs our indices_from_pool-is-None
+#     documented as a kept non-union); ** entry 293 ** = the #46451
+#     per-operation deadline RIDES the entry-209 revoke/poll_miss path with
+#     the retry budget still anchored on entry-217's first-blocked-poll
+#     PollTimer, the two counters SHARING the retry-max-attempts cap, the
+#     TIMEOUT STOP POLICY STILL THE EARLIER EXIT, default 0.0 proved
+#     byte-identical, and the stale-callback identity guard CLOSES OUR
+#     ENTRY-209 RESUBMIT HOLE; ** entry 294 ** = #45795 inserts AFTER
+#     flush_pending_backups with entry-199 batched-backup semantics
+#     MACHINE-CHECKED untouched (zero +/- lines touch _batched_backup) plus
+#     the pp_sync_drain _hcs_state stub adaptation; ** entry 289 ** = the
+#     #35875 rebase METHOD (override("kv_cache_builder.hicache_draft_
+#     budget") post-publish mutation path; insertion moved ahead of the
+#     entry-288/219 sizing contexts) -- ** the "Adjusting --hicache-size"
+#     boot log line is now POSSIBLE at prod, so a boot printing it is
+#     CORRECT, not misconfigured **; ** entry 295 ** = the
+#     --hicache-mamba-size vs entry-219 --hicache-mamba-size-gb FLAG
+#     COLLISION recorded for any future flag decision (ACCOUNTING HALF
+#     ONLY; the flag and its 3 test cases deliberately not taken).
+#     REGRESSION GATE: hicache trailing_endpoint ** 17P EXACT IN ALL FIVE
+#     STAGE-CHECKPOINT RUNS ACROSS THE BATCH **; mem_cache full tree +49
+#     tests/+19S/+18sub exactly attributed. STILL OPEN IN THIS FAMILY: #44342 (+its stacked
+#     drafts), #44732 (operator go/no-go). #33029 MOVED TO SECTION R
+#     (NOT-NEEDED -- closed by the landed tree; see R + the CAVEATS bullet).
 # #44342  open (head 98bfcbd450) [Fix] recover storage worker collectives +
 #         expose liveness (daemon-thread gloo outside try/except: one rank's
 #         slow exists() WEDGES THE TP2 PAIR). 16 files, +166/-20 URC +147/-8
 #         controller + parallel_state.py. #44343/#44339/#44348/#44344 are its
 #         stacked drafts: #44339/#44344 = buffer_only-only -> SKIP permanently;
 #         #44343/#44348 take as a set with 44342 or not at all. State: TODO
-# #33029  open STALE (head 54c6ee41fa) [Fix] HiCache prefetch progress TP
-#         all_reduce deadlock (collective in a per-rank-trip-count loop =
-#         permanent hang). Verify against current tree before porting. State: TODO
-# #42912  open (head ff839ff6f1) [Fix] --hicache-size checked against a
-#         per-rank-sampled memory snapshot (we pass --hicache-size 32). State: TODO
-# #47040  open (head 49bcdf71d2) [Feat] --hicache-mamba-size + FIX: plain
-#         MambaPool counts spec-verify scratch + ReplaySSM rings as host
-#         bytes. TAKE THE ACCOUNTING HALF; flag name collides with entries
-#         219/189 -- integrator decides. State: TODO
-# #35875  open STALE (head 1750e7d94a) [Fix] shrink --hicache-size budget for
-#         the SIDECAR draft host pool (bf16 draft > quantized target
-#         per-token = our case). State: TODO
 # #44732  open (head 68c917c75d) DECISION: separate storage keys for
 #         incompatible host layouts (silently-wrong-KV class; +6/+6
 #         pool_host/{mha,mla}.py). COST: current warm /root/hicache_store +
@@ -303,11 +310,15 @@
 #         num_shared_topk_slots split. HIGH conflict surface vs entries
 #         230/231/244/247 reads (modelopt_quant.py can_fuse_shared_expert,
 #         _moe_runner_fusion_disable). Evaluate WITH A7. State: TODO
-# #43216  merged 2026-10-22 [Fix] nccl: disable graph buffer registration
-#         whenever a captured graph can hold a collective (NCCL_GRAPH_REGISTER
-#         recycling graph-pool temporaries under expandable_segments -- the old
-#         guards missed our shape). Flips NCCL env for graph-heavy boots ->
-#         verify TP2 capture needles at first boot. State: TODO
+# #43216  -- LANDED 2026-10-28 as entry 284 @ code tip 41b7d5afb4 (clean
+#         merged pick, patch-equal to origin/main 786cdfc040; server_args
+#         303P -> 308P/128sub). ** THE NCCL NEEDLE FLAG: NCCL_GRAPH_REGISTER
+#         =0 is now setdefault'd on EVERY multi-rank graph-capable boot --
+#         THE 9.sh TP4 ARM TOO, not just TP2 -- and there is NO warning when
+#         an operator sets it explicitly (setdefault silently yields). The
+#         NCCL environment of every future boot differs from all prior stack
+#         boots; CAVEATS carries the boot-needle bullet (first-boot decode-
+#         graph hang check + old absence-needles STALE). State: LANDED(284)
 # #45631 -> #45855 -> #46167  -- LANDED 2026-10-28 as entries 272-274
 #         @ code tip 2714457128, TAKEN AS THE UNIT (muse_spark hunk of
 #         #45631 DROPPED: file absent from our tree; re-check the out=
@@ -328,14 +339,24 @@
 # #46127  merged 2026-10-24 [Fix] keep >2s prefill steps in busy counters
 #         (our 1M prefills routinely exceed 2s; --enable-metrics + harness
 #         /v1/loads undercounted). State: TODO
-# #44663  merged 2026-10-19 [Fix] record HTTP metrics in tokenizer workers
-#         (--tokenizer-worker-num>1; rides entry 201's worker-owned
-#         preprocessing monitoring). State: TODO
-# #45280  merged 2026-10-20 [Perf] SGLANG_BATCH_TOKENIZER_OUTPUTS opt-out --
-#         makes skipped #44288 adoptable; ride together at landing. State: TODO
-# #46049  merged 2026-10-26 [Fix] grammar: accept-failures get a real error
-#         status (entries 122/195 make grammar+spec+mixed-chunk hot; client
-#         correctness for tool-calling). State: TODO
+# #44663 + #44288 + #45280 + #46049 -- LANDED 2026-10-28/29 as entries
+#         275-278 @ code tip ccea79c232 (srv wave: 3 worker picks + #46049
+#         DIRECT off origin/main; ZERO conflicts, file-set/byte parity
+#         proved). RECORDS: 275 INERT-BUT-CORRECT at our config (no
+#         --tokenizer-worker-num yet; matters when entry-201 scales). 276
+#         ** REVERSES THE ENTRY-227 SKIP OF #44288 ** -- the skip was the
+#         missing latency escape hatch, and #45280 IS that hatch: ** 276 +
+#         277 ARE A UNIT, never land one without the other. ** 277 =
+#         ** OPERATOR-VISIBLE DEFAULT CHANGE: SGLANG_BATCH_TOKENIZER_OUTPUTS
+#         DEFAULTS ON, so grouped detokenizer->worker return sends are LIVE
+#         AT THE NEXT RESTART ** (=0 for per-request delivery); the
+#         #33715-absent adaptation (env gate wraps #44288's ORIGINAL 3-ARG
+#         _split_batch_by_key; 2 upstream tests deliberately NOT imported)
+#         is in the entry, and ** FIRST-DELTA / TOOL-CALL-STREAM LATENCY
+#         MUST BE RE-CHECKED at that boot against the entry-109/160
+#         streaming fast path.** 278 = the grammar error-status direct pick,
+#         patch-id-equal to upstream, constrained 142P unmoved. State:
+#         LANDED(275-278)
 # #45923  merged 2026-10-26 [Fix] weak Req __req__ self-reference (entry-207
 #         class GC fix; our parsers attach customized_info). State: TODO
 # #37958  merged 2026-10-20 + #45559  merged 2026-10-21 -- VERDICT RECORDED
@@ -449,7 +470,11 @@
 #  C11 Watch-list (open PRs, no action): #46191 (HiSparse host KV tier for the
 #     QSA backend -- the most direct upstream answer to admission-over-1M for
 #     THIS arch, but 12 files +205 qsa_kv_pool... overlaps our hottest
-#     divergent QSA zone; wait for the ring decisions), #38724 (MXFP4 KV on
+#     divergent QSA zone; ** the ring decisions are now MADE -- #47051's
+#     two-group floor with the both-groups retraction carry, entries
+#     285-287 -- so re-evaluate #46191 against the LANDED ring shape
+#     (QSA_RING_GROUPS in qsa_kv_pool, re-exported by qsa/metadata) rather
+#     than the old one-group pool **), #38724 (MXFP4 KV on
 #     SM120 for Qwen3.5/3.8 -- FORK-IN-THE-ROAD vs the NVFP4-KV route entries
 #     178/208/43247; read its load-time scale gate regardless), #32314
 #     (HiSparse V2 = HiCache as logical pool), #43703 (BF16 low-M FlashInfer
@@ -462,10 +487,13 @@
 #     structural, know before the next QSA port), #46248 (Engram store w/
 #     Qwen4Exp first -- PLE-on-L3 future), #42490 (zero-copy backends + PLE
 #     side states -- NIXL future), #46422 (direct linker + PLE slot states),
-#     #46502 (reap while paused), #38355 (QSA radix-insert corruption race on
-#     Qwen3.8-Flash-Next BY NAME -- VALIDATE THE DIAGNOSIS before any port;
-#     no reviews, predates our cache ports; if real it outranks much of A).
-#     State: TODO (docs/watch)
+#     #46502 (reap while paused), #38355 -- ** CLOSED 2026-10-29: MOVED TO
+#     SECTION R AS MISDIAGNOSED (verified, not assumed: third-party squashed
+#     base, target file deleted upstream by #40313, insert/free disjointness
+#     AT ITS OWN BASE, symptom = our entries 220/196 class, #40075 is the
+#     real nearby fix). The VALIDATE-THE-DIAGNOSIS instruction is DISCHARGED
+#     and the tripwire the note asked for becomes S-RACE below.** State:
+#     TODO (docs/watch)
 #  C12 SM120 GEMM measurement queue (not ports): #42865 (register-backed
 #     Triton skinny MXFP8 GEMM), #45391 (b12x MXFP8 dense backend -- same
 #     b12x package decision as #32479), #34731 (APPROVED, 10-14 head
@@ -477,9 +505,80 @@
 #     (measurement queue)
 #
 # =============================================================================
+# STACK-OWNED FOLLOW-UPS (not upstream PRs; integrator-queued work)
+# =============================================================================
+#
+# S-RACE  (STACK-OWNED, fork test)  ADOPT THE #38355 REFUTATION AS A
+#         REGISTERED CPU TRIPWIRE -- ** QUEUE: SMALL FORK-OWNED COMMIT,
+#         DO IT AFTER MERGE #5 LANDS (do not interleave it with merge
+#         conflict resolution; it is a test-only file).** Source draft (not
+#         yet in-tree): /tmp/opencode/race38355/test_chunked_radix_insert_
+#         refutation.py -- adopt ** T1 (TestRetractFreeWindow: drives the
+#         REAL release_kv_cache on a CPU paged allocator and asserts the
+#         retraction free-window NEVER intersects tree-adopted slots; 2
+#         cases, pure CPU) and T3 (TestPr38355PremisesGone: asserts the PR's
+#         edit target and auto-detect API are GONE, so a refactor that
+#         re-materializes MambaRadixCache-shaped hooks turns this RED and
+#         RE-OPENS the diagnosis instead of auto-porting it) ** as
+#         test/registered/unit/mem_cache/test_chunked_radix_insert_
+#         refutation.py with register_cpu_ci. ** T2 (the real
+#         UnifiedRadixCache match-after-abort case) STAYS OUT of the CPU
+#         registration ** -- it reuses test_unified_radix_cache_unittest's
+#         build_fixture, which self-skips device-less; run it in the GPU
+#         window under BOTH SGLANG_UNIFIED_RADIX_TREE_CORE_BACKEND=rust
+#         (prod default) and =python. WHY KEEP A REFUTATION AS A TEST: the
+#         C11 note asked for diagnosis validation; T1/T3 are the invariant
+#         tripwire underneath the #38355 MISDIAGNOSED verdict (Section R) --
+#         GREEN means the cache_protected_len ownership protocol holds, RED
+#         means a release path frees from 0 or a publish inserts without
+#         advancing cpl, which IS the dangling class. State: TODO (post-
+#         merge #5)
+#
+# =============================================================================
 # SECTION R -- deliberately EXCLUDED (audit log; both-halves rule unless
 # noted). Do not re-add without new evidence.
 # =============================================================================
+#  #38355 (open, "chunked-prefill radix-insert race corrupting QSA KV
+#  pages", issue #38319) -- ** MISDIAGNOSED, DO NOT PORT (validated
+#  2026-10-29 per the C11 instruction; the fork patch is NOT the fix for
+#  our symptom).** Cite all five legs: (i) ** base** = a THIRD-PARTY
+#  SQUASHED BRANCH (qwen4-main-squashed 4ccff141db, Sep-7), not sglang
+#  main -- its premises must be re-derived before they mean anything here;
+#  (ii) ** target file DELETED UPSTREAM**: mamba_radix_cache.py was removed
+#  by origin/main a8a4d86be9 (#40313, Sep-20) -- the file the PR patches
+#  does not exist in our tree or in current main; (iii) ** insert/free
+#  DISJOINTNESS HOLDS AT ITS OWN BASE**: cache_unfinished_req advances
+#  req.kv.cache_protected_len INSIDE the same scheduler-thread call that
+#  inserts (snapshot line 820) while cache_finished_req(is_insert=False)
+#  frees only kv_indices[cache_protected_len:] (snapshot lines 663-666) --
+#  tree-adopted pages sit BELOW cpl and are never freed by the request's
+#  release, so the claimed dangling cannot occur there either; (iv) ** the
+#  SYMPTOM we were chasing (wrong output after QSA prefix reuse) is
+#  ALREADY EXPLAINED by landed fixes -- entries 220 (#39765 Mamba prefill
+#  publish) and 196-198 (the mamba-radix correctness trio)**, plus the
+#  ring/verify family (entries 118-125/184/285/287); (v) **#40075 IS THE
+#  REAL NEARBY FIX** -- base_prefix_cache.py:437-446 documents the
+#  [cache_protected_len, owned_kv_len) ownership split and #40075 fixed
+#  the LEAK half (between-range never freed), never a dangling half. QSA
+#  adds no independent lifecycle (qsa_kv_pool.py:300-304: compressed_slot
+#  = full_slot // ratio, "lifecycle rides the full-KV allocator and radix
+#  tree"), so the QSA-amplification claim reduces to the full-KV question
+#  answered in (iii). Tripwire: S-RACE above. State: EXCLUDED(MISDIAGNOSED)
+#  #33029 (open STALE, head 54c6ee41fa, "[Fix] HiCache prefetch progress TP
+#  all_reduce deadlock") -- ** NOT-NEEDED, CLOSED 2026-10-29 from the
+#  FAM-A3b queue.** Its edit target is the mamba_radix_cache.py file
+#  DELETED UPSTREAM by #40313 (origin/main a8a4d86be9), and the collective-
+#  in-a-divergent-trip-count class is closed on the landed tree by FOUR
+#  citable mechanisms: @rank_consensus on prefetch_from_storage
+#  (unified_radix_cache.py:2137), the rank_consensus-annotated
+#  check_prefetch_progress short-circuit `request not in ongoing_prefetch
+#  -> return True` (unified_radix_cache.py:2430-2440), the ENTRY-217
+#  synchronized always-masked drain (#43108/#44614), and the ENTRY-293
+#  #46451 stale-callback identity guard `info.operation is not operation`
+#  (unified_radix_cache.py:3098, :3263). Full citation in stack.txt CAVEATS
+#  (2026-10-29 bullet); if a merge re-materializes a mamba_radix_cache-
+#  shaped hook, RE-READ that bullet instead of porting this PR.
+#  State: EXCLUDED(NOT-NEEDED)
 #  Wrong-arch after verification: #44014 (see C7).
 #  Wrong-SKU (sm_121/SM90/SM10x): #43250, #45407, #45585, #45450.
 #  Our-model-adjacent but not our execution path: #46619 (prefill graphs off),
