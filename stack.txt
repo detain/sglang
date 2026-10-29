@@ -1,6 +1,6 @@
 # stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
 #
-# STACK: qwennext-stack-311+merge5-b3-2026-10-29 (main @ 2a6c204570, MERGE #5 TAKEN -- see synced; B3 RE-PLANTED, entry 311)
+# STACK: qwennext-stack-312+merge5-b4-2026-10-29 (main @ 2a6c204570, MERGE #5 TAKEN -- see synced; B3+B4 RE-PLANTED, entries 311/312)
 #   main+pr36787+pr37275+pr38144+pr38209+pr36644+pr39862+pr39809+pr39893+local_hicache_qsa_fixes
 #   +pr39614+pr39978+pr40002+pr39065+pr40501+pr40175+pr40362+pr39391+pr37061+pr39333+pr33778
 #   +pr38977+pr39977+pr40480+pr39880+pr40235+pr39807+cpu-triage+boot-fix+plan_updates_perf
@@ -31,7 +31,12 @@
 #    controllers, URC clamp/deadline/wait/batching/294-sync, pool_host+swa+
 #    components mamba, memory_pool fp8-store/ring, kv_cache_builder 288/289,
 #    rust bindings+mamba guard -- 9 integration commits, see entry 311)
-#   (entries 1-311; *=squash/ported, see commit messages. 10-10 added
+#   +merge5-b4-2026-10-29(B4 re-plant: scheduler core/COW-catcher/entry-200
+#    capacity pair, schedule_batch+brp track/brp-265, schedule_policy #46977
+#    pricing reconciliation (177/266/268/269/270), spec cluster (eagle_decode
+#    103 + replayssm 102/120 + grammar-mask 195), misc markers+runner-zone
+#    merge damage -- 5 integration commits, see entry 312)
+#   (entries 1-312; *=squash/ported, see commit messages. 10-10 added
 #   entries 157-161: parser batch A (Qwen3-Coder tool-call fixes + sampling
 #   upper bounds), on top of upstream merge #3 (see synced). 10-10b added
 #   entries 162-166: SM120 batch B (#42863 PCIe-IPC vocab gathers, #42566
@@ -269,7 +274,7 @@
 #   make --enable-mixed-chunk safe and fix the QSA verify ring collision.
 #   * = picked with local modifications, see the entries)
 # branch : qwennext-stack
-# tip    : 1dc41b2723   (MERGE-5 SESSION 2A: B3 re-plant commits 2a5646b230..1dc41b2723 -- hicache L3/controllers/URC/pools/components/rust; entry 310's merge/B1/kvcache-graft history sits below; docs entry 311 above)
+# tip    : 5cde7a5ede   (MERGE-5 SESSION 2B: B4 re-plant commits 9bd9007c81..5cde7a5ede -- scheduler core/COW catcher/entry-200 capacity pair, schedule_batch+brp, schedule_policy #46977 reconciliation, spec cluster, misc markers; SESSION 2A's B3 2a5646b230..1dc41b2723 and entry 310's merge/B1/kvcache-graft history sit below; docs entry 312 above)
 # base   : upstream sgl-project/sglang main @ 7ad55e4386 ([HiCache] TMA-staged
 #          host<->device KV transfer kernel (sm_90+) (#40278), 2026-09-21)
 # synced : upstream main @ f209e67767 (#39643, 2026-09-28) MERGED IN as
@@ -411,6 +416,52 @@
 #          re-plant), B6 environ+C0a+CAVEATS re-pin. PROD BOOT FORBIDDEN
 #          until B3 completes. [B3 LANDED -- entry 311; gate 17P proven;
 #          the ban itself STAYS until sessions 2B/3 + operator judgment.]
+#          [B4 LANDED -- entry 312; managers+spec damage closed to ENV-class
+#          residue; the ban STAYS (B2/B5/B6 + operator judgment remain).]
+# updated: 2026-10-29 (entry 312): MERGE-5 SESSION 2B -- BATCH B4 RE-PLANT
+#          COMPLETE (5 integration commits, 9bd9007c81..5cde7a5ede, this docs
+#          commit above). All **23** TODO(merge5) B4 markers consumed (the
+#          briefing's 20 was the tsv row count; the tree carried 23 -- B3's
+#          census lesson applied: per-file grep census, report truth).
+#          unit/managers RE-PIN: 1009P/81F/9S/412sub/2err -> ** 1056P/2F/9S/
+#          474sub ** (both F = the documented order-dependent
+#          test_mm_process_config pair, env class, reproduce at base; the
+#          row's 2err never reproduced in this dir -- population corrected
+#          in-place on 310). unit/spec RE-PIN: -> ** 388P/0F/21S/238sub/
+#          0err ** EXACT over 7 consecutive full-dir runs. THE NAMED
+#          COLLISION DECIDED PER-HUNK (table in 312): the spec-mamba four
+#          (#45491/#45435/#45472/#45670) ARRIVED IN-RANGE and their fork-
+#          entries DEDUPED against upstream forms (with evidence: the
+#          #46980/#46990/#45504 chains SUBSUMED #45491's window form into
+#          fill_front_out_cache_loc; the entry-119 supersession closed);
+#          the admission six (#46272/#43484/#46496/#46643/#45607/#45789)
+#          are git-log-PROVEN NEVER-MERGED (both directions searched) --
+#          #46643's fix(1) was ALREADY the merged base-PrefillBudget form
+#          (reconciled), fix(2)+(3) + 267 + 269 + 270 re-planted onto
+#          #46977's pricing (266 SPLIT: unified half superseded-by-
+#          equivalent on the budget, classic half re-adapted), 265's brp
+#          id-set re-planted with the #45435 gate interlock byte-checked.
+#          io_struct 1F NEEDS-ATTENTION resolved: upstream's in-range
+#          pointer_head guard vs stale fork test stub (neither fork-delta
+#          loss nor env) -- one-field re-anchor. B3's entry-198 cross-note
+#          CLOSED: the MambaCowAllocError CATCHER is in (scheduler-side
+#          try/except NO_TOKEN, COW component test re-anchored to the B3-5
+#          kv_storage seam). OWED-RESTART-WATCH lines for #45472 (sync-free
+#          planning, VERIFIED present upstream-form) and #46643 (uncondi-
+#          tional admission re-runs, re-planted) REAFFIRMED in 312 --
+#          TTFT/starvation A/B still owed at the next prod restart, and
+#          THIS SESSION NEVER BOOTED NOR TOUCHED A GPU. DoD-d gate:
+#          trailing_endpoint 17P RE-VERIFIED post-B4. Diff audit: ZERO
+#          mem_cache/ + qsa/moe-quant changes (B3/B5 zones honored).
+#          Adjacent re-pins: distributed 156P UNMOVED, model_loader 161P/
+#          19S/91sub, model_executor/runner 103P/2S/73sub (7F proven
+#          merge-era at ae6ee527ba, repaired here incl. the _init_model_hooks
+#          BOOT-INTEGRITY loss found by it). ENV debts recorded not fixed:
+#          pcie_vocab_gather GPU suite, openai 2.6.1<2.8.0 serving_responses
+#          import, imageio (whole multimodal_gen import chain -- the
+#          component_manager re-plant was AST+compile-verified; a LIVE
+#          crash-class find: parallel_executor already CALLS the dropped
+#          residency methods).
 # updated: 2026-10-29 (entry 311): MERGE-5 SESSION 2A -- BATCH B3 RE-PLANT
 #          COMPLETE (9 integration commits, 2a5646b230..1dc41b2723, this docs
 #          commit above). All 15 TODO(merge5) B3 markers consumed (merge
@@ -8487,11 +8538,43 @@ STACK, IN BUILD ORDER (bottom first)
       #     ids 3F = EXPECTED-REPLANT B4; -523sub = upstream test PRUNE
       #     (#45672) of upstream's OWN subtest families -- needs-attention-
       #     audit in B4, NOT a fork loss (fork subtests were ~50).
+      #     [RESOLVED-AT-B4 (entry 312): 81F -> ** the two order-dependent
+      #     test_mm_process_config ENV F's ONLY ** (damage row's 81F excluded
+      #     them; the per-file population re-measured 83F at session start --
+      #     same 12 files + the 14F mamba_prefill_cache_boundary the row
+      #     omitted). Every named file ZERO: prefill_adder 39F->71P/94sub,
+      #     dcp 7F->5P/6sub, mixed_track 7F->7P EXACT, grammar_tail 1F->4P,
+      #     latch+retry 7F->9P, retract 1F->2P EXACT, io_struct 1F->GREEN
+      #     (diagnosis in 312: upstream's pointer_head guard vs stale stub --
+      #     NOT fork loss), brp mixed-ids 3F->3P, boundary 14F->5P/12sub
+      #     EXACT (220 pin). NEW PIN (post-merge layout, per-file method):
+      #     1056P/2F/9S/474sub. -523sub AUDIT: the three vanished managers
+      #     test files (dfs_weight, batch_is_full_latch, uno_token_accounting)
+      #     ALL died to upstream's OWN #45672 prune; the first+third BYTE-
+      #     IDENTICAL to their origin/main copies (zero fork delta), the
+      #     second's 3-line fork delta pinned the is_empty arm that #46643's
+      #     unconditional clear subsumes -- recorded, NOT re-homed. The row's
+      #     "2err": no collection error reproduces in unit/managers at the
+      #     damage state or after -- the DOCUMENTED pair is the spec row's
+      #     (below); same-population claim VERIFIED as that row.]
       #   unit/spec        329P/11S/192sub -> 363P/20F/21S/238sub/2err:
       #     +34P from upstream's new spec tests; 17F = eagle_decode_
       #     allocation (B4 spec-arg graft) + 3 others; 2err = the two
       #     DOCUMENTED pre-existing (gdn cutedsl probe, replayssm_ring_fold)
       #     = mostly B4.
+      #     [RESOLVED-AT-B4 (entry 312): 20F -> ** ZERO **; NEW PIN
+      #     388P/0F/21S/238sub/0err (session-start re-measure 364P/22F/1err;
+      #     the 2 extra F, dflash_mla + replayssm_verify_ple, were ALSO B4:
+      #     fixed by the spec_utils re-plant, dflash deterministic in 7/7
+      #     post-fix full-dir runs, one unrepeated 1F sighting recorded as a
+      #     non-reproducing flake). 2err POPULATION CORRECTED:
+      #     test_replayssm_ring_fold.py was PRUNED by upstream's own #44690
+      #     in-range (file gone; stale .pyc), the "gdn cutedsl probe" lives
+      #     in kernels/ops/attention (6 CUDA-import collection errs there --
+      #     B1/B5 kernels zone), and the spec dir's actual err
+      #     (test_replayssm_extend_fold ImportError) was NOT pre-existing-
+      #     env: the MERGE DROPPED its spec_utils functions -- re-planted,
+      #     now 0err.]
       #   unit/distributed 133P/1S/35sub -> 156P/0F/1S/35sub GREEN (+23P
       #     upstream comm tests; entries 308/309 guards intact).
       #   unit/server_args 308P/128sub -> 459P/7F/271sub (332P/7F in
@@ -8523,7 +8606,8 @@ STACK, IN BUILD ORDER (bottom first)
       #     at the final tree, incl. the two 2-rank gloo cases; and unmoved
       #     at every cluster checkpoint after). The clamp half lives again in
       #     the controller against the rewritten structure; entry-218's ONE-
-      #     fence ordering rule + entry-209's decline-and-retry are BACK.]
+      #     fence ordering rule + entry-209's decline-and-retry are BACK.
+      #     RE-VERIFIED POST-B4 (entry 312 DoD-d): 17P = 17P.]
       #   cargo sglang-radix-tree: UNMEASURABLE -- torch-sys/libtorch build
       #     probe FAILS REPRODUCIBLY at the PRE-MERGE tip too (byte-ident
       #     error in a scratch worktree) = pre-existing ENV breakage from
@@ -8672,6 +8756,179 @@ STACK, IN BUILD ORDER (bottom first)
       # NEVER mega): unit/mem_cache ** 1861P/1209F/364S/4514sub/2err ** with
       # the env-class decomposition in the header updated-bullet; re-measure
       # after B2's kits fix (the 1056F block should fall to honest skips).
+
+      # absorption).
+
+        312. 9bd9007c81..5cde7a5ede  STACK-OWNED  ** MERGE-5 B4: scheduler/admission re-plant (SESSION 2B, BATCH B4) **
+      # THE re-plant of the scheduler/admission/spec layer onto the #46977
+      # pricing + #46970x state/track structure the merge took: 5 cluster
+      # commits, one per cluster, battery ACTUALS in every commit body
+      # (damage -> after, per named file, CVD=9, prod venv, PYTHONPATH=python,
+      # import sglang proven from the tree). Sole-writer held: zero pushes,
+      # zero GPU execution, zero prod boots; B3's mem_cache zone untouched by
+      # ANY B4 edit (diff audit b980e083fd..HEAD: ZERO mem_cache/ files --
+      # prefill_budget needed no edit, see the table; qsa/*/moe-quant zones
+      # zero -- moe_hook diff is marker-removal-only); B1 15/B2 2/B5 23
+      # markers diff-audited INTACT. TRUE MARKER CENSUS (B3 lesson applied):
+      # the tree carried **23** B4 markers at session start (briefing's "20"
+      # was the tsv row count; entry 310's census 23 was right) -- ALL 23
+      # CONSUMED, B4=0. Per-cluster: B4-1 9bd9007c81 scheduler.py core +
+      # entry-200 CAPACITY PAIR (model_runner allocator= kwarg is the pair's
+      # ground -- our configurator's PageInterleave allocator.size branch
+      # SURVIVED the merge byte-identical, so upstream's consumer-side
+      # multiplications double-counted; tp_worker/import + 3 scheduler sites
+      # + init_req subtraction re-planted; upstream's invariant-checker hunk
+      # OBSOLETE by refactor) + entry-198 CATCHER (B3-5's raiser + the
+      # base_prefix_cache class + the merged revert block + unconditional
+      # alloc_group_end all VERIFIED -- only the try/except was missing; COW
+      # component-test stub re-anchored to the #46970x kv_storage seam) +
+      # 220 publish-before-prepare + 122 grammar-mixed sync + 267 retract
+      # floor + 268 scheduler-side unconditional clear + 211 prewarm line +
+      # 215/305 DEDUPED (already present, byte-compared to the fork form);
+      # B4-2 561bbfd654 schedule_batch + batch_result_processor + mm_utils:
+      # schedule_batch VERIFIED-ABSORBED clause-by-clause (#45435/#45472
+      # landed IN-RANGE per git log -- the brief's merged-list is TRUE only
+      # for the spec-mamba four; the admission six #46272/#43484/#46496/
+      # #46643/#45607/#45789 are VERIFIED NEVER-MERGED -- git log
+      # 12dc623102..2a6c204570 --grep = zero hits -- so their re-plant is
+      # as-is, not a dedupe; entry-119 supersession chain closed in
+      # upstream's form), brp RE-PLANTED (_logprob_rows_to_host + #46272
+      # id-set with the mamba_untracked_decode_batch_idx interlock kept
+      # byte-invariant), mm_utils VERIFIED SUPERSEDED-BY-EQUIVALENT
+      # (upstream landed plural padding_values() = pad_values or
+      # (pad_value,) -- the fork scalar union as its degenerate case; the
+      # mm_schedule searchsorted consumer is the #45472 no-sync form);
+      # B4-3 6ec02cfc0c schedule_policy + scheduler adder wiring -- THE
+      # #46977 RECONCILIATION (table below) + entry-177/266/268/269/270;
+      # B4-4 4bae731967 spec cluster: eagle_utils 103 RE-PLANT merged with
+      # upstream's mirrorless block (getattr-guarded seq_lens_cpu read),
+      # spec_utils 102/120 RE-PLANT RETARGETED (#45504 kernel path
+      # attention.fla->attention.linear; #46980 deleted the req-pool
+      # spec-state delegate -> read via mamba_pool, same route the verify
+      # commit uses), 195 RE-PLANT (host bitmask walk + needs_vocab_mask
+      # skip + leftover-mask clear on the unconstrained path), 261 DEDUPED
+      # WITH EVIDENCE (573b5716f5 in-range; the later in-range refactors
+      # #45504/#46990 collapsed it to fill_front_out_cache_loc carrying
+      # #45491's own comment), eagle_info 194 VERIFIED-ABSORBED (runner_ids
+      # auto-sizes with the fork helper -- the B3-4 recorded upgrade);
+      # B4-5 5cde7a5ede 14 misc markers + io_struct + runner-zone damage
+      # (7F PROVEN merge-era at ae6ee527ba in a scratch worktree: the
+      # _init_model_hooks DEFINITION lost while its __init__ call +
+      # replay consumer survived = every real DecodeCudaGraphRunner build
+      # AttributeErrors -- boot-integrity class, entry-61; 2 gate arms
+      # pinned in test_flashinfer_autotune_gate per its own precedent;
+      # entry-61 hook off-pin restored in graph_routing's __new__ stub).
+      # ** #46977 RECONCILIATION DECISION TABLE (per-hunk; THE named
+      # collision -- upstream's pricing rewrite over scheduler/
+      # schedule_policy/prefill_budget vs entries 265..270) **
+      # 265 #46272 brp id-set: fork delta SURVIVES (scan->set in the
+      #   prefill-result loop) RE-PLANTED; schedule_batch/mini_3fs halves
+      #   VERIFIED present; the set feeds the SAME branch #45435's gate
+      #   sits in -- interlock byte-invariant (entry 265's audit holds).
+      # 266 #43484: UNIFIED half SUPERSEDED-BY-EQUIVALENT (#46977 moved
+      #   the exact ledger onto the budget: rem_state_slots =
+      #   schedulable_available + mamba_evictable, debit = tokens//cost
+      #   in reserve(), gate via state_slots_exhausted -- factor 1, the
+      #   fork's own byte-for-byte contract satisfied WITHOUT the adder
+      #   -- so the adder twin is DROPPED, no double-ledger). CLASSIC half
+      #   SURVIVES RE-ADAPTED: isinstance(HybridReqToTokenPool) + cost==0
+      #   gate, per-req 1+mamba_initial_tracking_slots (the PR's import
+      #   bug substitution kept -- names exist NOWHERE upstream), budget_
+      #   state < per_req, required-charge > ledger with defer_staged,
+      #   slot-unit DEBIT threaded at all 5 commit sites + the admission
+      #   commit. Pool MagicMock-safe (266(c) discipline preserved).
+      # 267 #46496: SURVIVES AS-IS (one clamp line; upstream never landed
+      #   it) -- B4-1.
+      # 268 #46643: fix(1) available_chunk_tokens SUPERSEDED-BY-PRESENCE
+      #   (the fork's cap-minus-one-page/defer form SURVIVED the merge
+      #   byte-identical in base PrefillBudget -- prefill_budget.py got
+      #   ZERO B4 edits, evidence = diff 309tip..HEAD); fix(2) guard-
+      #   EVERY-policy SURVIVES (merged tree had upstream's SPF-only
+      #   restriction -- #46643 NEVER MERGED) RE-PLANTED; fix(3)
+      #   unconditional batch_is_full SURVIVES RE-PLANTED B4-1 (absorbs
+      #   closed #35609; the hybrid-SSM/is_empty/priority arms' tests
+      #   re-pin to _resets_latch semantics -- all four latch cases green).
+      # 269 #45607: SURVIVES AS-IS, COMPOSED with #46977's
+      #   floor_chunked_tokens DCP grid as page-align -> grid -> fork-cut
+      #   (entry 269's page-first-then-lcm rule preserved; exact_chunk_fill
+      #   arm untouched per the entry's own scope note).
+      # 270 #45789: SURVIVES -- the SPLIT_PREFILL_AT_MAMBA_FORK gate is
+      #   OUR env (environ.py union landed complete at the merge, B6
+      #   carries ZERO markers confirmed), re-planted onto the new
+      #   admission pricing at all 5 sites incl. the larger-host-hit
+      #   re-clamp and the leaves-budget-behind return; 270(i) policy-
+      #   reopening term stays the PROVEN NO-OP, (iii) _align_prefill_
+      #   chunk KEEPS its default truncation arg (no QSA-continuation
+      #   drift).
+      # 177 #42767: kwarg + _align_prefill_chunk + the get_kvcache
+      #   call-site (dropped at merge -- the held_row/prefill_adder
+      #   TypeErrors were its absence, not its presence).
+      # 217 PrefillAdder-closes-admission half: finish_storage_prefetch_
+      #   admission sites VERIFIED PRESENT (B3-3/217 surface) -- DEDUPED.
+      # 200 #43527 capacity pair: fork form RESTORED (see B4-1 above);
+      #   B3-4's static_kv_storage absorption untouched.
+      # IO_STRUCT VERDICT (the session-1 NEEDS-ATTENTION flag): genuinely
+      # diagnosed = UPSTREAM-OWN guard extension vs stale fork stub (the
+      # failure is tokenizer_manager.py's _validate_joint_schema_request
+      # growing ModelConfig.pointer_head in-range; origin/main has the
+      # guard, io_struct.py itself never mentions pointer_head -- the
+      # damage row's "not a conflict file" was right and STILL needed
+      # B4: the fork's test stub predates the guard). Fix = test-side
+      # pointer_head=None, the pattern siblings already adopted. NOT a
+      # fork-delta loss, NOT an upstream-own break, NOT env.
+      # OWED RESTART-WATCH REAFFIRMED (both DEFAULT-ON, both now proven
+      # present in the tree): #45472's sync-free extend planning (verified
+      # upstream-form in B4-2: _gather_mamba_track_indices + pinned non-
+      # blocking track tensors + ping-pong host mirror + searchsorted MM
+      # mask) and #46643's UNCONDITIONAL per-round admission re-runs (re-
+      # planted B4-1/B4-3) -- entry 263/268's TTFT + waiting-queue
+      # starvation watches ride the SAME owed restart as entry 201; the
+      # entry-198 precedent (measure at first restart) STILL OWED, prod
+      # boot stays BANNED this session (nothing was ever booted or run on
+      # GPU by B4).
+      # NEW PINS (re-derived against post-merge reality, per-file method):
+      # unit/managers 1009P/81F/9S/412sub/2err -> ** 1056P/2F/9S/474sub **
+      # (damage re-measure at session start 1025P/83F -- the 81/83 delta is
+      # the order-dependent mm_process_config pair, env class, reproduce at
+      # base; BOTH remaining F are that pair; the row's 2err never
+      # reproduced in this dir -- population is the spec row's, corrected
+      # above). unit/spec 363P/20F/21S/238sub/2err -> ** 388P/0F/21S/238sub/
+      # 0err ** (7 consecutive full-dir runs EXACT + the managers-dir
+      # combined sequence). Adjacent dirs re-pinned UNMOVED by B4's edits:
+      # unit/distributed 156P/1S/35sub GREEN, unit/model_loader 161P/19S/
+      # 91sub GREEN, unit/model_executor/runner 103P/2S/73sub (was 96P/7F AT
+      # THE MERGE COMMIT -- proven with a scratch worktree; those 7F were
+      # never in the damage map: runner dir is NOT a 310 row -- session 1's
+      # checkpoint battery skipped it; B4-5 absorbed it on my markers'
+      # authority), kernels_namespace untouched. GPU-suite ENV class
+      # recorded NOT-fixable here: test_pcie_ipc_vocab_gather 27F
+      # (register_cuda_ci 4-gpu-b200; IDENTICAL at ae6ee527ba), the
+      # serving_responses module (upstream's own beam.py wants openai==2.8.0,
+      # venv has 2.6.1 -- a VENV debt, sibling of the deepseek-recipe 5F
+      # class), and the whole multimodal_gen import chain (imageio absent --
+      # component_manager's re-plant battery is AST-equivalence + py_compile
+      # + the executor contract, diffusion never ran at this seat).
+      # REMAINING B4 MARKERS: ** ZERO ** (23/23). B4 DEBTS/NOTES: (1) the
+      # dcp_logical consumers test re-adapted to the #46970x seams (shape/
+      # token_capacity + no-capacity-kwarg assertions) -- the anti-double-
+      # widening intent PRESERVED, now tripwired against any future re-
+      # multiplication; (2) held_row's upstream rewrite DROPPED the fork's
+      # get_kvcache+truncation_align_size fixture halves (entry 215's own
+      # adaptations) -- restored, the pattern to check whenever a
+      # fork-touched test file is overwritten by a DRIVER:THEIRS pick; (3)
+      # test_qwen4_exp_ple_staging-era model_context() replay now runs
+      # for real decode runners again (_init_model_hooks boot-integrity
+      # repair -- session-3/battery audits should keep the __new__-stub
+      # hook off-pins in mind for any NEW upstream runner tests); (4) the
+      # non-reproducing 1F spec flake sighting (once, in 10 runs) recorded
+      # -- if it ever recurs, start with cross-file runtime-context state,
+      # the mm_process_config class; (5) entry 310's claim that #46643/
+      # #45789-era changes "arrive IN THE MERGE RANGE" holds ONLY for the
+      # spec-mamba four -- the admission SIX never merged (git-log-proven
+      # both ways) and every admission-side landing above is a fork port,
+      # not an upstream pick: future merges must keep resolving those six
+      # (and #43484's ledger!) against the budget seam until upstream
+      # lands them.
 
       # absorption).
 
