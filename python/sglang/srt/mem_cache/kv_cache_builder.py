@@ -47,6 +47,7 @@ from sglang.srt.mem_cache.kv.memory.views import MHAKVView, MLAKVView
 from sglang.srt.mem_cache.memory_pool import MHATokenToKVPool
 from sglang.srt.mem_cache.pool_host.base import (
     _WRITE_BACK_STAGING_PAGE_CHUNK,
+    explicit_host_memory_budget,
     prepare_page_unified_write_back_staging,
 )
 from sglang.srt.mem_cache.pool_host.mha import prepare_mha_write_back_staging
@@ -500,16 +501,39 @@ def build_kv_cache(
         tp_rank=parallel.tp_rank,
         tp_group=parallel.tp_group,
     )
-    with auto_size_hicache(
-        params,
-        hicache_draft_plan,
-        enabled=enable_hierarchical_cache or retraction_backup == "host_pool",
+    # When --hicache-size is set and a SIDECAR draft will be registered,
+    # shrink the budget so the *total* (target + draft) host memory stays
+    # within the user-specified cap.  The draft host pool must match the
+    # target's token count (1-to-1 index sharing), but its per-token byte
+    # cost can be larger than the target's (e.g. quantized target + bf16
+    # draft), causing the combined allocation to exceed --hicache-size.
+    # (stack entry 289 / #35875; the graft carried the helper, the call site
+    # is this block.) Runs before create_tree_cache() and before any
+    # host-memory budget snapshot, so the corrected values flow into both the
+    # tree cache and the memory bag.
+    if (
+        enable_hierarchical_cache
+        and hicache_draft_plan is not None
+        and hicache_draft_plan.mode == HiCacheDraftMode.SIDECAR
+    ):
+        target_device_pool = tp_worker.model_runner.token_to_kv_pool
+        _adjust_hicache_size_for_draft(
+            server_args,
+            target_device_pool,
+            hicache_draft_plan.device_pools,
+        )
+
+    host_pools = enable_hierarchical_cache or retraction_backup == "host_pool"
+    with (
+        auto_size_hicache(params, hicache_draft_plan, enabled=host_pools),
+        # One rank-shared snapshot of the explicit host budget for every pool
+        # built under it (stack entry 288 / #42912; the context manager
+        # survived the merge in pool_host/base.py, this is its only hook).
+        explicit_host_memory_budget(enabled=host_pools),
     ):
         tree_cache = create_tree_cache(tree_context)
 
-        if (
-            enable_hierarchical_cache or retraction_backup == "host_pool"
-        ) and hicache_draft_plan is not None:
+        if host_pools and hicache_draft_plan is not None:
             maybe_register_hicache_draft(
                 tree_cache=tree_cache,
                 draft_plan=hicache_draft_plan,
@@ -539,7 +563,6 @@ def build_kv_cache(
     )
 
 
-# TODO(merge5): re-plant entry 288-295(hicache-ctrl-era) semantics (batch B3); fork hunks saved /tmp/opencode/merge5-dossier/replant/python__sglang__srt__mem_cache__kv_cache_builder.py.fork-hunks.patch
 
 
 def _adjust_hicache_size_for_draft(

@@ -22,6 +22,9 @@ from sglang.srt.configs.mamba_utils import (
     Mamba2StateShape,
 )
 from sglang.srt.mem_cache.kv_cache_configurator import KVCacheConfigurator
+from sglang.srt.model_executor.model_runner_components.spec_aux_hidden_state import (
+    SpecAuxHiddenStateConfig,
+)
 from sglang.srt.runtime_context import get_schedule, publish, reset_context
 from sglang.srt.server_args import ServerArgs
 from sglang.srt.speculative.spec_info import SpeculativeAlgorithm
@@ -70,6 +73,13 @@ class TestMambaSpeculativeBudget(CustomTestCase):
         planner.hybrid_gdn_config = planner.mambaish_config
         planner.hybrid_kda_config = None
         planner.extra_mamba_cache_bytes_per_req = 0
+        # Post-#4697x the budget path consults the fused-draft plan; these
+        # stubs carry no draft placement (empty aux config short-circuits the
+        # decision to "not fused"), which is the pre-fusion arithmetic the
+        # assertions encode.
+        planner.spec_aux_config = SpecAuxHiddenStateConfig()
+        planner.is_hybrid_swa = False
+        planner.is_draft_worker = False
         planner.spec_algorithm = SpeculativeAlgorithm.EAGLE
         return planner
 

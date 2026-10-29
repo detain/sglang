@@ -29,8 +29,20 @@ def _device_pool():
 
 
 def _host_pool(pool):
+    # Post-#46970x the host ctor consumes the pool's MHABufferInfo (scale
+    # layout included), not the pool.
     return MHATokenToKVPoolHost(
-        pool, RATIO, 0, 2, "layer_first", pin_memory=False, device="cpu"
+        pool._mha_buffer_info(),
+        RATIO,
+        0,
+        2,
+        "layer_first",
+        pin_memory=False,
+        device="cpu",
+        # The ctor sizes against the device pool's geometry.
+        device_capacity_tokens=pool.size,
+        start_layer=pool.start_layer,
+        end_layer=pool.start_layer + pool.layer_num,
     )
 
 
