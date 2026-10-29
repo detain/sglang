@@ -1,6 +1,6 @@
 # stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
 #
-# STACK: qwennext-stack-274-2026-10-28
+# STACK: qwennext-stack-295-2026-10-28
 #   main+pr36787+pr37275+pr38144+pr38209+pr36644+pr39862+pr39809+pr39893+local_hicache_qsa_fixes
 #   +pr39614+pr39978+pr40002+pr39065+pr40501+pr40175+pr40362+pr39391+pr37061+pr39333+pr33778
 #   +pr38977+pr39977+pr40480+pr39880+pr40235+pr39807+cpu-triage+boot-fix+plan_updates_perf
@@ -16,7 +16,12 @@
 #   +spec-mamba-2026-10-28(pr45491+pr45435+pr45472+pr45670)
 #   +admission-2026-10-28(pr46272*+pr43484*+pr46496*+pr46643*+pr45607*+pr45789*)
 #   +parsers-2026-10-28(pr44124+pr45631+pr45855+pr46167)
-#   (entries 1-274; *=squash/ported, see commit messages. 10-10 added
+#   +srv-2026-10-28(pr44663+pr44288+pr45280+pr46049)
+#   +gdn-2026-10-28(pr46839*+pr42688*+pr36014*+pr46856*+pr46633*+pr43216)
+#   +qsaring-2026-10-28(pr47051*+pr46125*-oracle+pr45865*)
+#   +hicachectrl-2026-10-28(pr42912*+pr35875*+pr46954*+pr46707*+pr43110*
+#    +pr46451*+pr45795*+pr47040*)
+#   (entries 1-295; *=squash/ported, see commit messages. 10-10 added
 #   entries 157-161: parser batch A (Qwen3-Coder tool-call fixes + sampling
 #   upper bounds), on top of upstream merge #3 (see synced). 10-10b added
 #   entries 162-166: SM120 batch B (#42863 PCIe-IPC vocab gathers, #42566
@@ -254,7 +259,7 @@
 #   make --enable-mixed-chunk safe and fix the QSA verify ring collision.
 #   * = picked with local modifications, see the entries)
 # branch : qwennext-stack
-# tip    : 2714457128   (the stack.txt commits sit above it)
+# tip    : 44134b30aa   (the stack.txt commits sit above it)
 # base   : upstream sgl-project/sglang main @ 7ad55e4386 ([HiCache] TMA-staged
 #          host<->device KV transfer kernel (sm_90+) (#40278), 2026-09-21)
 # synced : upstream main @ f209e67767 (#39643, 2026-09-28) MERGED IN as
@@ -325,6 +330,76 @@
 #          MERGE #5 STILL OWED (refreshed at the 248/249 docs commit):
 #          origin/main is now 1dd0f361b8 = +435 commits since 12dc623102.
 #          [The 553836c164/+378 figure was the count at the 230-242 batch.]
+#          MERGE #5 STILL OWED (refreshed at the 275-295 docs commit):
+#          origin/main is now 1776e2dcf8 = +1,111 commits since 12dc623102
+#          (+676 since 1dd0f361b8; the wanted_stack Section-C header's
+#          f2d3188925/+1,097 figure was the count at the 10-28 sweep).
+#          git cherry vs origin/main at the 295 tip: 423 '+' / 29 '-'
+#          (405 '+' / 26 '-' at the 274 tip) -- this session's 21 picks
+#          are 18 '+' (fork-divergent ports/adaptations) + 3 '-' whose
+#          patches match upstream byte-for-byte (#44288, #46049, #43216;
+#          #46049's equality additionally proved by patch-id, entry 278).
+# updated: 2026-10-28/29 (entries 275-295): FOUR-WAVE INTEGRATION BATCH,
+#          21 picks, ZERO CONFLICTS AT THE INTEGRATOR (no pick needed a
+#          hand resolution -- every worker's documented union held and
+#          nothing exceeded it; the predicted environ.py friction was the
+#          two append-only lines of entries 277/283, both auto-merged).
+#          FILE-SET + CONTENT PARITY PROVED per wave: my landed file list
+#          == the worker branch's, and every file the OTHER landed waves
+#          did not touch is byte-identical to the worker tip (environ.py
+#          and memory_pool.py excepted on the documented intervening-wave
+#          deltas; #47040's memory_pool hunk additionally proved
+#          patch-id-equal to the worker's).
+#          BEHAVIOR CHANGES OWED AT THE RESTART: (1) ENTRY 277 IS
+#          OPERATOR-VISIBLE -- SGLANG_BATCH_TOKENIZER_OUTPUTS defaults ON,
+#          so grouped detokenizer->tokenizer-worker return sends are LIVE
+#          at the next boot (entry-227's #44288 skip is REVERSED by the
+#          pair; opt out with =0). Re-check FIRST-DELTA / tool-call-stream
+#          latency (entries 109/160 parse tool calls from streamed deltas
+#          upstream of the grouping). (2) ENTRY 281 CHANGES GDN
+#          TARGET-VERIFY OUTPUT BITS BY DESIGN (verify-side beta now
+#          rounds through bf16 like packed decode -- an ACCEPT-LENGTH win,
+#          not a no-op). (3) ENTRY 284 SETS NCCL_GRAPH_REGISTER=0 VIA
+#          setdefault ON EVERY MULTI-RANK GRAPH-CAPABLE BOOT, the 9.sh TP4
+#          arm included -- the first stack feature whose boot changes the
+#          NCCL environment; CAVEATS carries the needle bullet. (4) The
+#          three new HiCache knobs of entries 293/294 default 0.0/False
+#          (proved by a live ServerArgs parse) -- byte-identical until
+#          armed.
+#          ENTRY-209 REGRESSION GATE HELD ALL THE WAY: trailing_endpoint
+#          17P EXACT after every batch-7 pick; urc 44P/2885S -> 2904S;
+#          entry-199 batched-backup semantics PROVED untouched (zero
+#          added/removed lines touch _batched_backup across the whole
+#          hicache wave). QSA REMEDY ADJUDICATED: #47051 CHOSEN, #46125
+#          IMPORTED AS THE ORACLE ONLY (32 active / 3 internals-skipped,
+#          widths arithmetic on record) -- entry 285 carries the layout-
+#          equivalence proof, entry 287 the BOTH-RING-GROUPS retraction
+#          carry that keeps the #47051 corruption from coming back after
+#          a retraction. Entry 290 carries the ENTRY-209 SUBSUMPTION MAP
+#          (a/b ours-and-kept, c upstream-wins, d the new aux-staging
+#          sizing = highest-value hunk at prod's 361/361-full mamba pool).
+#          PINNED BASELINES MOVED (one clean re-pin table in CAVEATS):
+#          managers 1013 -> 1016P/2F/3S/935sub (the 2F = the KNOWN
+#          order-dependent test_mm_process_config pair; a single run also
+#          showed 3F/1015P -- same 1,021 population, same class, NOT
+#          batch-caused); mem_cache full tree 2048 -> 2052 (batches 4-6)
+#          -> 2101P/3047S/3989sub (batch 7 = +49/+19/+18 EXACTLY per the
+#          worker); spec dir 335 -> 336P/11S/184sub (attributed to entry
+#          282's ngram test, NOT the qsa wave); server_args 303 -> 308P/
+#          128sub (entry 284); observability 169 -> 170P/36S/18sub; gdn
+#          dir 42 -> 46S + ONE PRE-EXISTING COLLECTION ERROR
+#          (test_gdn_cutedsl_ring_verify.py probes get_device_properties
+#          at import -- present at base, GPU-window debt, not a skip).
+#          function_call 652P/1964sub and constrained 142P/1S/69sub
+#          SURVIVED UNMOVED; lint gates (check_registered_tests,
+#          check_no_registered_tests_in_package, check_no_bare_pytest_main)
+#          rc=0 and ruff v0.15.1 repo ruleset + format clean on all 51
+#          changed files. GPU DEBT (new this session): #42688's 111-case
+#          module (280), #46125's 32-active oracle cases + #47051's
+#          device-cuda qsa suites (285/286), the atol-0 verify==packed KL
+#          needle (281), the fp32-snapshot numeric parity spot (279), and
+#          the #46954/#46451 live-L3 staging paths (290/293). Code tip
+#          44134b30aa, tree clean, NOTHING pushed.
 # updated: 2026-10-28 (entries 261-274): THREE-WAVE INTEGRATION BATCH,
 #          14 picks, ZERO INTEGRATOR CONFLICTS (every predicted
 #          collision zone auto-merged or landed clean; the two mandated
@@ -6508,6 +6583,756 @@ STACK, IN BUILD ORDER (bottom first)
       # code (audit trail: S/ subtests match to the unit). (y) logits
       # 56P/7S unverifiable on this box -- see the 274 GPU-debt block.
 
+
+  srv-2026-10-28 wave (branch port-server-metrics, born 2705ebb0a6; 4
+  picks = 3 worker commits + 1 DIRECT integrator pick (#46049, per the
+  handoff); ALL FOUR CLEAN, ZERO conflicts. Parity PROVED: my landed file
+  set == the worker branch's plus exactly batch_result_processor.py (the
+  direct pick), and every file the admission/spec-mamba/parsers waves did
+  NOT touch is byte-identical to port-server-metrics -- environ.py
+  excepted, where the delta is the other waves' envs (this wave's own
+  hunk is the one append-only line at 1594):
+
+        275. 54cc25fe80  PR #44663 (MERGED 2026-10-20 @ origin/main 81ac15391c)  HTTP request metrics recorded IN tokenizer workers -- middleware registration moves to module-import time so a worker that re-imports http_server gets http_requests/responses/active + routing_keys; init stays in lifespan (after PROMETHEUS_MULTIPROC_DIR)
+      # https://github.com/sgl-project/sglang/pull/44663 (5 files,
+      # +169/-114: new srt/observability/http_request_metrics.py + its
+      # test, both http_server entrypoints, utils/common.py). APPLIED AS
+      # MERGED, no deviation. POSTURE AT OUR CONFIG: ** INERT-BUT-CORRECT
+      # ** -- we do not pass --tokenizer-worker-num (default), so the
+      # worker-side registration path does not run today; the fix becomes
+      # load-bearing when the entry-201 (#39716) worker-owned
+      # preprocessing story scales workers out. Rides with entry 201's
+      # monitoring story, same restart. New pinned baseline: the
+      # observability dir 169P -> 170P (the one new test file), 36S/18sub
+      # unchanged.
+
+        276. 5ebdb09639  PR #44288 (MERGED 2026-10-15 @ origin/main 4273814771)  detokenizer return IPC sends GROUPED by owning tokenizer worker -- one send per worker per step instead of one per request
+      # https://github.com/sgl-project/sglang/pull/44288 (2 files,
+      # +132/-31: multi_tokenizer_mixin.py + its test). APPLIED AS MERGED
+      # (patch-id shows it in origin/main verbatim).
+      # ** SKIP REVERSAL ON RECORD: ** the entry-227 sweep review SKIPPED
+      # this PR because grouped return sends had NO LATENCY ESCAPE HATCH
+      # for streaming. #45280 (entry 277, landing immediately after) adds
+      # SGLANG_BATCH_TOKENIZER_OUTPUTS=0 -- exactly the missing hatch --
+      # which is why the skip is reversed now rather than at the 10-19
+      # sweep. ** THE PAIR IS A UNIT (276+277): NEVER land 276 without
+      # 277; a stack with grouping and no opt-out is the config entry 227
+      # declined.** Battery at this pick: mixin/detok-stream pair
+      # 19P/3sub -> 22P/3sub (+3 grouping tests).
+
+        277. 0180082fd0  PR #45280 (MERGED 2026-10-20 @ origin/main 468e26f253)  SGLANG_BATCH_TOKENIZER_OUTPUTS opt-out for the grouped return sends -- ** DEFAULT ON = GROUPED SENDS LIVE AT THE NEXT RESTART (operator-visible behavior change) **
+      # https://github.com/sgl-project/sglang/pull/45280 (3 files,
+      # +36/-18). environ.py hunk kept strictly APPEND-ONE-ONLY (fork
+      # policy; the line sits at environ.py:1594 as EnvBool(True)).
+      # ** #33715-ABSENT ADAPTATION: ** upstream authored this after
+      # #33715 reshaped _split_batch_by_key(output, keys); OUR BASE LACKS
+      # #33715, so the env gate wraps #44288's ORIGINAL 3-ARG call
+      # _split_batch_by_key(output, ipcs, lambda ipc_name: ipc_name). The
+      # env-gated test body transfers unchanged (single sends already
+      # carry http_worker_ipcs=None here via the dataclass default); the
+      # UPSTREAM TEST'S #33715-SPECIFIC CASES WERE NOT IMPORTED (2
+      # upstream tests deliberately not taken -- recorded so a future
+      # merge of #33715 re-checks this seam).
+      # RESTART WATCH (the reason the opt-out exists): the entry-109/160
+      # streaming tool-call fast path parses tool calls from streamed
+      # deltas at the tokenizer-manager level; grouping batches
+      # detokenizer->worker delivery PER STEP, so FIRST-DELTA and
+      # tool-call-stream latency must be re-checked on the boot that
+      # carries this (SGLANG_BATCH_TOKENIZER_OUTPUTS=0 is the documented
+      # rollback for latency-sensitive deployments). Battery: mixin file
+      # 15P/2sub; pair 22P/5sub -- +2 subtests are the grouped-vs-
+      # individual parametrization of the retargeted grouping case (test
+      # count stays 15: rename, not addition).
+
+        278. ccea79c232  PR #46049 (MERGED 2026-10-26 @ origin/main 5ef99013ac)  grammar accept-FAILURES get a real ERROR status instead of a silent finish -- client correctness for tool calling under grammar+spec+mixed-chunk (entries 122/195 made this hot)
+      # https://github.com/sgl-project/sglang/pull/46049 (1 file,
+      # +10/-2, batch_result_processor.py only).
+      # ** DIRECT INTEGRATOR PICK (worker handoff): ** this PR had no
+      # commit on port-server-metrics; the handoff recorded that the
+      # ENTIRE diff is batch_result_processor.py and that its contexts
+      # BYTE-MATCH the tree after batch 1 (the admission wave rewrote
+      # neighbouring brp regions, and the porting worker had already
+      # verified cleanliness at the 738/878 call sites). Picked straight
+      # off origin/main as git cherry-pick -x 5ef99013ac3 -> ** ZERO
+      # CONFLICT and patch-id IDENTICAL to upstream **
+      # (be461df5ac == be461df5ac), so the handoff's byte-match claim is
+      # machine-proved, not just observed.
+      # Battery: constrained dir 142P/1S/69sub EXACT at the batch-4 tip
+      # AND at the final 295 tip; managers dir moved only by this wave's
+      # own +3P/+2sub (entry 276/277), i.e. the brp edit disturbed no
+      # brp test contract.
+
+      # BATCH-4 BATTERY (integrator, main tree; CVD=9, prod venv,
+      # per-file+dirs): observability dir 170P/36S/18sub = PIN 169P/36S/
+      # 18sub +1 new file case EXACT. MANAGERS DIR 1013P/2F/3S/933sub ->
+      # ** 1016P/2F/3S/935sub **: +3P = entry 276's three grouping tests,
+      # +2sub = entry 277's parametrization; the 2F stay the KNOWN
+      # order-dependent test_mm_process_config pair (reproduced at base in
+      # a throwaway worktree; measured EXACT at the batch-4 tip AND at the
+      # 295 tip). CORRECTION TO THE PREDICTED ATTRIBUTION: the wave note
+      # forecast "+2subtests from 44288" -- measured, #44288 adds ZERO
+      # subtests (19P/3sub -> 22P/3sub) and ALL +2 subtests come from
+      # #45280; the dir total still lands at 935sub. mixin 15P/2sub,
+      # mixin+detok-stream pair 22P/5sub. constrained 142P/1S/69sub EXACT
+      # (entry 278 gate). http_server import smoke OK (the module-import
+      # registration of entry 275 does not raise device-less).
+
+  gdn-2026-10-28 wave (branch port-gdn-core, born 0df18e97a0; 5 OPEN
+  ports + 1 merged pick; ALL SIX CLEAN, ZERO conflicts; file sets
+  IDENTICAL to the worker tip and every file the three intervening waves
+  did not touch byte-identical (environ.py is the sole intervening
+  exception -- this wave's own delta there is ONE append-only line):
+
+        279. e2c44b2984  PR #46839 (open, head 7705f6c3ff, ported)  gdn: honour the fp32 radix track snapshot in Triton extend -- ** THE MISSING CONSUMER OF ENTRY-185: the fp32 snapshot path NEVER FIRED on our tree until this pick **
+      # https://github.com/sgl-project/sglang/pull/46839 (3 files,
+      # +238/-12: gdn_triton.py, new test_gdn_track_state_snapshot.py
+      # 199 lines, test_mamba_track_state_dtype.py +27/-... ). entry-185
+      # (#44195) landed the chunk.py plumbing and the declaration, but
+      # the CONSUMER-side forwarding gate never made TritonGDNKernel.
+      # _extend actually pass the buffer: a donated prefill checkpoint
+      # off the 64-token FLA chunk grid restored from h -- allocated in
+      # the ACTIVATION dtype (bf16, already rounded) -- while the aligned
+      # path copies the fp32 last_recurrent_state. This retargets the
+      # gate from the supports FLAG to the PRESENCE OF THE BUFFER (head
+      # semantics) and declares supports_track_state_snapshot on
+      # TritonGDNKernel so the chunk kernel writes the fp32 boundary
+      # state into the buffer the backend allocates.
+      # FORK-TEST RETARGET (recorded as a deviation from a clean pick):
+      # our entry-185 case test_extend_without_snapshot_support_passes_
+      # nothing CONTRADICTED the new gate -- the flag now gates ONLY the
+      # backend's allocation, already pinned by the dispatch test -- so it
+      # is retargeted to test_extend_without_a_snapshot_forwards_nothing
+      # (renamed + rewired, semantics of the surviving invariant kept).
+      # NOT PULLED: the PR's graph_table_args hunks -- FOREIGN to our tree
+      # (that machinery does not exist here). GPU DEBT: fp32-snapshot
+      # NUMERIC PARITY vs the aligned path on real off-grid donations.
+
+        280. c928966f73  PR #42688 (open, head 99a8da4255, ported)  mask unused ReplaySSM history before checkpoint arithmetic -- 0*inf contamination in reused ring slots used to POISON the committed checkpoint
+      # https://github.com/sgl-project/sglang/pull/42688 (2 files,
+      # +185/-15). gdn_replayssm_compact_commit_kernel loaded the whole
+      # ring window (MAX_CACHE_LEN rows) regardless of n_history; reused
+      # storage can hold non-finite values beyond the tracked history and
+      # ZERO DECAY CANNOT SUPPRESS NaN/Inf there (0*inf), so the loads are
+      # now masked by history_mask and in the track path rows outside the
+      # tracked prefix are explicitly zeroed before the dot products. The
+      # kernel FILE WAS BYTE-IDENTICAL to the PR base -> hunk verbatim.
+      # ** GPU DEBT, LOUD: ** the PR's test file is 111 CUDA cases with no
+      # CPU-exercisable logic; it ships behind a MODULE-LEVEL CUDA SKIP
+      # per repo convention (verified: the ungated copy collects exactly
+      # 111 cases). On this box all 111 are UNEXECUTED -- the acceptance-
+      # length drift signature this fixes is only provable in a GPU
+      # window; the gdn dir skip count 45 -> 46 is that one module.
+
+        281. ff58a92f23  PR #36014 (open, head ede0919405, ported)  align GDN target-verify beta semantics with packed decode -- ** CHANGES GDN TARGET-VERIFY OUTPUT BITS BY DESIGN (an accept-length win, NOT a no-op) **
+      # https://github.com/sgl-project/sglang/pull/36014 (2 files,
+      # +68/-1). The fused target-verify path formed beta as a PURE FP32
+      # sigmoid while packed decode materializes sigmoid(b) in the
+      # ACTIVATION dtype (bf16) before widening: the same draft step
+      # verified under a DIFFERENT beta than it decoded with -- direct
+      # accept-length loss on NEXTN-over-GDN, KL-consistency class. Only
+      # the verify-only branch (IS_KDA False, DISABLE_STATE_UPDATE True)
+      # changes; decode and KDA keep the fp32 expression VERBATIM. The
+      # ReplaySSM ring stash stores the FORMED b_beta, so commit-time
+      # replay inherits the corrected rounding too.
+      # STALE-PR UNION (Sept branch, rebase-checked): our tree's beta site
+      # carries the FORK's MATCH_CUTEDSL_DECODE elif branch (a KDA-only
+      # mode, enforced by the wrapper) that upstream does not have -- the
+      # elif chain is preserved with MATCH_CUTEDSL_DECODE kept as the
+      # LEADING branch. Test ported verbatim at head (dt_bias bf16 per the
+      # head blob) plus a module CUDA-availability skipif so the file's
+      # local ledger keeps its environment baseline.
+      # ** DEBT: the 1-case verify==packed atol-0 KL NEEDLE -- the bit-
+      # alignment claim is only machine-provable on CUDA; owed at the GPU
+      # window WITH the accept-length re-measure at the restart.**
+      # Ledger move (pre-existing class, not a regression): fused_verify
+      # 16F/34S -> 16F/35S under CVD=9 (the 16F reproduce IDENTICALLY at
+      # the pre-wave base in a throwaway worktree; they are the no-CUDA
+      # env class); CUDA CI unchanged.
+
+        282. 161c02471f  PR #46856 (open, head 199d187354, ported)  cover CUDA graph padding in verify state indices -- graph alignment can exceed the eager ceiling, padded verify batches indexed PAST the table end
+      # https://github.com/sgl-project/sglang/pull/46856 (2 files,
+      # +46/-9). build_verify_intermediate_state_indices sized its table
+      # from the EAGER ceiling only; CUDA-graph alignment can exceed eager
+      # max_batch_size even WITHOUT MLP-sync, so the table now covers BOTH
+      # maxima and every out-of-pool row is clamped onto the reserved
+      # scratch padding row (pool_size) -- the same discard-row convention
+      # ragged verify already used. linear/utils.py was byte-identical to
+      # the PR parent (git apply -3, verbatim, no stale-hunk concern: the
+      # queued mamba-track landings around this area are not in these
+      # hunks' context). The new test class patches get_eager/
+      # get_cuda_graph_max_batch_size -- both exist in our utils.common,
+      # the builder imports them lazily per call.
+      # PIN ATTRIBUTION (this entry is the SPEC-DIR MOVER of the session):
+      # ngram 9P/2sub (measured at the pre-wave base) -> 10P/6sub here,
+      # and that +1P/+4sub is the ENTIRE movement of test/registered/
+      # unit/spec/ this session -- 335P/11S/180sub -> 336P/11S/184sub.
+      # Our bs<=48 buckets + 4-row verify geometry is what makes the
+      # padding case real here.
+
+        283. 1d477ef15c  PR #46633 (open DRAFT, head bb267e6b09, ported)  SGLANG_GDN_REPLAYSSM_VERIFY_NUM_STAGES -- configurable ReplaySSM verify pipeline depth, ** default 2 == BYTE-IDENTICAL until armed **
+      # https://github.com/sgl-project/sglang/pull/46633 (3 files, +97/0).
+      # EnvInt(2) -- identical to the wrapper's current default, so the
+      # path is byte-identical until the env is set. Read ONCE in
+      # GDNAttnBackend.__init__, passed to gdn_replayssm_spec_decode at
+      # the verify launch. Measured recipe in the PR = Qwen3.8-Flash-Next;
+      # the regression the PR reports is on fp32 SSM pools, WHICH PROD DOES
+      # NOT RUN (bf16) -- port as an A/B instrument, not a fix.
+      # environ.py: ONE line in the existing Qwen3.5/GDN block, kept
+      # append-only (now at environ.py:1948) to avoid colliding with the
+      # concurrent environ.py queues. DEVIATION: the PR's test imports
+      # kernels.ops.attention.linear.gdn_replayssm_spec_decode --
+      # upstream MOVED the module; our tree keeps it under attention.fla,
+      # so ONLY THE IMPORT PATH is adapted. Cookbook rows skipped per the
+      # family directive. File ships its own skipUnless(CUDA): stages 1S.
+
+        284. 41b7d5afb4  PR #43216 (MERGED 2026-10-22 @ origin/main 786cdfc040)  NCCL: disable graph buffer registration whenever a captured graph CAN hold a collective -- ** THE NCCL NEEDLE FLAG: NCCL_GRAPH_REGISTER=0 is now setdefault'd on EVERY multi-rank graph-capable boot, the 9.sh TP4 arm included **
+      # https://github.com/sgl-project/sglang/pull/43216 (2 files,
+      # +96/-24: arg_groups/parallel_hook.py + test_server_args.py).
+      # APPLIED AS MERGED, patch shows in origin/main (git cherry '-').
+      # NCCL's GRAPH_REGISTER recycling of graph-pool temporaries under
+      # expandable_segments is the bug class; the OLD guards missed our
+      # shape, the new predicate covers every boot where a captured graph
+      # can hold a collective. ** EVERY FUTURE STACK BOOT HAS A DIFFERENT
+      # NCCL ENVIRONMENT FROM ALL PRIOR BOOTS -- see the CAVEATS
+      # boot-needle bullet before reading any first-boot log or writing
+      # any needle test.** Battery: server_args file 303P/128sub ->
+      # 308P/128sub EXACT (the wave's predicted figure; +5P = the new
+      # default-off/untouched cases in the NCCL-graph-register class,
+      # subtests unmoved).
+
+      # BATCH-5 BATTERY (integrator, main tree; CVD=9, prod venv):
+      # test_mamba_track_state_dtype.py 8P/9sub ** AT EVERY MEASUREMENT OF
+      # THE WAVE'S MANDATED PER-PICK GATE ** (five individual after-pick
+      # runs for picks 1-5, no drift, + one run at the final 295 tip which
+      # covers pick 6 -- #43216 touches neither the GDN paths nor this
+      # file). gdn dir 42S -> 45S (entry 279's
+      # three snapshot cases) -> 46S (entry 280's module-level skip) and
+      # stays 46S -- with ONE PRE-EXISTING COLLECTION ERROR in
+      # test_gdn_cutedsl_ring_verify.py (module-level
+      # torch.cuda.get_device_properties(0) in cutedsl_gdn_mtp_ring;
+      # REPRODUCED AT THE PRE-WAVE BASE, run the dir with
+      # --continue-on-collection-errors): GPU-window debt, and it is NOT a
+      # skip so the skip-count chain 42/45/46 stays clean. fused_verify
+      # 16F/34S -> 16F/35S (entry 281's documented ledger move; 16F
+      # pre-existing, proved at base). ngram 9P/2sub -> 10P/6sub (entry
+      # 282, EXACT worker pair). stages 1S (entry 283). server_args file
+      # 303P/128sub -> 308P/128sub (entry 284). replayssm trio
+      # (mem_cache/ring_accounting + server_args/ngram_replayssm_
+      # validation + spec/replayssm_extend_fold) 10P EXACT. gdn prefill
+      # backend policy 19P/38sub EXACT. spec dir 335 -> 336P/11S/184sub
+      # (entry 282 only). PRE-EXISTING, NOTED DURING THE SWEEP: kernels/
+      # ops/attention/test_replayssm_ring_fold.py collects 1F under CVD=9
+      # (RuntimeError: No CUDA GPUs are available) -- identical at base,
+      # same env class as the fused_verify 16F.
+
+  qsaring-2026-10-28 wave (branch port-qsa-ring, born d598eff7da; 3
+  picks -- 1 chosen remedy + 1 oracle-only import + 1 retraction carry;
+  ALL THREE CLEAN, ZERO conflicts; ALL ELEVEN landed files byte-identical
+  to the worker tip):
+
+        285. dd5d2e5898  PR #47051 (open, head f78ee79014, ported)  QSA: keep TWO groups in the pending index-key ring under TARGET_VERIFY -- ** THE REMEDY DECISION: #47051 IS THE CHOSEN REMEDY, #46125 IS THE ORACLE (entry 286) **
+      # https://github.com/sgl-project/sglang/pull/47051 (9 files,
+      # +143/-40). THE DEFECT: a verify step writes the ring slot of
+      # every draft row; when the window does not start on a group
+      # boundary, its later rows OVERWRITE members of the group still
+      # pending before them -- read back within the step AND, with
+      # NOTHING restoring the ring after acceptance, a rejected row's key
+      # is read as a pending group member on a LATER step, the corrupted
+      # compressed key persisting for the WHOLE REQUEST and skewing
+      # indexer block selection. NEXTN 3/1/4 = W4 at ratio 4 is the PR's
+      # exact geometry, i.e. ours.
+      # ** LAYOUT-EQUIVALENCE PROOF (the reason the PR transfers): ** our
+      # ring is ratio * qsa_num_groups rows with a TWO-GROUP FLOOR, not
+      # the PR's one-group layout; where the two layouts MEET they are
+      # the same function -- at num_groups == 2 our
+      # ((p // ratio) % 2) * ratio + p % ratio IS the residue
+      # decomposition of p % (2 * ratio), so the PR's remedy lands as the
+      # two-group FLOOR plus the shared constant, with every addressing
+      # site tied to the pool's qsa_num_groups as the single source of
+      # truth. At the prod geometry that is ** 8 SLOTS PER RING **
+      # (ratio 4 x 2 groups), collision-free for every parametrized
+      # window in the oracle (entry 286).
+      # NINE UNION NOTES, CONDENSED: (1) QSA_RING_GROUPS is DEFINED in
+      # mem_cache/qsa_kv_pool.py and RE-EXPORTED by qsa/metadata.py
+      # (+ __all__) -- the PR's constant home would create a MODULE CYCLE
+      # because our metadata.py imports qsa_kv_pool (entry-200 sharding
+      # types); the PR's import path qsa.metadata.QSA_RING_GROUPS still
+      # resolves, DODGING the entry-200 import cycle. (2) The PR's RING
+      # constexpr hunks in qsa/graph_metadata.py are a NO-OP here --
+      # entries 184/200 already thread a NUM_GROUPS constexpr with
+      # slot = req*ring_span + group*RATIO + pos%RATIO (identical at 2,
+      # generalized wider); only the launchers' getattr(pool,
+      # "qsa_num_groups", 1) fallbacks move to QSA_RING_GROUPS so a pool
+      # without the attribute cannot under-widen vs the builders. (3) Our
+      # inert extend-dump stays at rows [0, ratio) (the PR moves it to
+      # [0, ring)); BOTH are inside never-allocated request slot 0's
+      # territory -- ours kept per "keep OUR layout". (4) Backend guard:
+      # we keep our DERIVED window draft <= ratio*(groups-1)+1 (entries
+      # 118-125); the PR's own safety sentence ("a window of up to ratio
+      # + 1 rows never shares a slot") IS THE groups==2 INSTANCE of it;
+      # prod 4/1/4 sits inside both; the None-pool fallback keeps the
+      # historical ratio bound. (5) Pool: PR's hardcoded factor becomes
+      # (a) the __init__ default 1 -> QSA_RING_GROUPS, (b)
+      # pending_ring_num_groups() flooring at QSA_RING_GROUPS even without
+      # speculation while our draft-derived widening ceil((draft + ratio
+      # - 1)/ratio) stays ABOVE the floor, (c) the stale "ceil(draft_
+      # tokens / ratio)" init comment -- which described the ONE-GROUP
+      # formula that caused the collision -- corrected. (6) qsa/
+      # qsa_indexer.py (NOT in the PR): entry-184 snapshot docstring
+      # rationale UPDATED FOR THE WIDENED RING -- ** entry-184's read-
+      # before-store stays NEEDED: a forward spanning three ring groups
+      # lands back on the pending group's slots ** -- and its getattr
+      # fallbacks sync. (7) utils/triton_prewarm_ops.py (NOT in the PR;
+      # the entry-210/211 file): the recipe geometry's fallback follows
+      # the launchers' new QSA_RING_GROUPS default, so ** THE PREWARM
+      # CANNOT WARM A STALE ONE-GROUP SPECIALIZATION CLASS ** (fallback
+      # synced). (8) test_qsa.py: the PR's
+      # test_verify_rows_never_overwrite_a_pending_group ports VERBATIM
+      # (starts 0..7); TOOTH-CHECK on CPU: 6 of 8 starts FAIL under
+      # num_groups=1 ([1,2,3,5,6,7]), 0 of 8 under this port -- matching
+      # the PR's "fails for 6 of the 8 start positions". (9) CONTRACT
+      # TESTS RENAMED WHERE THE CONTRACT MOVED: test_qsa_ring_slots.
+      # test_defaults_to_single_group -> test_defaults_to_the_two_group_
+      # ring (the explicit num_groups=1 legacy oracle test is UNTOUCHED)
+      # and test_qsa_kv_pool's pending_ring_num_groups cases (0,1)/(1,1)
+      # -> (0,2)/(1,2) for the floor. Battery: ring_slots 12P/22sub,
+      # kv_pool 8P, test_qsa 84P/140S (76P baseline + 8 new), fused_kv_
+      # prepare 12P/146S, retraction 3P (pre-287), qsa kernels dir
+      # collects 571.
+
+        286. 6cccb5acf4  PR #46125 (open, head 85cb8d0af7, ** TEST ORACLE ONLY -- REMEDY NOT TAKEN **)  the 497-line verify-ring suite of the MUTUALLY-EXCLUSIVE alternative remedy, imported as the cross-validation oracle for #47051 -- 32 ACTIVE / 3 SKIPPED
+      # https://github.com/sgl-project/sglang/pull/46125 (1 file, +558;
+      # the test ONLY). THE REMEDY IT CARRIES IS DELIBERATELY NOT TAKEN
+      # (power-of-two qsa_ring_size sized by the draft count --
+      # incompatible with the entry 118-125/184/200 machinery we already
+      # run); the operator rule from the queue was "take its 497-line
+      # verify-ring test EITHER WAY", so this is the oracle #46125's own
+      # authors would have wanted: it judges our chosen remedy against
+      # THEIR key-integrity invariants.
+      # CLASSIFICATION: ** 32 ACTIVE / 3 SKIPPED (of 35) ** -- ACTIVE:
+      # 24 test_full_acceptance_verify_matches_decode (widths 2,3,4 x
+      # prompt 61-64 x eager/graph), 6 test_partial_acceptance_batched_
+      # verify_matches_prefill (widths 4,5,8 -- the post-acceptance
+      # REJECTED-ROW case #47051 documents), 2 test_mtp_draft_extend_
+      # matches_prefill; these are OBSERVABLE invariants, adapted only
+      # mechanically. SKIPPED INDIVIDUALLY (reasoned): test_pool_allocates_
+      # the_ring's max_rows/ring 1/4, 4/8, 8/16 -- it asserts #46125's
+      # OWN qsa_ring_size attribute and its power-of-two rounding
+      # (including a ONE-GROUP ring at plain decode) = INTERNALS OF THE
+      # UNTAKEN REMEDY, layout facts of a remedy we did not choose, not
+      # key-corruption facts.
+      # WIDTHS ARITHMETIC VERIFIED (why no active case is genuinely
+      # unpassable here): ratio=4 -> widths 2/3/4/5 need 8 slots = exactly
+      # #46125's pow2 width; width 8 -> 12 slots here vs 16 there, and
+      # BOTH exceed the required span draft + ratio - 1 = 11 while staying
+      # inside this tree's guard draft <= ratio*(groups-1)+1 = 9.
+      # ** GPU-WINDOW EXPECTATION: every ACTIVE case is a BIT-EQUAL PASS
+      # TARGET under the two-group remedy ** (they only collect on this
+      # box: 35S via the module CUDA gate). Harness adaptations
+      # (mechanical): _pool keyword qsa_max_rows_per_request= ->
+      # qsa_num_groups=QSATokenToKVPool.pending_ring_num_groups(...);
+      # _graph_metadata also supplies write_owner_mask + decode_block_
+      # positions (-1 int32) because THIS TREE's row-metadata kernel
+      # writes them on every row (entry-200) while #46125's base kernel
+      # has neither; launch_graph_metadata/QSAIndexerMetadata/QSAIndexer/
+      # backend signatures verified compatible against entries
+      # 184/212/213. NOT PORTED: the PR's untouched
+      # test_qsa_pending_ring.py (179 CPU lines) -- it pins the UNTAKEN
+      # remedy's ring_size keyword and the rings that "lose members",
+      # superseded for CPU purposes by test_qsa_ring_slots.py plus the
+      # #47051 port.
+
+        287. 73d049a7a7  PR #45865 (open, head c022f8a104 incl. f3de46139d, ported)  carry QSA indexer state through cpu_tensor retraction -- ** THE LOAD-BEARING INTERACTION: THE CARRY MUST COVER BOTH RING GROUPS OR IT REINTRODUCES #47051 CORRUPTION **
+      # https://github.com/sgl-project/sglang/pull/45865 (2 files,
+      # +179/-14). THE DEFECT: Req.offload_kv_cache snapshots through
+      # get_cpu_copy and load_kv_cache restores into a DIFFERENT
+      # request-pool row (verified in schedule_batch.py: both ends pass
+      # req_pool_index=self.kv.req_pool_idx), so a resumed-after-
+      # retraction request ran with ANOTHER REQUEST'S compressed index
+      # keys + pending ring -- the same stale-sidecar class as #39830, on
+      # the retraction path.
+      # ** THE BOTH-RING-GROUPS CARRY (this is the entry that keeps entry
+      # 285 honest): ** the PR sizes a ring as req*ratio + position%ratio
+      # and transfers `ratio` rows -- ONE GROUP. Our ring is
+      # ratio*qsa_num_groups rows with the two-group floor, so
+      # _qsa_ring_rows() takes the request's WHOLE RING, tracking
+      # get_qsa_pending_state_buf_infos' rows_per_item (the PD-transfer
+      # contract). ** Restoring only the first group would leave the
+      # second group holding the previous row owner's keys, and with the
+      # WIDENED ring a verify-pending group's members may live in EITHER
+      # group -- a one-group carry REINTRODUCES EXACTLY the cross-step key
+      # corruption #47051 fixes, for every post-retraction request. A
+      # future one-group carry after a #47051 retraction is the failure
+      # mode to guard here, not the reverse.**
+      # UNIONS/DEVIATIONS: our entry-25 port already shipped the
+      # compressed-K leg in the {"kv","qsa_compressed_k"} DICT form with
+      # one-row-per-token gathers and a legacy-tuple tolerance path --
+      # THAT SHAPE IS KEPT (it pairs with itself through
+      # RetractionBackup.cpu_tensors) and the PR's new content (ring
+      # gather/restore, req_pool_index + local-QSA-layer gating, per-axis
+      # coverage) grafts on as "qsa_pending_ring": (per-layer keys, rope)
+      # | None; ** the entry-25 DICT PAYLOAD IS KEPT, NOT the PR's tuple
+      # **; sync plumbing keeps our blocking .to("cpu")/index_copy_ on
+      # the compressed leg and the PR's non_blocking gathers on the ring
+      # leg with ONE current_platform.synchronize() per direction (the PR
+      # head itself dropped two of its four syncs as redundant); the
+      # PP-stage gate is verbatim-in-logic (no local QSA layer -> ring leg
+      # None, shared RoPE ring neither read nor written). ** THE STALE
+      # ENTRY-25 NOTE on get_qsa_key_state_buffer ("deliberately not
+      # carried ... rewrites the ring from scratch") IS REPLACED -- its
+      # premise is DEAD: the resume lands on a NEW request row, so
+      # nothing rewrites the ring from scratch.**
+      # TESTS: the PR's new suite ports INTO OUR EXISTING CPU FILE
+      # test_qsa_retraction_cpu_copy.py rather than adding a second
+      # retraction suite (payload adapted tuple-index -> dict-key,
+      # backup[1][1] -> backup["qsa_pending_ring"]; ring arithmetic
+      # widened to RING_ROWS = RATIO * NUM_GROUPS with every row/group/
+      # RoPE axis carrying its own value); its first case already existed
+      # here for the compressed leg and its ring half ports as
+      # test_resumed_request_keeps_its_pending_ring covering BOTH groups.
+      # TOOTH PROOF: 3P -> 7P, and with the ring gather gated OFF the
+      # ring tests go RED (2F) -- then restored.
+
+      # BATCH-6 BATTERY (integrator, main tree; CVD=9, prod venv):
+      # test_qsa 84P/140S EXACT (worker figure; 76P + 8 new), ring_slots
+      # 12P/22sub EXACT, kv_pool 8P EXACT, retraction_cpu_copy 3P at the
+      # 285 pick -> ** 7P at the 287 pick EXACT (teeth: 2F with the ring
+      # gather disabled, restored) **, fused_kv_prepare 12P/146S EXACT,
+      # the 286 oracle 35S behind the module CUDA gate, kernels/ops/
+      # attention/qsa COLLECTS 571 CLEAN, disaggregation wire 79P/70sub
+      # and triton_load_watch_prewarm 30P per the worker's set (unchanged
+      # by these picks). ** unit/spec PIN: 335P SURVIVES THE QSA WAVE --
+      # measured 336P/11S/184sub at the batch-6 tip and at the 295 tip,
+      # and the +1P/+4sub is entry 282's ngram test (batch 5), NOT the
+      # qsa graph_metadata work (the qsa wave's own contribution is
+      # ZERO; verified by the base->285 tip delta).** GPU DEBT: the
+      # paged-vs-packed torch.equal oracle and EVERY device-cuda qsa
+      # suite including this wave's 32 oracle cases only COLLECT here.
+
+  hicachectrl-2026-10-28 wave (branch port-hicache-ctrl, born
+  d598eff7da; 8 OPEN ports on the highest-divergence file in the stack
+  -- unified_radix_cache.py -- and their per-hunk union analyses WERE the
+  resolution spec: ALL EIGHT CLEAN, ZERO conflicts, no union exceeded;
+  every landed file byte-identical to the worker tip except memory_pool.
+  py, whose entry-295 hunk is separately proved patch-id-equal):
+
+        288. 29b944dceb  PR #42912 (open, head ff839ff6f1, ported)  size EXPLICIT host pools against ONE snapshot taken by every rank -- guards our --hicache-size 32 boot path
+      # https://github.com/sgl-project/sglang/pull/42912 (3 files,
+      # +172/-8: kv_cache_builder.py, pool_host/base.py, new
+      # test_hicache_explicit_budget.py). With an explicit --hicache-ratio
+      # or --hicache-size, auto-sizing is OFF and each host pool checked
+      # its size against memory sampled WHEN IT WAS BUILT ((free - 10GiB)
+      # // ranks_per_host): a rank that arrives after its peers have
+      # pinned theirs divides what they LEFT by every local rank and is
+      # refused memory that was there for it (upstream saw it on GLM-5.2
+      # MXFP4 TP8: 8th rank sampled 1114.6 GiB, got 138, exited
+      # "Not enough host memory ... 235.43 GB but only 147.53 GB free").
+      # explicit_host_memory_budget does what auto-sizing already does --
+      # sample, ONE all_reduce MIN on the world CPU group BEFORE any pool
+      # is built, then a budget scope -- and NO-OPs when auto-sizing
+      # already opened its scope, so auto_size_hicache is unchanged.
+      # UNION: applied over the landed #44968/#42443 host-mamba-sizing
+      # state (entry 219); the only divergence from the PR base was our
+      # extra events.KvEventLoraNames import line, resolved by 3-way
+      # apply. ** PROD PASSES --hicache-size 32, SO THIS GUARDS OUR BOOT
+      # PATH.** Battery: explicit_budget 5P EXACT.
+
+        289. a79afbf57b  PR #35875 (open STALE, head 1750e7d94a, ported)  shrink the --hicache-size budget for a SIDECAR draft host pool -- bf16 draft on a quantized target OVERFLOWED the user cap; ** the "Adjusting --hicache-size" boot log line is now POSSIBLE at prod **
+      # https://github.com/sgl-project/sglang/pull/35875 (2 files,
+      # +339/0: kv_cache_builder.py +124, new test_hicache_draft_budget.
+      # py). A SIDECAR draft registers a host KV pool with the SAME token
+      # count as the target (1-to-1 index sharing in L2 transfers); when
+      # the draft's per-token cost EXCEEDS the target's (quantized target
+      # + bf16 draft = OUR case), the combined host allocation exceeds the
+      # --hicache-size cap. _adjust_hicache_size_for_draft shrinks the
+      # budget by target_spt/(target_spt+draft_spt) and reduces
+      # hicache_ratio proportionally for the post-capture fallback path.
+      # ** REBASE METHOD (the stale-PR adaptation, on record): ** the PR's
+      # _apply_fields(server_args, {...}) does not exist here; the shrink
+      # rides this tree's POST-PUBLISH mutation path get_context().
+      # override("kv_cache_builder.hicache_draft_budget", hicache_size=…,
+      # hicache_ratio=…), which writes the RESOLVED MEMORY BAG every
+      # host-pool builder reads (get_memory().hicache_size -- e.g. entry
+      # 219's hybrid_pool_assembler._split_hicache_size). Insertion moved
+      # AHEAD of the auto_size_hicache/explicit_host_memory_budget
+      # context pair (entry 288 + entry 219) so the shrink PREDATES the
+      # first host-memory snapshot and pool build; the PR's hunk deleting
+      # a function-local HiCacheDraftMode import is a NO-OP here (we
+      # import at module level). Test mock seam retargeted the same way
+      # (arg_groups.overrides._apply_fields -> kv_cache_builder.
+      # get_context, fields read from override kwargs); geometry math,
+      # gates and the fp8-target/bf16-draft numbers unchanged. Battery:
+      # draft_budget 11P EXACT.
+
+        290. fa3e930db8  PR #46954 (open, head a23ba8303b, ported)  preserve sparse restore checkpoints under host pressure -- the upstream GENERALIZATION of our entry-209; ** ENTRY-209 SUBSUMPTION MAP BELOW IS THE LOAD-BEARING RECORD **
+      # https://github.com/sgl-project/sglang/pull/46954 (3 files,
+      # +388/-4). ** ENTRY-209 SUBSUMPTION MAP (hunk by hunk, per the
+      # worker's analysis; future merges resolve #33029/#40361-class
+      # questions from THIS list): **
+      #  (a) allocate_storage_hit "pick the LARGEST FITTING VERIFIED
+      #      ENDPOINT BEFORE allocating, decline when none fits" --
+      #      ** REDUNDANT ON OUR TREE, OURS KEPT **: our
+      #      _trailing_endpoint_tokens (entry 209) already performs
+      #      exactly that choice, PLUS the buffer-only sidecar_hash_values
+      #      pin guard and the throttled _report_no_restorable_endpoint
+      #      that upstream lacks -- ** BOTH OURS' ADDITIONS ARE KEPT **
+      #      (throttled reporting + the pin guard). GATE DELTA ON RECORD:
+      #      upstream triggers on ANY TRAILING_PAGES transfer, ours
+      #      ADDITIONALLY requires indices_from_pool IS None (derived
+      #      sidecars are covered through their source transfer) -- a
+      #      documented non-union, deliberately kept.
+      #  (b) _sync_prefetch_hit_query "retain the COMMON ENDPOINT SET
+      #      after the MIN reduction instead of collapsing to the
+      #      deepest" -- ** REDUNDANT, OURS KEPT **: our always-masked
+      #      payload (1 + len(PoolName) + restorable_mask) already reduces
+      #      and retains the intersected set. ADOPTED FROM UPSTREAM:
+      #      local_restorable_mask's "a rank syncing with a FOLDED COUNT
+      #      OF 0 (terminated/skipped/failed query) can no longer vouch
+      #      for a candidate set" invariant.
+      #  (c) assume_stored branch -- ** UPSTREAM WINS (endpoint-only
+      #      proof) **: a trailing re-prefetch now reports [kv_hit_pages]
+      #      (the ORIGINAL ENDPOINT ONLY, not shallower checkpoints)
+      #      instead of None, so a capacity-shortened retry stops on the
+      #      endpoint or declines, NEVER on an unverified interior page;
+      #      non-trailing keeps None (contiguous contract). This replaces
+      #      our blank.
+      #  (d) ** THE NEW AUX-STAGING SIZING -- THE HIGHEST-VALUE HUNK FOR
+      #      PROD **: _alloc_prefetch_aux_staging now sizes to alloc_len
+      #      (the endpoint the KV span ACTUALLY got) instead of the full
+      #      query hit; under mamba-host pressure the old full-span sizing
+      #      failed the aux alloc and DECLINED A PREFETCH A SMALLER
+      #      ENDPOINT WOULD HAVE FIT -- at prod's 361/361-full mamba host
+      #      pool that is the difference between storing and silently
+      #      losing long-prefix L3 hits.
+      # TESTS: upstream's test_hybrid_storage_sparse_allocation.py (13
+      # cases + 14 subtests) retargeted onto OUR field placement
+      # (operation.restorable_prefix_pages), OUR packed collective layout
+      # and page-0-always-zero masking (no sentinel); every allocation/
+      # query/drain expectation kept. ** THE PP COMPANION TEST HUNK (+42
+      # in test_pp_prefetch_ticket.py) IS NOT PORTABLE AND WAS NOT TAKEN:
+      # this tree's PP broadcast path runs NO mask collective -- the
+      # ticket carries ONLY THE FOLDED COUNT and followers rebuild the
+      # operation without it -- so its vote-shape assertions describe a
+      # payload our design does not ship. Recorded here so merge #5 does
+      # not import it blind.** Battery: sparse_allocation 13P/14sub EXACT
+      # (new), urc 44P/2885S -> 2885S at this pick (its +19 come with
+      # entry 292), trailing_endpoint 17P EXACT, pp_prefetch_ticket
+      # unchanged.
+
+        291. 1eae74398d  PR #46707 (open, head 4095308888, ported)  restore sidecars to EVERY Mamba destination -- one checkpoint restored to a radix slot AND a live request row left the request on stale side state
+      # https://github.com/sgl-project/sglang/pull/46707 (2 files,
+      # +117/-14). build_hicache_transfers() emits ONE derived sidecar
+      # next to TWO MAMBA source transfers when a load-back restores one
+      # checkpoint to both a radix slot and an active request slot;
+      # _resolve_device_transfers took only the FIRST (next(...)), so the
+      # sidecar rode a single destination's indices. Fix: resolve over ALL
+      # matching sources, concatenating host/device indices, and SUM the
+      # repeated sources in _transfer_num_bytes instead of overwriting (the
+      # byte accounting now matches what the copies actually move).
+      # DEVIATIONS: ports at head (145f5e699b + merge resolution
+      # 4095308888); the head's transferred_tokens() SHARD MASKING is
+      # upstream-main machinery (is_kv_sharded /
+      # PageInterleavePlacement.local_mask) our base PREDATES -- it
+      # degenerates to len() without KV sharding, which is the form
+      # applied; consequently ** the head's second test
+      # test_repeated_source_bytes_count_only_local_slots IS NOT PORTABLE
+      # ** (it exercises that masking) while the first test keeps
+      # is_kv_sharded for upstream-shape fidelity (our code never reads
+      # it). The regression uses the REAL MambaComponent.
+      # build_hicache_transfers(): ** 2 OF THE 4 CASES ARE RED AT BASE **
+      # (both active_request=True variants -- re-verified on this box by
+      # running the new file against the pre-wave library: 2F/2P), 4P with
+      # the fix. Battery: sidecar_restore 4P EXACT.
+
+        292. a2eec76d14  PR #43110 (open, head 15f6d77792, ported)  resolve derived sidecars over every SOURCE transfer -- the mirror bug on the source axis, plus the byte accounting; broader than 291 (hicache_storage.py, pool_host/group.py, unified_radix_cache.py)
+      # https://github.com/sgl-project/sglang/pull/43110 (5 files,
+      # +138/-55). A sidecar deriving indices from ANOTHER pool (draft/KV
+      # copies riding Mamba or SWA) resolved its source with next(...) --
+      # only the FIRST independent transfer of that pool -- so when a pool
+      # is staged in SEVERAL transfers the sidecar copied/persisted/loaded
+      # only the first segment's pages and later segments kept STALE SIDE
+      # STATE. Adds the shared helper hicache_storage.merge_source_
+      # transfers() (every independent transfer of a pool as ONE span in
+      # transfer order; a lone source keeps ALIASING its tensors) and
+      # routes ALL FOUR resolution sites through it: controller
+      # _resolve_device_transfers (H->D load-back),
+      # _resolve_sidecar_nonkv_derived_pool_transfers (prefetch staging),
+      # HostPoolGroup.resolve_host_transfers (atomic host alloc) and URC
+      # _build_sidecar_transfers -- the last also LOSES ITS SWA/MAMBA-ONLY
+      # SOURCE MAP, so any pool name resolves now.
+      # UNIONS: _transfer_num_bytes repeated-source summing arrived with
+      # entry 291 and is unchanged (identical semantics to this PR's);
+      # ** entry 291's INLINE sources/torch.cat form of
+      # _resolve_device_transfers IS REPLACED by this PR's shared-helper
+      # head ** (single-source aliasing preserved); hicache_storage.py
+      # context ADAPTED -- our landed PoolTransfer carries nodes_to_load/
+      # block_pages/group_pages (our BLOCK_GROUPS tranche) and has NO
+      # upstream anchor_index_parts; the helper goes after PoolTransfer
+      # exactly as at head, and merged transfers INTENTIONALLY carry only
+      # name/host/device/keys/hit_policy because the four call sites read
+      # only those (also the entry-200-cycle note: helper lives in
+      # hicache_storage, not a pool module). Test: head's single net test
+      # (upstream trimmed its group-level variants) added verbatim to
+      # test_unified_radix_cache_unittest.py -- device-gated, so ** THIS
+      # IS THE +19 SKIPS OF THE WAVE **; helper semantics additionally
+      # sanity-checked CPU-side (aliasing, cat order, None-partial
+      # contract). Battery: urc 44P/2904S EXACT, buffer_mode_sidecar +
+      # sparse + trailing + lifecycle + unified set 95P/3S/63sub per the
+      # worker, trailing_endpoint 17P EXACT.
+
+        293. 752ff2f8b6  PR #46451 (open, head 9e61b77766, ported)  bound full-hit staging waits (--hicache-storage-prefetch-host-capacity-wait-ms, ** DEFAULT 0.0 = BYTE-IDENTICAL **) + the cancellation/expiry hardening our entry-209 decline-and-retry lacked
+      # https://github.com/sgl-project/sglang/pull/46451 (7 files,
+      # +318/-11 incl. docs rows and the 202-line lifecycle test block).
+      # A POSITIVE value in single-engine CACHE mode makes a
+      # capacity-shortened FULL HIT WAIT INSTEAD OF DECLINING:
+      # _try_alloc_storage_hit parks the operation in the new
+      # pending_storage_hits, retries each drain pass up to the bound
+      # (deadline + pacing from the SAME retry-max-attempts knob) and only
+      # then falls through to the existing host_capacity decline;
+      # allow_partial is INVERTED for those waits (full span or park), so
+      # the entry-209 endpoint-clamp machinery is UNTOUCHED IN THE DEFAULT
+      # MODE and buffer-only/TP/PP/CP keep today's behavior
+      # (enable_cache_mode_storage_hit_pending).
+      # ** RIDES THE ENTRY-209 PATH (the interaction, on record): ** the
+      # per-operation wait deadline is a fresh host_capacity_deadline on
+      # the FIRST blocked alloc; on expiry the op takes the SAME
+      # _finish_storage_prefetch(host_capacity) + revoke + poll_miss path
+      # our entry 209 built, ** WHOSE RETRY BUDGET STAYS ANCHORED ON THE
+      # FIRST BLOCKED ADMISSION POLL VIA PollTimer (entry 217's #44614
+      # anchor) ** -- the two counters (operation.host_capacity_retries
+      # vs StoragePrefetchRetries attempts) SHARE THE --hicache-storage-
+      # prefetch-retry-max-attempts cap, AND ** THE TIMEOUT PREFETCH STOP
+      # POLICY REMAINS THE EARLIER EXIT, AS DOCUMENTED -- the wait
+      # tightens, it never extends a prefetch past the stop policy**.
+      # Replaces the ad-hoc half of entry-209's decline+requeue WHEN OPTED
+      # IN; default-off behavior is byte-identical (proved: the flag
+      # parses to 0.0).
+      # ** THE STALE-CALLBACK IDENTITY GUARD CLOSES OUR ENTRY-209
+      # RESUBMIT HOLE: ** the hit-queue drain and _try_alloc_storage_hit
+      # now check info.operation is not operation, so a LATE query callback
+      # from a REVOKED ATTEMPT can neither retire nor re-account a
+      # RESUBMITTED op -- the retry-re-issue vs its own late predecessor
+      # collision our decline-and-retry loop had; already-staged cache-mode
+      # ops also return early instead of allocating a SECOND bounce
+      # buffer. (The same guard is the third leg of the #33029 NOT-NEEDED
+      # citation in CAVEATS.)
+      # UNIONS: URC hunks applied OVER the landed entry-209/217/218/199
+      # region WITH the poll_miss anchor lines inside the decline branch
+      # PRESERVED; hybrid_cache_controller.py gains THREE PrefetchOperation
+      # FIELDS ONLY (no collision with the sparse-checkpoint regions); the
+      # lifecycle test hunk was anchored MANUALLY -- upstream's base
+      # carries a TestWaitingStorageSpan class this tree does not have --
+      # inserted at the same logical spot, both new imports retained,
+      # est_time stays 20 per our tree. Battery: storage_prefetch_lifecycle
+      # ** 15P/24sub -> 23P/28sub EXACT ** (+8, all green); server_args
+      # flag default+parse verified (0.0); trailing/lifecycle/sparse/urc
+      # set unchanged otherwise.
+
+        294. 556aea047b  PR #45795 (open, head 6ffe9cd46c, ported)  opt-in async ready-sync (--hicache-async-ready-sync, default False) -- kills a per-step BLOCKING gloo MIN-all-reduce on the scheduler critical path
+      # https://github.com/sgl-project/sglang/pull/45795 (7 files,
+      # +396/0 incl. the 244-line two-simulated-rank CPU suite).
+      # check_hicache_events ran a BLOCKING gloo MIN-all-reduce of the
+      # write-back/load-back ready counts EVERY scheduler step -- on TP2
+      # short-decode steps that CPU collective is a large share of the
+      # step. With the flag the same reduction is issued ASYNCHRONOUSLY on
+      # its own gloo group in step N and consumed in step N+1: acks
+      # complete in queue order and queues only GROW at the tail, so the
+      # agreed ready prefix stays valid one step later;
+      # _deferred_consume_count RE-FINDS the agreed last-ready ack BY
+      # IDENTITY so a blocking drain in between is never double-consumed,
+      # a deferred digest pair keeps the write_back duplicate-reclaim
+      # victim-order assertion across ranks, runtime storage ATTACH settles
+      # the in-flight sync and falls back to synchronous FOR GOOD (the
+      # deferred path skips the storage-queue drain), and reset() drains
+      # the pending op. The deferred gate REFUSES storage/buffer_only/PP/
+      # attn-CP/single-rank setups with a warning, matching the landed
+      # _sync_hicache_ready_counts payload (storage-queue sizes stay
+      # synchronous).
+      # ** ORDERING AND THE ENTRY-199 RELATIONSHIP (the mandated record):
+      # the insertion sits AFTER flush_pending_backups() -- entry-199's
+      # batched-backup drain -- and BEFORE the four-tuple
+      # _sync_hicache_ready_counts call our entry-217/218 region built on;
+      # ENTRY-199 BATCHED-BACKUP SEMANTICS ARE UNTOUCHED ** (machine-
+      # checked on this tree: ZERO added/removed lines across the whole
+      # wave touch _batched_backup / SGLANG_ENABLE_HICACHE_BATCHED_BACKUP;
+      # the new flag is an ORTHOGONAL memory-group bool and flag-off IS
+      # the unchanged synchronous path). Fork-stub adaptation: our
+      # test_hicache_pp_sync_drain __new__-built stubs now pre-memoize
+      # _hcs_state=False -- the same thing upstream's own async harness
+      # does -- so the per-step gate never resolves the memory bag these
+      # stubs never publish. Docs rows land next to the entry-219
+      # mamba-sizing note. Battery: async_ready ** 7P EXACT ** (new),
+      # pp_sync_drain ** 4P EXACT ** (with the stub change), staged_write_
+      # back_dispatch 21P/1S EXACT (entry-199's own gate file, unmoved).
+
+        295. 44134b30aa  PR #47040 (open, head 49bcdf71d2, ported -- ** ACCOUNTING HALF ONLY **)  size the HiCache Mamba host share by PERSISTENT CHECKPOINTS ONLY -- spec-verify scratch and the ReplaySSM rings were being counted as host bytes
+      # https://github.com/sgl-project/sglang/pull/47040 (2 files,
+      # +28/0: memory_pool.py + test_hybrid_pool_assembler.py). Plain
+      # MambaPool never set host_capacity_bytes, so EVERY host-budget
+      # reader (hybrid_pool_assembler._split_hicache_size/_device_pool_
+      # bytes, hicache_auto_size._pool_bytes) fell back to
+      # get_kv_size_bytes() = mamba_cache.mem_usage_bytes(), which sums ALL
+      # non-None state fields -- INCLUDING spec-verify intermediate scratch
+      # and the ReplaySSM rings, BOTH DEVICE-ONLY AND NEVER MIRRORED TO
+      # HOST. Result: the Mamba pool's share of --hicache-size was
+      # INFLATED BY EXACTLY THAT SCRATCH, STARVING THE KV HOST TIER (the
+      # tilt entry 219 was built to make tunable was also simply wrong).
+      # MambaPool now publishes host_capacity_bytes = State(conv, temporal)
+      # mem_usage_bytes() AFTER the cache is allocated, computed OUTSIDE
+      # the spec/plain branch so both branches get the persistent-
+      # checkpoint-only weight; UnifiedMambaPool keeps its own assignment
+      # path.
+      # ** FLAG COLLISION RECORD (for any future flag decision): ** this
+      # is the ACCOUNTING HALF ONLY -- #47040's --hicache-mamba-size flag
+      # is DELIBERATELY NOT PORTED because the NAME COLLIDES with the
+      # landed entry-219 --hicache-mamba-size-gb (#42443: string "GB|auto",
+      # parsed in mem_cache/hybrid_cache/hicache_mamba_sizing.py, wired via
+      # _split_hicache_size in hybrid_pool_assembler). #47040's flag is a
+      # PLAIN INT GB PIN (hicache_mamba_size, validated in hicache_hook.py)
+      # and its _split_hicache_size_with_mamba helper would sit REDUNDANTLY
+      # next to the entry-219 sizing module; merge semantics if ever taken:
+      # pin-first with proportional fallback at 0, which MATCHES #42443's
+      # own "auto"/explicit split path. Consequently the head's two
+      # _split_hicache_size_with_mamba tests and its test_server_args flag
+      # case are SKIPPED WITH THE FLAG; the accounting test
+      # (host_capacity_excludes_speculative_scratch) ports VERBATIM -- RED
+      # AT BASE by construction (AttributeError: no host_capacity_bytes),
+      # green with the fix. Battery: assembler ** 52P/31sub -> 53P/31sub
+      # EXACT ** (+1 = the ported accounting case); mamba_sizing 30P/17sub
+      # EXACT (entry-219's file, unmoved); mem_cache full tree +49/+19/
+      # +18 EXACT for the whole wave.
+
+      # BATCH-7 BATTERY (integrator, main tree; CVD=9, prod venv). THE
+      # PRE-BATCH BASELINE WAS MEASURED HERE FIRST, AS MANDATED:
+      # test/registered/unit/mem_cache/ at the batch-6 tip = ** 2052P/
+      # 3028S/3971sub ** (and 2048P/3028S/3971sub at the pre-session tip
+      # 3b1b6108e7 -- the 2045P-era figure of the 250/254 window plus the
+      # srv/gdn/qsa deltas; batch 6's #45865 alone accounts for +4P, the
+      # other two waves contributing ZERO to this dir). AFTER THE WAVE:
+      # ** 2101P/3047S/3989sub = EXACTLY THE WORKER'S PREDICTED +49 TESTS/
+      # +19 SKIPS/+18 SUBTESTS, ATTRIBUTED WITH NOTHING LEFT OVER **.
+      # Per-file: trailing_endpoint ** 17P EXACT IN EVERY RUN OF THE FIVE
+      # STAGE CHECKPOINTS ACROSS THE BATCH (after picks 1-2, AT THE
+      # ENTRY-290 TIP, after 3-4, after 5, at the final tip) ** -- the
+      # entry-209 regression gate held; urc 44P/2885S (unchanged at the
+      # entry-290 tip, measured) -> 44P/2904S after entry 292 (+19, its
+      # device-gated net test), 4 subtests unmoved all wave;
+      # storage_prefetch_lifecycle 15P/24sub -> 23P/28sub (entry 293's +8); assembler 53P/31sub (entry 295's +1);
+      # explicit_budget 5P, draft_budget 11P, sparse_allocation 13P/14sub,
+      # sidecar_restore 4P (2 red-at-base PROVED on this box), async_ready
+      # 7P, staged_write_back_dispatch 21P/1S, mamba_sizing 30P/17sub,
+      # pp_sync_drain 4P -- all EXACT against the worker's figures.
+      # server_args NEW-FLAG PARSE CHECK via a live ServerArgs():
+      # hicache_async_ready_sync=False, hicache_storage_prefetch_host_
+      # capacity_wait_ms=0.0 -- ** DEFAULT-OFF PROVED, prod behavior byte-
+      # identical until armed **. INTEGRATOR METHOD NOTE (my own error,
+      # corrected in place, worth keeping): a pre/post comparison for
+      # entry 284 run as post-fix TEST FILE + pre-fix PYTHONPATH reported
+      # "5 failed/305 passed"; the same measurement made properly inside
+      # the base worktree is 303P/128sub, i.e. those 5 were the NEW tests
+      # against the OLD library, not a regression -- always run pre/post
+      # numbers from WORKTREES, never from mixed cwd/PYTHONPATH pairs.
+
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
 ==============================================================================
@@ -6737,6 +7562,145 @@ WATCH LIST (re-evaluate before next sync)
 ==============================================================================
 CAVEATS
 ==============================================================================
+
+  * CPU-BATTERY BASELINES RE-PINNED 2026-10-29 at the 275-295 tip
+    (44134b30aa). ONE CLEAN TABLE, MEASURED ON THE FINAL TREE (prod venv,
+    PER-FILE/dir runs, CVD=9); the OLD value is printed with it so a stale
+    log can be recognised -- this SUPERSEDES the per-wave pins of the
+    261-274 batch (managers 1013P/2F/3S/933sub, mem_cache 2048P/3028S/
+    3971sub, spec 335P/11S/180sub, server_args 303P/128sub, observability
+    169P/36S/18sub, test_qsa 76P/140S, urc 44P/2885S, lifecycle 15P/24sub,
+    assembler 52P/31sub, ngram 9P/2sub, fused_verify 16F/34S, gdn dir 42S)
+    and the 10-19/10-20 refresh bullets below for THESE files only.
+      MOVED:
+        test/registered/unit/managers/        1013P/2F/3S/933sub ->
+          ** 1016P/2F/3S/935sub ** (entries 276/277; the 2F remain the
+          KNOWN order-dependent test_mm_process_config pair -- the class
+          can surface 3F/1015P on an unlucky run; SAME 1,021-node
+          population, reproduced at base; NOT a batch regression and NOT a
+          new pin)
+        test/registered/unit/mem_cache/       2048P/3028S/3971sub ->
+          2052 (batches 4-6; #45865 = +4P) -> ** 2101P/3047S/3989sub **
+          (batch 7 = +49/+19/+18 EXACT, entry-290..295 battery)
+        test/registered/unit/spec/            335P/11S/180sub ->
+          ** 336P/11S/184sub ** (ALL of it is entry 282's ngram test
+          9P/2sub -> 10P/6sub; the qsa wave contributes ZERO here)
+        test/registered/unit/server_args/test_server_args.py
+                                             303P/128sub -> ** 308P/128sub **
+          (entry 284)
+        test/registered/unit/observability/   169P/36S/18sub ->
+          ** 170P/36S/18sub ** (entry 275's new file)
+        test_qsa.py                    76P/140S -> ** 84P/140S ** (entry 285)
+        test_qsa_retraction_cpu_copy.py     3P -> ** 7P ** (entry 287)
+        test_unified_radix_cache_unittest.py
+                                44P/2885S/4sub -> ** 44P/2904S/4sub **
+          (entry 292's device-gated net test = the +19 skips)
+        test_storage_prefetch_lifecycle.py 15P/24sub -> ** 23P/28sub ** (293)
+        test_hybrid_pool_assembler.py      52P/31sub -> ** 53P/31sub ** (295)
+        test_fused_verify_triton_gdn.py  16F/34S -> ** 16F/35S ** (entry 281;
+          the 16F are the pre-existing no-CUDA env class, IDENTICAL at base)
+        test/registered/attention/unittests/gdn/  42S -> ** 46S **
+          (279 +3, 280 +1 module) ** PLUS ONE PRE-EXISTING COLLECTION ERROR:
+          test_gdn_cutedsl_ring_verify.py dies at IMPORT on
+          torch.cuda.get_device_properties(0) inside
+          kernels/ops/attention/cutedsl_gdn_mtp_ring.py under CVD=9 --
+          present at the 274 base, NOT a skip, run the dir with
+          --continue-on-collection-errors and read 46S + 1 error. GPU-
+          window debt; same class as kernels/ops/attention/
+          test_replayssm_ring_fold.py's 1F (no-CUDA RuntimeError). **
+      NEW PINS THIS SESSION: test_gdn_track_state_snapshot +
+        test_gdn_replayssm_compact_commit (inside the gdn dir skips),
+        test_gdn_replayssm_verify_stages ** 1S **, test_hicache_
+        explicit_budget ** 5P **, test_hicache_draft_budget ** 11P **,
+        test_hybrid_storage_sparse_allocation ** 13P/14sub **,
+        test_hicache_sidecar_restore ** 4P ** (2 of them RED-AT-BASE --
+        re-proved by running the file against the pre-wave library),
+        test_hicache_async_ready_sync ** 7P **, test_qsa_verify_ring
+        ** 35S ** (the #46125 oracle: 32 ACTIVE bit-equal GPU targets + 3
+        individually-skipped internals of the UNTAKEN remedy; ALL 35 skip
+        here behind the module CUDA gate -- GPU-window debt).
+      UNCHANGED AND STILL THE REFERENCE SET (re-measured at the 295 tip):
+        function_call dir ** 652P/1964sub **, constrained ** 142P/1S/69sub **,
+        managers pair test_multi_tokenizer_mixin + test_detokenizer_
+        stream_offsets ** 22P/5sub ** (mixin alone 15P/2sub),
+        test_mamba_track_state_dtype ** 8P/9sub ** (EXACT AT EVERY
+        MEASUREMENT THIS SESSION -- six runs: individually after batch-5
+        picks 1-5 and again at the 295 tip; batch-5 pick 6 (#43216)
+        touches neither GDN nor this file, covered by the final run),
+        test_qsa_ring_slots ** 12P/22sub ** (contract test RENAMED by entry
+        285, count unmoved), test_qsa_kv_pool ** 8P **,
+        test_qsa_fused_kv_prepare ** 12P/146S **,
+        test_gdn_prefill_backend_policy.py ** 19P/38sub **, replayssm trio (ring_accounting +
+        ngram_replayssm_validation + replayssm_extend_fold) ** 10P **,
+        test_hicache_staged_write_back_dispatch ** 21P/1S **,
+        test_hicache_mamba_sizing ** 30P/17sub **, test_hicache_pp_sync_
+        drain ** 4P **, hicache trailing_endpoint ** 17P ** (the entry-209
+        regression gate -- EXACT AFTER EVERY BATCH-7 PICK),
+        kernels/ops/attention/qsa COLLECTS ** 571 ** tests,
+        kernels_namespace ** 76P ** (re-measured at the 295 tip); cargo
+        sglang-radix-tree 932P/0F CARRIES UNCHANGED -- 0 rust files in
+        the whole 21-pick diff (file list verified). LINT:
+        check_registered_tests.py,
+        check_no_registered_tests_in_package.py,
+        check_no_bare_pytest_main.py ALL rc=0; ruff v0.15.1 with the
+        REPO ruleset (--select=F401,F821,F823,UP037, per
+        .pre-commit-config.yaml) + ruff format clean on all 51 changed
+        files. A bare `ruff check` (default E/F ruleset) reports ~98
+        PRE-EXISTING findings across these files -- NOT the repo gate, do
+        not chase them.
+    METHOD NOTE CARRIED FROM THIS SESSION (cost me one false red): read
+      pre/post numbers from WORKTREES ONLY. A "post-fix test file +
+      pre-fix PYTHONPATH" comparison for entry 284 reported 5F/305P; the
+      same measurement done properly in a base worktree is 303P/128sub --
+      those 5 were the NEW tests against the OLD library.
+
+  * #43216 BOOT-NEEDLE BULLET -- THE NCCL ENVIRONMENT OF EVERY FUTURE
+    STACK BOOT IS DIFFERENT FROM ALL PRIOR BOOTs (entry 284, landed
+    2026-10-28; arg_groups/parallel_hook.py). NCCL_GRAPH_REGISTER=0 is now
+    setdefault'd on EVERY multi-rank graph-capable boot -- THE 9.sh TP4
+    ARM INCLUDED, not just TP2 -- because NCCL recycles graph-pool
+    temporaries under expandable_segments and the older guards missed our
+    shape. TWO OPERATIONAL CONSEQUENCES: (i) ** THERE IS NO EXPLICIT-
+    OVERRIDE WARNING -- setdefault means an operator who SETS
+    NCCL_GRAPH_REGISTER in the environment silently WINS (their value is
+    kept, ours is not applied and nothing prints). If a boot ever shows a
+    non-zero NCCL_GRAPH_REGISTER, the first question is WHO SET IT in the
+    run script or shell, not whether the hook failed.** (ii) ** THE FIRST
+    BOOT AFTER THIS LANDS MUST CHECK THE DECODE-GRAPH HANG CLASS: any new
+    hang/stall inside a captured graph that contains a collective is now
+    suspect #1 = the registration change, so keep a pre-boot NCCL env dump
+    and compare, and read every old needle test that asserted on the
+    ABSENCE of NCCL_GRAPH_REGISTER in the dump as STALE (entry-245's
+    needle-string trap applies: assert on strings that actually print).**
+    Merge-#5 note: this is a MERGED pick (patch-equal to upstream
+    786cdfc040), so the merge brings nothing new here.
+
+  * #33029 NOT-NEEDED -- THE PER-RANK-TRIP-COUNT COLLECTIVE CLASS IS
+    CLOSED ON OUR TREE, DO NOT PORT IT AT MERGE #5 (wanted_stack.txt
+    FAM-A3b item, closed 2026-10-29). #33029 (open STALE, head
+    54c6ee41fa) fixes a HiCache prefetch-progress TP all_reduce INSIDE A
+    PER-RANK-TRIP-COUNT LOOP -- a permanent hang the moment ranks take
+    different iteration counts. Its edit target is GONE: the file it
+    patches, mem_cache/mamba_radix_cache.py, WAS DELETED UPSTREAM BY
+    #40313 (origin/main a8a4d86be9, verified 2026-10-29: the path does not
+    exist in our tree and does not exist in origin/main). The class is
+    additionally closed by FOUR landed mechanisms, citable in place of a
+    port: (1) ** @rank_consensus on prefetch_from_storage at
+    unified_radix_cache.py:2137 ** -- the params/results consensus
+    decorator means every rank enters the prefetch collective sequence
+    with the SAME arguments; (2) ** the rank_consensus-annotated
+    check_prefetch_progress and its short-circuit at
+    unified_radix_cache.py:2430-2440 ** -- `if request not in
+    self.ongoing_prefetch: return True` retires non-participating ranks
+    BEFORE any collective, so trip counts cannot diverge; (3) ** the
+    entry-217 synchronized drain ** (#43108 + #44614 -- the always-masked
+    payload reduces on every rank per step); (4) ** the entry-293/#46451
+    stale-callback identity guard ** (`info.operation is not operation` at
+    unified_radix_cache.py:3098 and :3263) which removes the revoked-
+    attempt/late-callback re-entry that used to be the way a rank could
+    find itself polling an operation its peers already dropped. If a
+    future merge re-materializes a mamba_radix_cache-shaped hook, RE-READ
+    THIS BULLET instead of auto-porting #33029.
 
   * #37958 + #45559 VERIFIED INERT FOR PROD GEOMETRY -- DO-NOT-RE-LITIGATE
     AT MERGE #5 (2026-10-28, docs-only close of wanted_stack.txt C8/
