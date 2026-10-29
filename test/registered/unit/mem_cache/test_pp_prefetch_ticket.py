@@ -479,6 +479,10 @@ class TestPPPrefetchTicket(unittest.TestCase):
             operation.pool_storage_result.restorable_prefix_pages = list(
                 range(1, stored_pages + 1)
             )
+            # Mirror the real _storage_hit_query's field placement (stack
+            # entry-290's retarget: the clamp and the collective read the
+            # operation attribute).
+            operation.restorable_prefix_pages = list(range(1, stored_pages + 1))
             return hashes[:stored_pages], stored_pages * 4
 
         c._storage_hit_query.side_effect = query
@@ -498,7 +502,16 @@ class TestPPPrefetchTicket(unittest.TestCase):
         self.run_commands(c.pp_prefetch_states["capped"].ticket)
 
         operation = c.prefetch_buffer.get_nowait()
-        self.assertEqual(votes[0][: stored_pages + 1], [1, 1, 1] + [0] * 6)
+        # Our collective payload (stack entries 209/217/290): the folded hit
+        # FIRST (capacity-capped above the collective, which is what keeps the
+        # agreed hit inside the allocated buffers), then one verdict per pool,
+        # then the restorable mask with page 0 never restorable. The mask
+        # records EVERY checkpoint the query verified -- un-capped -- so a
+        # later capacity retry can stop on the deepest endpoint that fits
+        # instead of forfeiting the span (entries 290/293 decline-and-retry).
+        vote = votes[0]
+        self.assertEqual(vote[0], free_pages * 4)
+        self.assertEqual(vote[1 + len(PoolName) :], [0] + [1] * stored_pages)
         self.assertEqual(operation.host_indices.numel(), free_pages * 4)
         self.assertEqual(operation.storage_hit_count, free_pages * 4)
         self.assertEqual(len(operation.hash_value), free_pages)

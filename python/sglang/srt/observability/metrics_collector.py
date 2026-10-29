@@ -173,10 +173,6 @@ class SchedulerStats:
     # serving schema (entry 219): one series per pool with a {pool} label.
     hicache_host_pool_used_tokens: Dict[str, int] = field(default_factory=dict)
     hicache_host_pool_total_tokens: Dict[str, int] = field(default_factory=dict)
-    # Compat source for upstream's per-model mamba series; the pool dict is
-    # authoritative (metrics_reporter fills both).
-    hicache_host_mamba_used_states: int = 0
-    hicache_host_mamba_total_states: int = 0
 
     # Streaming session metrics
     num_streaming_sessions: int = 0
@@ -2916,6 +2912,3 @@ def get_histogram_conf_from_env(env_var_name: str) -> Optional[List[float]]:
     if not env_var_value:
         return None
     return [float(x) for x in env_var_value.split(",")]
-
-
-# TODO(merge5): re-plant entry 219 PRODUCER semantics (batch B3) -- per-pool hicache_host_pool_{used,total}_tokens serving schema RESTORED at merge resolution (D-3); what remains re-plant: the {pool: -> dict} producer detail against #4697x pool-stats in cache-controller/hybrid controllers.

@@ -35,6 +35,7 @@ from sglang.srt.mem_cache.hicache_storage import (
     PoolTransfer,
     PoolTransferResult,
     count_pool_hits,
+    merge_source_transfers,
 )
 from sglang.srt.mem_cache.l2_transfer import L2Transfer
 from sglang.srt.mem_cache.pool_host import HostPoolGroup, PoolEntry
@@ -55,6 +56,13 @@ logger = logging.getLogger(__name__)
 # Pool boundaries are nonnegative; an omitted rank must dominate MIN so
 # a peer cannot establish presence of that rank's storage shard.
 _NO_POOL_VERDICT = -1
+
+# How many sidecar endpoint/write reports to log at warning level before
+# falling back to debug. A storage dir that never held this build's sidecars
+# (per-rank shards, older layout) misses at nearly every endpoint, and one
+# warning per prefetch operation is unusable; see hicache_storage's
+# _BAD_PAGE_WARN_BUDGET for the same policy on the page path.
+_SIDECAR_REPORT_WARN_BUDGET = 8
 
 
 @dataclass(frozen=True)
@@ -157,6 +165,9 @@ class PrefetchOperation(StorageOperation):
         self._lock = threading.Lock()
         self._terminated_flag = False
         self.storage_hit_count = 0
+        self.host_capacity_retries = 0
+        self.host_capacity_deadline: Optional[float] = None
+        self.host_capacity_next_retry = 0.0
         # KV pages the hit-time plan skips in front of the KV transfer: the
         # device trim, then the span head a component's block groups serve.
         self.prefetch_kv_page_offset = 0
@@ -185,6 +196,14 @@ class PrefetchOperation(StorageOperation):
         # query. Trailing sidecars still use the untrimmed hit endpoint.
         self.sidecar_hash_values: Optional[list[str]] = None
         self.sidecar_hit_pages = 0
+        # Rank-agreed set of prefix lengths (in pages) at which every trailing
+        # sidecar pool of this span is restorable, ascending. A TRAILING_PAGES
+        # pool (one Mamba state per node, an SWA window) only covers the node
+        # boundaries it was written at, so the deepest hit is not the only
+        # usable stop point: a span shortened by host capacity has to stop at
+        # one of these. None until the query ran, or when the backend reports
+        # no candidate set (then only the folded boundary is known to work).
+        self.restorable_prefix_pages: Optional[list[int]] = None
         # Cut by the stop policy, not a storage shortfall: the span is still stored.
         self.deadline_expired = False
 
@@ -204,6 +223,14 @@ class PrefetchSubmission:
 
 
 class HybridCacheController(BaseHiCacheController):
+    # Tallies for the sidecar endpoint path. Declared at class level (and only
+    # ever incremented through an instance, which shadows them) so harnesses
+    # that build a controller with ``__new__`` can still hit the report paths.
+    sidecar_endpoint_clamps = 0
+    sidecar_endpoint_misses = 0
+    sidecar_write_shortfalls = 0
+    _sidecar_reports = 0
+
     is_kv_sharded: bool = False
 
     def __init__(
@@ -560,7 +587,10 @@ class HybridCacheController(BaseHiCacheController):
         extra_pools: Optional[list[PoolTransfer]] = None,
         flush: bool = True,
         start_owner: Optional[int] = None,
+        node_ids: Optional[list[int]] = None,
     ) -> Optional[torch.Tensor]:
+        """Queue a D2H backup; flush=False defers the start_writing() submit.
+        node_ids, when given, replaces node_id as the op's ack list."""
         allocation = self.allocate_host_transfers(
             device_indices, extra_pools, start_owner=start_owner
         )
@@ -568,15 +598,16 @@ class HybridCacheController(BaseHiCacheController):
             return None
         host_indices, pool_transfers = allocation
 
-        self.write_queue.append(
-            CacheOperation(
-                host_indices,
-                device_indices,
-                node_id,
-                priority,
-                pool_transfers=pool_transfers or None,
-            )
+        operation = CacheOperation(
+            host_indices,
+            device_indices,
+            node_id,
+            priority,
+            pool_transfers=pool_transfers or None,
         )
+        if node_ids is not None:
+            operation.node_ids = list(node_ids)
+        self.write_queue.append(operation)
         if flush:
             self.start_writing()
         return host_indices
@@ -805,7 +836,12 @@ class HybridCacheController(BaseHiCacheController):
         host_indices = self.alloc_prefetch_host_buffers(operation, hit_tokens)
         shared = uses_shared_host_layout(self.mem_pool_host.anchor_entry.host_pool)
         if host_indices is None and not shared:
-            evict_host(hit_tokens)
+            # Reclaim only the allocation shortfall; evicting the full request
+            # discards prefix entries a smaller evict would have kept
+            # (over-eviction, stack entry 90).
+            shortfall = hit_tokens - self.mem_pool_host.available_size()
+            if shortfall > 0:
+                evict_host(shortfall)
             host_indices = self.alloc_prefetch_host_buffers(operation, hit_tokens)
         if host_indices is not None or not allow_partial:
             return host_indices, hit_tokens
@@ -824,9 +860,22 @@ class HybridCacheController(BaseHiCacheController):
         else:
             available = self.mem_pool_host.available_size()
             alloc_len = min(hit_tokens, available - available % self.page_size)
-        if alloc_len >= min_tokens:
-            host_indices = self.alloc_prefetch_host_buffers(operation, alloc_len)
-        return host_indices, alloc_len
+        # Host capacity rarely lands exactly on a page whose trailing sidecar is
+        # stored, and a sidecar read at an unverified interior page always
+        # misses: the all-or-nothing rule in _check_hybrid_prefetch_result then
+        # forfeits a KV prefix that transferred in full. Stop the shortened span
+        # on the deepest endpoint every rank verified instead, and launch nothing
+        # when the allocation cannot reach one (the caller revokes for host
+        # capacity and retries, which is cheap and does not poison the log with
+        # a discard that looks like an IO failure). Entry-209 THE CLAMP.
+        endpoint_tokens = self._trailing_endpoint_tokens(operation, alloc_len)
+        if endpoint_tokens < min_tokens:
+            if endpoint_tokens != alloc_len:
+                self._report_no_restorable_endpoint(operation, alloc_len, min_tokens)
+                return None, 0
+            return host_indices, endpoint_tokens
+        host_indices = self.alloc_prefetch_host_buffers(operation, endpoint_tokens)
+        return host_indices, endpoint_tokens
 
     def free_prefetch_host_buffers(
         self, operation: StorageOperation, host_indices: torch.Tensor
@@ -990,11 +1039,16 @@ class HybridCacheController(BaseHiCacheController):
             else len(op.device_indices)
         )
         num_bytes = kv_tokens * anchor.host_pool.size_per_token
-        # Slot counts of the pools sidecars can ride on.
+        # Slot counts of the pools sidecars can ride on. One Mamba load-back
+        # can restore one checkpoint into several destinations (radix slot +
+        # active request slot), so a pool name may appear in more than one
+        # transfer: sum them, do not overwrite (stack entry 291 / #46707).
         source_len = {self.mem_pool_host.anchor_entry.name: kv_tokens}
         for t in op.pool_transfers or []:
             if t.indices_from_pool is None and t.host_indices is not None:
-                source_len[t.name] = transferred_tokens(t.host_indices)
+                source_len[t.name] = source_len.get(t.name, 0) + transferred_tokens(
+                    t.host_indices
+                )
         for t in op.pool_transfers or []:
             entry = self.mem_pool_host.entry_map.get(t.name)
             if entry is None:
@@ -1429,10 +1483,21 @@ class HybridCacheController(BaseHiCacheController):
 
         if operation.assume_stored:
             # A prior hit on a suffix of this span proved it stored, and writes
-            # are prefix-covered, so re-querying only adds a round trip. Nothing
-            # is verified now, so no pool gets a verdict to learn from.
+            # are prefix-covered, so re-querying only adds a round trip. For a
+            # trailing pool this proves only the original endpoint, not every
+            # shorter checkpoint. Nothing is verified now, so no pool gets a
+            # verdict to learn from.
             kv_hit_pages = len(hash_value)
             operation.pool_storage_result.update_kv_hit_pages(kv_hit_pages)
+            if any(
+                transfer.hit_policy == PoolHitPolicy.TRAILING_PAGES
+                for transfer in operation.pool_transfers or []
+            ):
+                operation.restorable_prefix_pages = (
+                    [kv_hit_pages] if kv_hit_pages else []
+                )
+            else:
+                operation.restorable_prefix_pages = None
             operation.query_pool_hit_pages = {}
             return hash_value, kv_hit_pages * self.page_size
 
@@ -1454,6 +1519,11 @@ class HybridCacheController(BaseHiCacheController):
         operation.pool_storage_result.restorable_prefix_pages = (
             hit_result.restorable_prefix_pages
         )
+        # Every stop point of the span whose trailing sidecars are all present
+        # (rank-local view until _sync_prefetch_hit_query intersects them). The
+        # clamp and the collective read THIS placement (stack entries 209/217;
+        # entry-290's map records the field-placement retarget decision).
+        operation.restorable_prefix_pages = hit_result.restorable_prefix_pages
         # Each pool's own boundary (the KV pool's where the backend reports
         # it, else the folded cut); the beliefs heal pool by pool. A pool the
         # backend did not report carries no verdict.
@@ -1471,37 +1541,31 @@ class HybridCacheController(BaseHiCacheController):
         )
 
     def _sync_prefetch_hit_query(self, operation, storage_hit_count: int) -> int:
-        """One MIN collective for the folded hit count and every pool's own
-        boundary, so per-pool beliefs stay rank-identical. A pool omitted
-        by any rank heals from the folded cut without learning presence."""
-        if any(
-            transfer.hit_policy == PoolHitPolicy.TRAILING_PAGES
-            for transfer in operation.pool_transfers or []
-        ):
-            # A trailing state can exist at 512 and 1024 but not at 768. Taking
-            # MIN of each rank's longest hit would choose a missing checkpoint,
-            # so reduce one restorable flag per prefix length instead. Use the
-            # request span (identical on every rank) for the collective shape,
-            # including when one rank skipped its query due to cancellation.
-            hits = [0] * (len(operation.token_ids) // self.page_size + 1)
-            hits[0] = 1
-            if storage_hit_count > 0:
-                pages = operation.pool_storage_result.restorable_prefix_pages
-                if pages is None:
-                    # Backends without sparse-boundary results keep their
-                    # contiguous-prefix contract. File and Mooncake return a set.
-                    pages = range(1, storage_hit_count // self.page_size + 1)
-                # Callers may cap the hit to allocated host space after the
-                # query; a checkpoint past that cap has nowhere to load.
-                for page in pages:
-                    if 0 < page <= storage_hit_count // self.page_size:
-                        hits[page] = 1
-        else:
-            hits = [storage_hit_count]
+        """One MIN collective for the folded hit count, every pool's own
+        boundary, and -- for a span with a trailing-sidecar pool -- the
+        restorable-prefix mask, so per-pool beliefs and the endpoints a partial
+        span may stop at stay rank-identical. A pool omitted by any rank heals
+        from the folded cut without learning presence.
+
+        The mask's length is pinned to the request span and trailing-ness is a
+        property of the operation's pool transfers (identical component config
+        on every rank), so the packed shape stays rank-invariant even where a
+        rank skipped its query (terminated operation) or failed outright; a
+        non-trailing span keeps the pre-existing 1 + len(PoolName) payload."""
         pools = list(PoolName)
         local = operation.query_pool_hit_pages
+        restorable_mask = (
+            local_restorable_mask(operation, self.page_size, storage_hit_count)
+            if any(
+                transfer.hit_policy == PoolHitPolicy.TRAILING_PAGES
+                for transfer in operation.pool_transfers or ()
+            )
+            else []
+        )
         packed = torch.tensor(
-            hits + [local.get(pool, _NO_POOL_VERDICT) for pool in pools],
+            [storage_hit_count]
+            + [local.get(pool, _NO_POOL_VERDICT) for pool in pools]
+            + restorable_mask,
             dtype=torch.int,
         )
         self._all_reduce(
@@ -1512,13 +1576,80 @@ class HybridCacheController(BaseHiCacheController):
         reduced = packed.tolist()
         operation.query_pool_hit_pages = {
             pool: pages
-            for pool, pages in zip(pools, reduced[len(hits) :], strict=True)
+            for pool, pages in zip(pools, reduced[1 : 1 + len(pools)], strict=True)
             if pages != _NO_POOL_VERDICT
         }
-        if len(hits) == 1:
-            return int(reduced[0])
-        restorable = reduced[: len(hits)]
-        return max(i for i, ok in enumerate(restorable) if ok) * self.page_size
+        if restorable_mask:
+            # Page 0 is never restorable, so the surviving indices are the page
+            # counts themselves, ascending.
+            operation.restorable_prefix_pages = [
+                pages
+                for pages, common in enumerate(reduced[1 + len(pools) :])
+                if common
+            ]
+        return int(reduced[0])
+
+    def _trailing_endpoint_tokens(
+        self, operation: StorageOperation, allocatable_tokens: int
+    ) -> int:
+        """Longest prefix that both fits ``allocatable_tokens`` and ends on a
+        page whose trailing sidecars every rank verified, or 0 when the
+        allocation cannot reach one.
+
+        Reading the sidecar at an unverified interior page always misses, and
+        ``_check_hybrid_prefetch_result`` then forfeits the KV prefix it did
+        fetch, so a shortened span has to stop on a verified endpoint instead.
+        ``allocatable_tokens`` comes from this rank's host arena, which is
+        rank-symmetric by construction (identical pools, identical eviction), so
+        every rank picks the same endpoint out of the intersected candidate set.
+        """
+        has_trailing = any(
+            transfer.hit_policy == PoolHitPolicy.TRAILING_PAGES
+            and transfer.indices_from_pool is None
+            for transfer in operation.pool_transfers or ()
+        )
+        if not has_trailing or operation.restorable_prefix_pages is None:
+            # Nothing to align with: either no pool is tail-anchored, or this
+            # operation never went through the rank-agreed query (buffer-mode
+            # staging), so keep the previous endpoint choice.
+            return allocatable_tokens
+        if operation.sidecar_hash_values is not None:
+            # A head trim already pinned the sidecar endpoint at the untrimmed
+            # query boundary (which the query did verify), and the allocation is
+            # counted in the trimmed domain: leave the endpoint alone.
+            return allocatable_tokens
+        for pages in reversed(operation.restorable_prefix_pages):
+            tokens = pages * self.page_size
+            if tokens <= allocatable_tokens:
+                return tokens
+        return 0
+
+    def _report_sidecar(self, message: str, *args) -> None:
+        if self._sidecar_reports < _SIDECAR_REPORT_WARN_BUDGET:
+            self._sidecar_reports += 1
+            logger.warning(message, *args)
+        else:
+            logger.debug(message, *args)
+
+    def _report_no_restorable_endpoint(
+        self, operation: StorageOperation, allocatable_tokens: int, min_tokens: int
+    ) -> None:
+        self.sidecar_endpoint_clamps += 1
+        endpoints = list(operation.restorable_prefix_pages or ())
+        shown = ", ".join(str(pages) for pages in endpoints[-5:])
+        self._report_sidecar(
+            "HiCache prefetch deferred req=%s reason=no_restorable_endpoint: "
+            "host capacity reaches %d tokens but this span's trailing sidecar is "
+            "only stored at pages [%s%s] (threshold %d tokens); launching the read "
+            "anywhere else would forfeit the KV prefix, so nothing is fetched "
+            "(%d such deferrals so far)",
+            operation.request_id,
+            allocatable_tokens,
+            shown,
+            ", …" if len(endpoints) > 5 else "",
+            min_tokens,
+            self.sidecar_endpoint_clamps,
+        )
 
     def _move_pool_indices(
         self, host_pool, host_indices, device_indices, *, write_back_jit: bool
@@ -1658,7 +1789,21 @@ class HybridCacheController(BaseHiCacheController):
                         )
                     )
                 pool_hits = count_pool_hits(results)
+                self._report_sidecar_endpoint_misses(
+                    operation,
+                    transfers_nonkv,
+                    sidecar_hashes,
+                    sidecar_hit_pages,
+                    pool_hits,
+                )
             except Exception:
+                # The backend raised instead of reporting per-page misses.
+                # Degrade to zero sidecar hits -- _clamp_prefetch_result then
+                # discards the whole fetched prefix, which is the safe
+                # 'restore prefix wrong' guard of #39830 -- and still emit the
+                # pool_hits ack so the ack sequence terminates normally.
+                # (Upstream #43550 adopted this degrade unconditionally; the
+                # dict initialized at the top of this method is the degrade.)
                 logger.exception(
                     "HiCache sidecar prefetch failed for request %s",
                     operation.request_id,
@@ -1674,6 +1819,50 @@ class HybridCacheController(BaseHiCacheController):
             )
         )
         return
+
+    def _report_sidecar_endpoint_misses(
+        self,
+        operation: PrefetchOperation,
+        transfers: list[PoolTransfer],
+        sidecar_hashes: list[str],
+        span_pages: int,
+        pool_hits: dict,
+    ) -> None:
+        """Name the pool and the endpoint page of a sidecar read that came up
+        short.
+
+        The backend's per-key report cannot tell a sidecar endpoint miss from a
+        KV page miss, and an endpoint miss is the expensive one: the KV prefix
+        already transferred in full and is discarded because of it, which is what
+        made prod's sparse ``.mamba`` coverage look like an IO failure
+        (stack entry 209's reporting rider 3fa5197482).
+        """
+        for transfer in transfers:
+            if transfer.hit_policy != PoolHitPolicy.TRAILING_PAGES:
+                continue
+            window_pages = len(transfer.keys or ()) or 1
+            restored = pool_hits.get(transfer.name, 0)
+            if restored >= window_pages:
+                continue
+            self.sidecar_endpoint_misses += 1
+            endpoint = span_pages - window_pages
+            endpoint_hash = (
+                sidecar_hashes[endpoint] if 0 <= endpoint < len(sidecar_hashes) else "?"
+            )
+            self._report_sidecar(
+                "HiCache sidecar endpoint miss req=%s pool=%s kv_pages=%d "
+                "endpoint_page=%d endpoint_hash=%s window_pages=%d restored=%d: "
+                "the KV prefix read for this span cannot be spliced at that "
+                "endpoint (%d endpoint misses so far)",
+                operation.request_id,
+                transfer.name,
+                span_pages,
+                endpoint,
+                endpoint_hash,
+                window_pages,
+                restored,
+                self.sidecar_endpoint_misses,
+            )
 
     def trim_prefetch_full_head(self, operation, trim_tokens: int) -> None:
         """Drop a device-resident FULL head after the availability query;
@@ -1717,6 +1906,7 @@ class HybridCacheController(BaseHiCacheController):
                 )
             pool_hits = count_pool_hits(results)
             operation.pool_storage_result.update_extra_pool_hit_pages(pool_hits)
+            self._report_sidecar_write_shortfalls(backup_transfers, pool_hits)
 
         if not self.backup_skip:
             super()._page_backup(operation)
@@ -1739,6 +1929,39 @@ class HybridCacheController(BaseHiCacheController):
                         break
             operation.completed_tokens = (
                 len(operation.hash_value) * self.page_size if sidecar_ok else 0
+            )
+
+    def _report_sidecar_write_shortfalls(
+        self, backup_transfers: list[PoolTransfer], pool_hits: dict
+    ) -> None:
+        """Report sidecar pages the backend refused to write.
+
+        ``HiCacheFile.set`` answers False when the LRU cap or the free-space
+        watermark rejects a page, and only the ``backup_skip`` path ever looked
+        at those per-page results -- so with the normal write-through policy a
+        pool that stops landing (and can therefore never be prefetched back) was
+        completely silent, which is how a 1-in-26 ``.mamba`` coverage ratio
+        survived a whole serve unnoticed (stack entry 209's reporting rider).
+        """
+        for transfer in backup_transfers:
+            if transfer.indices_from_pool is not None:
+                continue
+            expected = len(transfer.keys or ())
+            if expected == 0:
+                continue
+            stored = pool_hits.get(transfer.name, 0)
+            if stored >= expected:
+                continue
+            self.sidecar_write_shortfalls += 1
+            self._report_sidecar(
+                "HiCache sidecar backup incomplete pool=%s pages=%d stored=%d "
+                "(%d shortfalls so far): later prefetches cannot restore this "
+                "prefix from L3, and the write path is generating load that "
+                "never pays off",
+                transfer.name,
+                expected,
+                stored,
+                self.sidecar_write_shortfalls,
             )
 
     def should_backup(self, transfer: PoolTransfer) -> bool:
@@ -1775,6 +1998,10 @@ class HybridCacheController(BaseHiCacheController):
                 operation = self.backup_queue.get(block=True, timeout=1)
                 if operation is None:
                     continue
+                # Sidecar batch_set_v2 may raise on a corrupt/incompatible host
+                # page; the thread must survive and ack so the scheduler frees
+                # the staged host slots (#39830; _page_backup_or_log degrades
+                # to a logged partial backup).
                 self._page_backup_or_log(operation)
                 self.ack_backup_queue.put(operation)
             except Empty:
@@ -1791,14 +2018,12 @@ class HybridCacheController(BaseHiCacheController):
             if transfer.indices_from_pool is None:
                 continue
             if transfer.indices_from_pool != PoolName.KV:
-                source = next(
-                    (
-                        t
-                        for t in operation.pool_transfers
-                        if t.indices_from_pool is None
-                        and t.name == transfer.indices_from_pool
-                    ),
-                    None,
+                # merge_source_transfers() covers every destination of the
+                # source pool (a Mamba load-back restores one checkpoint to
+                # both a radix slot and an active request slot; sidecars must
+                # follow both, stack entry 292 / #43110).
+                source = merge_source_transfers(
+                    operation.pool_transfers, transfer.indices_from_pool
                 )
                 if source is None:
                     raise AssertionError(
@@ -1905,18 +2130,13 @@ class HybridCacheController(BaseHiCacheController):
                     pool.device_indices = kv_device_indices
                 continue
 
-            source = next(
-                (
-                    transfer
-                    for transfer in extra_pools
-                    if transfer.indices_from_pool is None
-                    and transfer.name == pool.indices_from_pool
-                ),
-                None,
-            )
+            source = merge_source_transfers(extra_pools, pool.indices_from_pool)
             if source is None:
                 rollback_allocated()
                 return None
+            # merge_source_transfers() covers every destination of the source
+            # pool (a Mamba load-back restores one checkpoint to both a radix
+            # slot and an active request slot; sidecars must follow both).
             pool.host_indices = source.host_indices
             if pool.device_indices is None:
                 pool.device_indices = source.device_indices
@@ -1979,9 +2199,6 @@ class HybridCacheController(BaseHiCacheController):
                         self.pp_prefetch_states.pop(operation.request_id, None)
             except Empty:
                 continue
-
-
-# TODO(merge5): re-plant entry 24,199,209,217 semantics (batch B3); fork hunks saved /tmp/opencode/merge5-dossier/replant/python__sglang__srt__mem_cache__hybrid_cache__hybrid_cache_controller.py.fork-hunks.patch
 
 
 def local_restorable_mask(

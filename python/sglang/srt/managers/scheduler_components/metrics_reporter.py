@@ -17,8 +17,6 @@ from sglang.srt.eplb.expert_distribution import EPLB_BALANCEDNESS_WINDOW_SIZES
 from sglang.srt.managers.schedule_batch import ScheduleBatch
 from sglang.srt.managers.utils import GenerationBatchResult
 from sglang.srt.observability.hicache_pool_stats import collect_host_pool_stats
-from sglang.srt.mem_cache.hicache_storage import PoolName
-from sglang.srt.mem_cache.unified_radix_cache import UnifiedRadixCache
 from sglang.srt.observability.forward_pass_metrics import (
     ScheduledRequestMetrics,
     WelfordAccumulator,
@@ -1255,26 +1253,15 @@ class SchedulerMetricsReporter:
         host_total = host_pool.logical_size
         self.stats.hicache_host_used_tokens = host_total - host_pool.available_size()
         self.stats.hicache_host_total_tokens = host_total
-        # Fork: the host-Mamba occupancy series is the {pool="mamba"} entry of
-        # hicache_host_pool_{used,total}_tokens above (one checkpoint slot per
-        # token), so the earlier dedicated hicache_host_mamba_*_states gauges are
-        # not re-added on top of the per-pool set.
-
-        mamba_host_pool = None
-        if (
-            isinstance(self.scheduler.tree_cache, UnifiedRadixCache)
-            and self.scheduler.tree_cache.host_pool_group is not None
-        ):
-            entry = self.scheduler.tree_cache.host_pool_group.entry_map.get(
-                PoolName.MAMBA
-            )
-            mamba_host_pool = None if entry is None else entry.host_pool
-        if mamba_host_pool is not None:
-            mamba_total = mamba_host_pool.logical_size
-            self.stats.hicache_host_mamba_used_states = (
-                mamba_total - mamba_host_pool.available_size()
-            )
-            self.stats.hicache_host_mamba_total_states = mamba_total
+        # Fork (stack entries 189->219): the host-Mamba occupancy series is
+        # the {pool="mamba"} entry of hicache_host_pool_{used,total}_tokens
+        # above (one checkpoint slot per token). Upstream #43727
+        # (26a1e5110d) arrived in merge #5 with a dedicated
+        # hicache_host_mamba_{used,total}_states layer; entry 219's
+        # replacement REMOVED it ("strict superset, same quantity; no
+        # duplicate registration survives"), so the per-pool set stays the
+        # ONLY host occupancy producer and #43727's gauge-less stats fields
+        # and reporter read-back are deleted here rather than re-exported.
 
     def _update_lora_metrics(self):
         """Update LoRA pool metrics for monitoring and autoscaling."""
