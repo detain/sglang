@@ -18,6 +18,7 @@ from sglang.srt.mem_cache.pool_host.base import (
     host_memory_budget_scope,
     ranks_per_host,
 )
+from sglang.srt.mem_cache.qsa_kv_pool import QSATokenToKVPool
 from sglang.srt.runtime_context import get_context, get_memory, get_parallel
 
 if TYPE_CHECKING:
@@ -46,6 +47,12 @@ def _sub_pool_views(pool) -> list:
 
 
 def _pool_bytes(pool) -> int:
+    if isinstance(pool, QSATokenToKVPool):
+        # Only compressed keys have a host mirror. The request-local key/rope
+        # state included in get_kv_size_bytes() stays on the device.
+        return _pool_bytes(pool.full_kv_pool) + sum(
+            buffer.nbytes for buffer in pool.qsa_compressed_k_buffer_pool
+        )
     views = _sub_pool_views(pool)
     if views:
         return sum(_pool_bytes(view) for view in views)

@@ -64,6 +64,7 @@ from sglang.srt.mem_cache.pool_host.host_pool_decl import (
 )
 from sglang.srt.mem_cache.pool_host.mamba import MambaPoolHost
 from sglang.srt.mem_cache.pool_host.unified import UnifiedPageEnvelopeHostPool
+from sglang.srt.runtime_context import get_context
 from sglang.test.ci.ci_register import register_cpu_ci
 from sglang.test.test_utils import CustomTestCase
 from sglang.test.unified_allocator_fixtures import build_test_unified_pools
@@ -1061,6 +1062,163 @@ class TestHybridMambaDeclaredIndexer(CustomTestCase):
         self.assertEqual(
             [c.decl.pool_name for c in config.pools], [PoolName.KV, PoolName.INDEXER]
         )
+
+    def test_explicit_budget_includes_declared_indexer_and_packed_draft(self):
+        from sglang.srt.mem_cache.pool_host.mla import (
+            MLAHostAllocation,
+            MLATokenToKVPoolHost,
+        )
+
+        # Meta buffers describe large pools without allocating memory.
+        for page_size, skip_middle, packed, shard in (
+            (64, False, False, None),
+            (64, True, True, None),
+            (256, True, True, None),
+            (64, True, True, (0, 2)),
+            (64, True, True, (1, 2)),
+        ):
+            with self.subTest(
+                page_size=page_size, skip=skip_middle, packed=packed, shard=shard
+            ):
+                kv_pool = _dsa_pool_stub(layer_num=3, size=256000, shard=shard)
+                kv_pool.skip_topk_layers = [False, skip_middle, False]
+                kv_pool.page_size = page_size
+                drafts = (_dsa_pool_stub(layer_num=1, size=128000),) if packed else ()
+                for pool in (kv_pool, *drafts):
+                    pool.page_size = page_size
+                    pool.kv_buffer = [
+                        torch.empty(
+                            (pool.size, pool.kv_cache_dim),
+                            dtype=pool.store_dtype,
+                            device="meta",
+                        )
+                        for _ in range(pool.layer_num)
+                    ]
+                    pool.index_key_cache = SimpleNamespace(
+                        buffer=[
+                            torch.empty(
+                                (0 if skip else pool.size // (page_size // 64), 132),
+                                dtype=torch.uint8,
+                                device="meta",
+                            )
+                            for skip in pool.skip_topk_layers
+                        ]
+                    )
+                params = _target_params(drafts, page_size=page_size)
+                params.mtp_draft_mamba_pools = ()
+                params.token_to_kv_pool_allocator = SimpleNamespace(
+                    state_slots=SimpleNamespace(
+                        alloc=lambda n: None, free=lambda n: None
+                    )
+                )
+                mamba_pool = _Pool(kv_pool.get_kv_size_bytes() / 9)
+                mamba_info = DevicePoolInfo(
+                    pool_name=PoolName.MAMBA,
+                    indices_from_pool=PoolName.MAMBA,
+                    layer_ids=(1, 3),
+                    buffer_info=MambaStateBufferInfo(
+                        temporal=torch.zeros(2, 9, 4), conv=(torch.zeros(2, 9, 4),)
+                    ),
+                )
+                mamba_pool.get_device_pool_infos = lambda: (mamba_info,)
+                assigned = {}
+
+                def dummy_kv_host(**kwargs):
+                    assigned["kv"] = kwargs["host_size"]
+                    pool = kwargs["kv_pool"]
+                    drafts = kwargs["mtp_draft_device_pools"]
+                    # The real MLA host mirrors the per-rank layer share, the
+                    # same count the budget fraction takes from the device pool.
+                    layers = pool.layer_num
+                    if pool.layer_shard_enabled:
+                        layers = -(-layers // pool.layer_shard_size)
+                    width = pool.kv_cache_dim
+                    return MLATokenToKVPoolHost(
+                        MLAHostAllocation(
+                            dtype=pool.store_dtype,
+                            kv_lora_rank=pool.kv_lora_rank,
+                            qk_rope_head_dim=pool.qk_rope_head_dim,
+                            kv_cache_dim=width,
+                            size_per_token=width
+                            * pool.store_dtype.itemsize
+                            * (layers + len(drafts)),
+                            draft_layer_num=len(drafts),
+                        ),
+                        host_to_device_ratio=1,
+                        host_size=kwargs["host_size"],
+                        page_size=kwargs["page_size"],
+                        layout="page_first",
+                        pin_memory=False,
+                        device_capacity_tokens=pool.size,
+                        start_layer=pool.start_layer,
+                        end_layer=pool.end_layer,
+                        target_layer_num=layers,
+                    )
+
+                real_indexer_host = pool_host_dsa.DSAIndexerPoolHost
+
+                def dummy_indexer_host(
+                    decl, anchor_host, *, allocator_type, packed_draft_device_pools=()
+                ):
+                    return real_indexer_host(
+                        decl=decl,
+                        anchor_host=anchor_host,
+                        packed_draft_device_pools=packed_draft_device_pools,
+                        allocator_type=allocator_type,
+                        pin_memory=False,
+                        is_dummy=True,
+                    )
+
+                def dummy_mamba_host(pool, mamba_info, *, host_size, **kwargs):
+                    assigned["mamba"] = host_size
+                    return SimpleNamespace(layer_num=2, can_use_write_back_jit=False)
+
+                with (
+                    get_context().override_server_args(
+                        hicache_size=100,
+                        hicache_ratio=1,
+                        hicache_mem_layout="page_first",
+                        hicache_host_memory_mode="cache",
+                    ),
+                    patch.object(
+                        hybrid_pool_assembler, "build_kv_host_pool", dummy_kv_host
+                    ),
+                    patch.object(
+                        pool_host_dsa, "DSAIndexerPoolHost", dummy_indexer_host
+                    ),
+                    patch.object(MLATokenToKVPoolHost, "clear", return_value=None),
+                    patch.object(real_indexer_host, "clear", return_value=None),
+                    patch.object(
+                        hybrid_pool_assembler, "build_mamba_host_pool", dummy_mamba_host
+                    ),
+                    patch.object(
+                        hybrid_pool_assembler, "HybridCacheController", MagicMock()
+                    ),
+                    patch.object(
+                        hybrid_pool_assembler,
+                        "_get_allocator_type",
+                        return_value="default",
+                    ),
+                ):
+                    group, _, _ = hybrid_pool_assembler.build_hybrid_mamba_stack(
+                        params=params,
+                        decls=kv_pool.host_pool_decls(),
+                        mamba_pool=mamba_pool,
+                        full_layer_mapping={0: 0, 2: 1, 4: 2},
+                        start_layer=0,
+                        load_cache_event=None,
+                        storage_backend=None,
+                        use_mla=True,
+                    )
+                kv = group.entry_map[PoolName.KV].host_pool
+                indexer = group.entry_map[PoolName.INDEXER].host_pool
+                combined_row = kv.size_per_token + indexer.size_per_token
+                total = kv.size * combined_row + assigned["mamba"] * 1e9
+                # Existing host allocation rounds up by at most one page.
+                self.assertLessEqual(total, 100 * 1e9 + page_size * combined_row)
+                self.assertGreater(total, 100 * 1e9 - page_size * combined_row)
+                self.assertAlmostEqual(assigned["mamba"], 10.0)
+                self.assertLess(assigned["kv"], 90.0)
 
 
 class TestDeclaredPoolPlanning(CustomTestCase):
