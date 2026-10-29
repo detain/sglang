@@ -784,5 +784,3 @@ def alloc_for_spec_decode(
     nxt_kv_lens_list = nxt_kv_lens_cpu.tolist()
     for req, nxt_kv_len in zip(reqs, nxt_kv_lens_list, strict=True):
         req.kv.kv_allocated_len = max(req.kv.kv_allocated_len, nxt_kv_len)
-
-# TODO(merge5): re-plant entry 200 semantics (batch B3); fork hunks saved /tmp/opencode/merge5-dossier/replant/python__sglang__srt__mem_cache__allocation.py.fork-hunks.patch

@@ -150,5 +150,3 @@ def _wire_mamba_slot_allocator(
         state_pool.host_capacity_tokens * mamba_end.entry_bytes
     )
     return slot_allocator
-
-# TODO(merge5): re-plant entry 203,263 semantics (batch B3); fork hunks saved /tmp/opencode/merge5-dossier/replant/python__sglang__srt__mem_cache__unified_memory_pool.py.fork-hunks.patch

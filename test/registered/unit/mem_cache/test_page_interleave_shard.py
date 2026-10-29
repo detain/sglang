@@ -887,7 +887,10 @@ class TestClassedAllocator(CustomTestCase):
         alloc = _make_allocator()
         with self.assertRaises(NotImplementedError):
             alloc.alloc(GS)
-        with self.assertRaises(NotImplementedError):
+        # The post-#4697x allocator IMPLEMENTS sharded alloc_decode sync-free
+        # (owner host-computable from the chain rotation), so the loud path is
+        # now the missing-rotation-base guard, not the whole call.
+        with self.assertRaises(AssertionError):
             alloc.alloc_decode(
                 torch.tensor([PS + 1]), torch.tensor([PS + 1]), torch.tensor([PS - 1])
             )

@@ -706,5 +706,3 @@ class RunnerIds:
         if not self.is_translating:
             return widened_ids
         return self._translate_full(widened_ids)
-
-# TODO(merge5): re-plant entry - semantics (batch B3); fork hunks saved /tmp/opencode/merge5-dossier/replant/python__sglang__srt__mem_cache__kv__alloc__runner_ids.py.fork-hunks.patch

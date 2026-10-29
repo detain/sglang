@@ -1020,7 +1020,11 @@ class SWAComponent(TreeComponent):
         assert self._swa_kv_pool_host is not None
         host_indices = self._swa_kv_pool_host.alloc(num_tokens)
         if host_indices is None:
-            self.cache.evict_host(num_tokens, self.component_type)
+            # Reclaim only the shortfall; evicting the full request over-evicts
+            # prefix entries a smaller evict would have kept (stack entry 90).
+            shortfall = num_tokens - self._swa_kv_pool_host.available_size()
+            if shortfall > 0:
+                self.cache.evict_host(shortfall, self.component_type)
             host_indices = self._swa_kv_pool_host.alloc(num_tokens)
         return host_indices
 
@@ -1518,5 +1522,3 @@ class SWAComponent(TreeComponent):
         raise AssertionError(
             f"SWAComponent: unhandled ComponentAction {type(action).__name__}"
         )
-
-# TODO(merge5): re-plant entry 90,114 semantics (batch B3); fork hunks saved /tmp/opencode/merge5-dossier/replant/python__sglang__srt__mem_cache__unified_cache__components__swa.py.fork-hunks.patch

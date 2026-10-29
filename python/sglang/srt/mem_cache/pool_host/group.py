@@ -7,7 +7,11 @@ from typing import Any
 
 import torch
 
-from sglang.srt.mem_cache.hicache_storage import PoolName, PoolTransfer
+from sglang.srt.mem_cache.hicache_storage import (
+    PoolName,
+    PoolTransfer,
+    merge_source_transfers,
+)
 from sglang.srt.mem_cache.kv.memory.views import MHAKVView
 from sglang.srt.mem_cache.pool_host.base import HostKVCache, shared_host_layout_domains
 
@@ -19,8 +23,8 @@ class PoolEntry:
     device_pool: Any
     layer_mapper: Callable[[int], int | None]
     is_primary_index_anchor: bool = False
-    # Reclaim callbacks receive the absolute allocation size n. The host
-    # callback evicts n slots; the device callback makes alloc(n) feasible.
+    # Host reclaim callbacks receive the allocation shortfall in slots.
+    # Device callbacks receive the full allocation size and make alloc(n) feasible.
     host_evict_fn: Callable[[int], Any] | None = None
     device_evict_fn: Callable[[int], Any] | None = None
     device_alloc_fn: Callable[[int], Any] | None = None
@@ -189,7 +193,11 @@ class HostPoolGroup:
         kwargs = {} if start_owner is None else {"start_owner": start_owner}
         indices = host_pool.alloc(need_size, **kwargs)
         if indices is None and reclaim is not None:
-            reclaim(need_size)
+            # Reclaim only the shortfall; evicting the full need_size over-
+            # evicts prefix entries a smaller evict would have kept (entry 90).
+            shortfall = need_size - host_pool.available_size()
+            if shortfall > 0:
+                reclaim(shortfall)
             indices = host_pool.alloc(need_size, **kwargs)
         return indices
 
@@ -248,15 +256,11 @@ class HostPoolGroup:
                     transfer.device_indices = primary_device_indices
                 continue
 
-            source = next(
-                (
-                    candidate
-                    for candidate in transfers
-                    if candidate.indices_from_pool is None
-                    and candidate.name == transfer.indices_from_pool
-                ),
-                None,
-            )
+            # merge_source_transfers() covers every independent transfer of the
+            # source pool (one Mamba load-back restores a checkpoint into both
+            # a radix slot and a live request row; the sidecar must follow all
+            # destinations -- the mirror of the destination fix, entry 90).
+            source = merge_source_transfers(transfers, transfer.indices_from_pool)
             if source is None:
                 rollback()
                 return None
@@ -321,5 +325,3 @@ class HostPoolGroup:
 
     def available_size(self, pool: PoolName | None = None):
         return self.get_entry(pool).host_pool.available_size()
-
-# TODO(merge5): re-plant entry 90 semantics (batch B3); fork hunks saved /tmp/opencode/merge5-dossier/replant/python__sglang__srt__mem_cache__pool_host__group.py.fork-hunks.patch

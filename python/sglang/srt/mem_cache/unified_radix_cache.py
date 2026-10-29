@@ -1980,13 +1980,16 @@ class UnifiedRadixCache(BasePrefixCache):
         start_owner = self.tree_core.rotation_phase_of(node_id)
         shard_kwargs = {} if start_owner is None else {"start_owner": start_owner}
         # Defer submission so the next flush can merge pending node backups.
+        # node_ids rides only when set (entry 199): single-node backups keep the
+        # exact pre-batching call shape.
+        ids_kwargs = {} if node_ids is None else {"node_ids": node_ids}
         return self.cache_controller.write(
             device_value,
             node_id=node_id,
             extra_pools=aux_xfers or None,
             flush=False,
-            node_ids=node_ids,
             **shard_kwargs,
+            **ids_kwargs,
         )
 
     def _track_write_through_node(
