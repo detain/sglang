@@ -143,21 +143,25 @@ class TestServerArgsPositionalOrder(CustomTestCase):
             (95, "disable_attn_tp_gather"),
             (96, "enable_p2p_check"),
             (97, "device"),
-            (535, "grpc_response_timeout_secs"),
-            (536, "enable_paged_experts"),
-            (537, "paged_experts_num_resident"),
-            (538, "enable_nvidia_megakernel"),
-            (539, "enable_megamoe_for_layernorm_sp"),
+            # Merge-#5 B6 re-anchor: upstream's in-range appended block sits
+            # behind the fork's watermark extension (8 fields at 530-537), so
+            # these five moved +3; every pre-existing slot is byte-verified
+            # unmoved by the same pins below.
+            (538, "grpc_response_timeout_secs"),
+            (539, "enable_paged_experts"),
+            (540, "paged_experts_num_resident"),
+            (541, "enable_nvidia_megakernel"),
+            (542, "enable_megamoe_for_layernorm_sp"),
         ):
             with self.subTest(index=index):
                 self.assertEqual(fields[index].name, name)
         defaults = ServerArgs(model_path="dummy")
         # Surviving legacy inputs retain their slots after an intentional removal.
-        positional = [getattr(defaults, field.name) for field in fields[:536]]
+        positional = [getattr(defaults, field.name) for field in fields[:543]]
         positional[95] = True
         positional[96] = False
         positional[97] = "cpu"
-        positional[535] = 123.0
+        positional[538] = 123.0
 
         args = ServerArgs(*positional)
 

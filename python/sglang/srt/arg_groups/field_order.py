@@ -560,5 +560,11 @@ POSITIONAL_FIELD_ORDER = (
     "hicache_storage_layer_partition",
     "engram_config",
     "moe_ascend_ops_config",
+    # Fork built-ins (entries 284/288-era): declared on the dataclass like the
+    # rest; listed here so their slots are pinned, not left to extension-field
+    # append order. Merge-#5 B6 re-pin (they were the test's "2 additional
+    # elements" once upstream's own appended block grew past them).
+    "qsa_cache_sharding_size",
+    "hicache_mamba_size_gb",
 )
 # fmt: on
