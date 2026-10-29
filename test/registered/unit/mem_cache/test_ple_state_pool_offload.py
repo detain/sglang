@@ -12,6 +12,7 @@ from sglang.srt.mem_cache.memory_pool import (
     HybridReqToTokenPool,
     MambaPool,
 )
+from sglang.srt.mem_cache.kv.state_storage import StateStorage
 from sglang.srt.mem_cache.ple_state_pool import NGramPool, ShortConvPool
 from sglang.test.test_utils import CustomTestCase
 
@@ -75,6 +76,10 @@ def _hybrid_pool(short_conv: ShortConvPool, ngram: NGramPool):
     pool.free_slots = []
     pool.req_generation = torch.ones(NUM_SLOTS, dtype=torch.int64)
     pool._aux_cache = None
+    # Post-merge the mamba handles are properties onto the request table's
+    # StateStorage; clear() delegates to state.clear(), so the stub carries
+    # a real (empty) StateStorage and fills its parts.
+    pool.state = StateStorage.empty("mamba")
     pool.mamba_allocator = _Allocator()
     pool.short_conv_pool = short_conv
     pool.ngram_pool = ngram

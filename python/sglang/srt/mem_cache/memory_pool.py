@@ -43,6 +43,7 @@ from sglang.kernels.ops.kvcache.cache_move import (
     copy_all_layer_kv_cache_func,
     set_kv_buffer_prefix_valid_tiled,
     set_kv_buffer_prefix_valid_tiled_fp8,
+    store_cache_fp8,
 )
 from sglang.kernels.ops.kvcache.cache_ops import launch_reshape_and_cache_flash
 from sglang.kernels.ops.kvcache.kvcache import can_use_store_cache, store_cache
@@ -120,6 +121,18 @@ GB = 1024 * 1024 * 1024
 _is_cuda = is_cuda()
 _is_npu = is_npu()
 _is_cpu = is_cpu()
+
+
+def _safe_zeros(shape, dtype, device):
+    # torch.zeros is not implemented for every dtype/device pair (e.g. e4m3 on
+    # some CPU builds); allocate bytes and view (stack entry 18).
+    try:
+        return torch.zeros(shape, dtype=dtype, device=device)
+    except (NotImplementedError, RuntimeError):
+        buf = torch.empty(shape, dtype=torch.uint8, device=device).zero_()
+        return buf.view(dtype)
+
+
 _is_xpu = is_xpu()
 _cpu_has_amx_support = cpu_has_amx_support()
 _is_hip = is_hip()
@@ -151,6 +164,36 @@ def conv_window_dedup_enabled(
         and not is_kda
         and (speculative_eagle_topk is None or speculative_eagle_topk <= 1)
     )
+
+
+def check_linear_lossless_verify(
+    *,
+    speculative_eagle_topk: Optional[int],
+    is_kda: bool,
+    enable_linear_replayssm_spec: bool,
+) -> None:
+    """Reject configurations the lossless GDN tuple verify cannot serve.
+
+    The replay applies the accepted steps of one linear draft chain with the
+    GDN scalar gate. Server-arg validation already enforces this; the pool
+    re-checks so a direct construction cannot silently fall back.
+    (stack entry 203, #42388)
+    """
+    if speculative_eagle_topk != 1:
+        raise ValueError(
+            "enable_linear_lossless_verify requires a linear draft chain "
+            f"(speculative_eagle_topk == 1), got {speculative_eagle_topk!r}."
+        )
+    if is_kda:
+        raise ValueError(
+            "enable_linear_lossless_verify supports GDN layers only (KDA has a "
+            "per-channel gate and its own verify kernels)."
+        )
+    if enable_linear_replayssm_spec:
+        raise ValueError(
+            "enable_linear_lossless_verify and enable_linear_replayssm_spec are "
+            "mutually exclusive."
+        )
 
 
 def get_tensor_size_bytes(t: Union[torch.Tensor, List[torch.Tensor]]):
@@ -577,6 +620,15 @@ class MambaPool:
         # full-state snapshots are never produced or consumed.
         intermediate_ssm: Optional[torch.Tensor]
         intermediate_conv_window: List[torch.Tensor]
+        # Lossless GDN tuple ring (--enable-linear-lossless-verify, stack
+        # entry 203); None otherwise. fp32 whatever the state dtype, so the
+        # replay sees exactly the values the verify kernel computed.
+        #   intermediate_ssm_u: [num_layers, spec_slots, D, HV, V]
+        #   intermediate_ssm_k: [num_layers, spec_slots, D, HV, K]
+        #   intermediate_ssm_g: [num_layers, spec_slots, D, HV]
+        intermediate_ssm_u: Optional[torch.Tensor] = None
+        intermediate_ssm_k: Optional[torch.Tensor] = None
+        intermediate_ssm_g: Optional[torch.Tensor] = None
 
     def _detect_conv_window_axis(
         self, conv_state_shape: List[Tuple[int, int]], win_len: int
@@ -661,6 +713,7 @@ class MambaPool:
         linear_replayssm_cache_len: int = 16,
         envelope_layout: bool = False,
         enable_linear_replayssm_spec: bool = False,
+        enable_linear_lossless_verify: bool = False,
     ):
         conv_state_shape = cache_params.shape.conv
         temporal_state_shape = cache_params.shape.temporal
@@ -888,7 +941,43 @@ class MambaPool:
                 # KDA verify kernel takes intermediate_states_buffer=None (skips the
                 # per-step write, CACHE_INTERMEDIATE_STATES=False) and the commit
                 # replays the ring into the checkpoint instead. This is the memory win.
-                if enable_linear_replayssm_spec:
+                # Lossless GDN tuple verify (--enable-linear-lossless-verify,
+                # stack entry 203): keep each draft step's (u, k, g) tuple
+                # instead of a full [HV, V, K] snapshot -- ~K x smaller -- and
+                # replay the accepted state at commit. The replay is a linear
+                # chain, so this requires speculative_eagle_topk == 1 (checked
+                # here and in server args).
+                lossless_verify = enable_linear_lossless_verify
+                if lossless_verify:
+                    check_linear_lossless_verify(
+                        speculative_eagle_topk=speculative_eagle_topk,
+                        is_kda=cache_params.is_kda,
+                        enable_linear_replayssm_spec=enable_linear_replayssm_spec,
+                    )
+                intermediate_ssm_u_cache = None
+                intermediate_ssm_k_cache = None
+                intermediate_ssm_g_cache = None
+                if lossless_verify:
+                    intermediate_ssm_state_cache = None
+                    num_heads, value_dim, key_dim = temporal_state_shape
+                    tuple_shape = (
+                        num_mamba_layers,
+                        spec_state_size + 1,
+                        speculative_num_draft_tokens,
+                        num_heads,
+                    )
+                    intermediate_ssm_u_cache = torch.zeros(
+                        size=(*tuple_shape, value_dim),
+                        dtype=torch.float32,
+                        device=device,
+                    )
+                    intermediate_ssm_k_cache = torch.zeros(
+                        size=(*tuple_shape, key_dim), dtype=torch.float32, device=device
+                    )
+                    intermediate_ssm_g_cache = torch.zeros(
+                        size=tuple_shape, dtype=torch.float32, device=device
+                    )
+                elif enable_linear_replayssm_spec:
                     intermediate_ssm_state_cache = None
                 else:
                     intermediate_ssm_state_cache = torch.zeros(
@@ -979,6 +1068,9 @@ class MambaPool:
                     temporal=temporal_state,
                     intermediate_ssm=intermediate_ssm_state_cache,
                     intermediate_conv_window=intermediate_conv_window_cache,
+                    intermediate_ssm_u=intermediate_ssm_u_cache,
+                    intermediate_ssm_k=intermediate_ssm_k_cache,
+                    intermediate_ssm_g=intermediate_ssm_g_cache,
                     replayssm_d=replayssm_d,
                     replayssm_k=replayssm_k,
                     replayssm_g=replayssm_g,
@@ -1001,6 +1093,13 @@ class MambaPool:
                     # over-reports its logical, un-deduplicated size).
                     f"intermediate_conv_window_cache size: {get_tensor_size_bytes(self._intermediate_conv_window_phys) / GB:.2f}GB "
                 )
+                if lossless_verify:
+                    logger.info(
+                        "Lossless GDN tuple cache is on: (u, k, g) ring "
+                        f"{get_tensor_size_bytes([intermediate_ssm_u_cache, intermediate_ssm_k_cache, intermediate_ssm_g_cache]) / GB:.3f}GB "
+                        f"for {spec_state_size + 1} spec slots x "
+                        f"{speculative_num_draft_tokens} draft tokens."
+                    )
             else:
                 self.mamba_cache = self.State(
                     conv=conv_state,
@@ -1018,6 +1117,12 @@ class MambaPool:
                     f"conv_state size: {get_tensor_size_bytes(conv_state) / GB:.2f}GB, "
                     f"ssm_state size: {get_tensor_size_bytes(temporal_state) / GB:.2f}GB "
                 )
+            # The HiCache host mirror holds only the conv/temporal checkpoint;
+            # spec verify scratch and ReplaySSM rings stay on device and must
+            # not size host pools (stack entry 295 / #47040-accounting half).
+            self.host_capacity_bytes = self.State(
+                conv=conv_state, temporal=temporal_state
+            ).mem_usage_bytes()
             if _replayssm_on:
                 logger.info(
                     f"GDN ReplaySSM ring buffers allocated "
@@ -1259,6 +1364,9 @@ class MambaPool:
         {
             "intermediate_ssm",
             "intermediate_conv_window",
+            "intermediate_ssm_u",
+            "intermediate_ssm_k",
+            "intermediate_ssm_g",
             "replayssm_d",
             "replayssm_k",
             "replayssm_g",
@@ -1393,6 +1501,7 @@ class HybridReqToTokenPool(ReqToTokenPool):
         linear_replayssm_cache_len: int = 16,
         mamba_envelope_layout: bool = False,
         enable_linear_replayssm_spec: bool = False,
+        enable_linear_lossless_verify: bool = False,
         short_conv_layer_ids: Optional[List[int]] = None,
         short_conv_state_shape: Optional[Tuple[int, int]] = None,
         ngram_context_len: int = 0,
@@ -1431,6 +1540,7 @@ class HybridReqToTokenPool(ReqToTokenPool):
             linear_replayssm_cache_len=linear_replayssm_cache_len,
             mamba_envelope_layout=mamba_envelope_layout,
             enable_linear_replayssm_spec=enable_linear_replayssm_spec,
+            enable_linear_lossless_verify=enable_linear_lossless_verify,
             short_conv_layer_ids=short_conv_layer_ids,
             short_conv_state_shape=short_conv_state_shape,
             ngram_context_len=ngram_context_len,
@@ -1451,6 +1561,7 @@ class HybridReqToTokenPool(ReqToTokenPool):
         linear_replayssm_cache_len: int = 16,
         mamba_envelope_layout: bool = False,
         enable_linear_replayssm_spec: bool = False,
+        enable_linear_lossless_verify: bool = False,
         short_conv_layer_ids: Optional[List[int]] = None,
         short_conv_state_shape: Optional[Tuple[int, int]] = None,
         ngram_context_len: int = 0,
@@ -1470,6 +1581,7 @@ class HybridReqToTokenPool(ReqToTokenPool):
             linear_replayssm_cache_len=linear_replayssm_cache_len,
             envelope_layout=mamba_envelope_layout,
             enable_linear_replayssm_spec=enable_linear_replayssm_spec,
+            enable_linear_lossless_verify=enable_linear_lossless_verify,
         )
         self.mamba_allocator = MambaSlotAllocator(
             size=mamba_size,
@@ -2204,7 +2316,9 @@ class MHATokenToKVPool(KVCache, MHAKVView):
             if swa_v_head_dim is not None
             else v_head_dim
             if v_head_dim is not None
-            else head_dim
+            # Fall back to the pool's RESOLVED head_dim (swa-aware above),
+            # not the raw target-pool parameter (stack entry 178).
+            else self.head_dim
         )
 
         # Layout: NHD (default) | HND (SGLANG_USE_HND_KVCACHE) | vectorized_5d (ROCm AITER).
@@ -2279,6 +2393,16 @@ class MHATokenToKVPool(KVCache, MHAKVView):
         # for store_cache JIT kernel
         self.row_dim = self.head_num * self.head_dim
         self.v_row_dim = self.head_num * self.v_head_dim
+        # Triton's native E4M3 conversion requires SM89 or newer. Older CUDA
+        # devices retain the eager writer, as do non-device-backed pools
+        # (stack entry 18).
+        self._enable_fp8_store = (
+            _is_cuda
+            and torch.device(self.device).type == "cuda"
+            and self.dtype == fp8_dtype
+            and self.kv_cache_layout == "nhd"
+            and torch.cuda.get_device_capability(self.device) >= (8, 9)
+        )
         self.model_layer_ids = tuple(
             range(self.start_layer, self.start_layer + self.layer_num)
         )
@@ -2557,7 +2681,7 @@ class MHATokenToKVPool(KVCache, MHAKVView):
                     x = self._kv_vector_x
                     # K: (num_blocks, H, D_k // X, page, X)
                     self.k_buffer = [
-                        torch.zeros(
+                        _safe_zeros(
                             (
                                 num_blocks,
                                 self.head_num,
@@ -2572,7 +2696,7 @@ class MHATokenToKVPool(KVCache, MHAKVView):
                     ]
                     # V: (num_blocks, H, page // X, D_v, X)
                     self.v_buffer = [
-                        torch.zeros(
+                        _safe_zeros(
                             (
                                 num_blocks,
                                 self.head_num,
@@ -2589,7 +2713,10 @@ class MHATokenToKVPool(KVCache, MHAKVView):
                     k_shape, v_shape = self._kv_buffer_shapes()
 
                     def _zeros(shape):
-                        return torch.zeros(
+                        # _safe_zeros: torch.zeros is unimplemented for some
+                        # dtype/device pairs (e.g. e4m3 on older CPU builds);
+                        # allocate bytes and view (stack entry 18).
+                        return _safe_zeros(
                             shape, dtype=self.store_dtype, device=self.device
                         )
 
@@ -2869,6 +2996,9 @@ class MHATokenToKVPool(KVCache, MHAKVView):
         dcp_kv_mask: Optional[torch.Tensor] = None,
     ):
         loc, _, _ = unwrap_write_loc(loc_info)
+        # Quantization may mutate inputs in the eager fallback. Callers
+        # retaining K/V must keep private copies even when a fused writer
+        # leaves them intact (stack entry 18).
         self._check_physical_write_loc(loc_info, "set_kv_buffer (MHA)")
         # Catch stale slot ids here instead of as illegal-addr / silent KV
         # corruption in the store_kvcache write (gated on SGLANG_ENABLE_ASYNC_ASSERT).
@@ -2893,10 +3023,28 @@ class MHATokenToKVPool(KVCache, MHAKVView):
             return
 
         if cache_k.dtype != self.dtype:
+            if self._can_fuse_fp8_store(
+                cache_k, cache_v, k_scale, v_scale, dcp_kv_mask
+            ):
+                store_cache_fp8(
+                    cache_k,
+                    cache_v,
+                    self.k_buffer[layer_id - self.start_layer].view(self.dtype),
+                    self.v_buffer[layer_id - self.start_layer].view(self.dtype),
+                    loc,
+                    k_scale,
+                    v_scale,
+                )
+                return
             if k_scale is not None:
                 cache_k.div_(k_scale)
             if v_scale is not None:
                 cache_v.div_(v_scale)
+            if self.dtype == fp8_dtype:
+                # Saturate like the fused kernel; a bf16 value past the E4M3
+                # range would otherwise land on inf/NaN (stack entry 18).
+                cache_k = saturate_to_fp8_range(cache_k, self.dtype)
+                cache_v = saturate_to_fp8_range(cache_v, self.dtype)
             cache_k = cache_k.to(self.dtype)
             cache_v = cache_v.to(self.dtype)
 
@@ -2952,6 +3100,34 @@ class MHATokenToKVPool(KVCache, MHAKVView):
             return
 
         self._store_kv_layer(layer_id - self.start_layer, loc, cache_k, cache_v)
+
+    def _can_fuse_fp8_store(self, k, v, k_scale, v_scale, dcp_kv_mask):
+        # Eligibility for store_cache_fp8 (stack entry 18): the kernel needs
+        # NHD rows with unit inner strides, a plain (or scalar-tensor) fp32
+        # scale, no DCP masking, and CUDA SM89+ (the _enable_fp8_store gate).
+        if not (
+            self._enable_fp8_store
+            and dcp_kv_mask is None
+            and k.dtype == v.dtype
+            and k.dtype in (torch.float16, torch.bfloat16, torch.float32)
+        ):
+            return False
+        for value in (k, v):
+            if value.ndim != 3 or value.stride(-1) != 1:
+                return False
+            if value.stride(-2) != value.shape[-1]:
+                return False
+        for scale in (k_scale, v_scale):
+            if scale is None or isinstance(scale, (float, int)):
+                continue
+            if not (
+                isinstance(scale, torch.Tensor)
+                and scale.ndim == 0
+                and scale.dtype == torch.float32
+                and scale.device == k.device
+            ):
+                return False
+        return True
 
     def _store_kv_layer(
         self,
@@ -3105,6 +3281,16 @@ class MHATokenToKVPool(KVCache, MHAKVView):
             )
 
         if prepare_workspace:
+            if (
+                req_pool_indices_cpu is None
+                or extend_prefix_lens_cpu is None
+                or extend_seq_lens_cpu is None
+            ):
+                raise RuntimeError(
+                    "FlashInfer FP4 extend workspace preparation requires CPU "
+                    "request indices, prefix lengths, and extend lengths. Fixed-width "
+                    "speculative forwards must use the GPU-resident workspace path."
+                )
             transfer_cur_kv = not use_ragged
             k_cur_fp8 = (
                 k_cur.to(torch.float8_e4m3fn)
@@ -3166,6 +3352,10 @@ class MHATokenToKVPool(KVCache, MHAKVView):
         if isinstance(values, list):
             return [int(value) for value in values]
         if isinstance(values, torch.Tensor):
+            if torch.cuda.is_current_stream_capturing():
+                # Avoid non-pinned D2H copy during CUDA graph capture
+                # (stack entry 192: the illegal H2D at capture).
+                return [0] * values.numel()
             return [int(value) for value in values.cpu().tolist()]
         return [int(value) for value in values]
 
@@ -6251,7 +6441,7 @@ class MiniMaxSparseKVPool(KVCache):
         return self.main_pool.get_value_buffer(self.main_pool.start_layer).shape[-1]
 
 
-# TODO(merge5): re-plant entry 18,175,178,186,192,203,263 semantics (batch B3); fork hunks saved /tmp/opencode/merge5-dossier/replant/python__sglang__srt__mem_cache__memory_pool.py.fork-hunks.patch
+
 
 
 def spec_intermediate_bytes_per_req(

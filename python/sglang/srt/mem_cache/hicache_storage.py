@@ -1085,64 +1085,78 @@ class HiCacheFile(HiCacheStorage):
         target_sizes: Optional[Any] = None,
     ) -> torch.Tensor | None:
         if self._unified_suffixes is None:
-            return self._get_file(
-                self._get_suffixed_key(key), target_location, self._component_of(key)
-            )
+            suffixed = self._get_suffixed_key(key)
+            try:
+                return self._get_file(suffixed, target_location)
+            except FileNotFoundError:
+                # Naming the pool is the raw key's job (the suffix buries the
+                # sidecar marker), so the taxonomy lives HERE, not in
+                # _get_file -- which keeps the (suffixed, target) surface the
+                # upstream chunk tests mock.
+                self._report_fetch_miss(suffixed, self._component_of(key))
+                return None
+            except OSError:
+                if self.metadata_cache is not None:
+                    self.metadata_cache.remove(suffixed)
+                self._report_bad_page("read", suffixed)
+                return None
         # Do not expose a partially restored page if any chunk is missing,
         # truncated, or evicted between the existence check and the read.
         scratch = torch.empty_like(
             target_location, memory_format=torch.contiguous_format
         )
-        component = self._component_of(key)
+        # Unified pages are KV-only (sidecars raise at registration), so every
+        # chunk miss names the kv pool.
+        pool = self._component_of(key)
         for suffixed, chunk in self._page_chunks(key, scratch):
-            if self._get_file(suffixed, chunk, component) is None:
+            try:
+                if self._get_file(suffixed, chunk) is None:
+                    return None
+            except FileNotFoundError:
+                self._report_fetch_miss(suffixed, pool)
+                return None
+            except OSError:
+                if self.metadata_cache is not None:
+                    self.metadata_cache.remove(suffixed)
+                self._report_bad_page("read", suffixed)
                 return None
         target_location.copy_(scratch)
         return target_location
 
-    def _get_file(
-        self, suffixed: str, target_location: torch.Tensor, component: str = ""
-    ):
-        tensor_path = os.path.join(self.file_path, f"{suffixed}.bin")
-        try:
-            expected = target_location.numel() * target_location.element_size()
-            with open(tensor_path, "rb", buffering=0) as f:
-                if os.fstat(f.fileno()).st_size != expected:
-                    raise IOError(f"Incorrect object size for {suffixed}")
-                buf = memoryview(target_location.view(torch.uint8).contiguous().numpy())
-                if f.readinto(buf) != expected:
-                    raise IOError(f"Short read for {suffixed}")
-            self._evictor.touch(suffixed, tensor_path)
-            if self.metadata_cache is not None:
-                self.metadata_cache.add(suffixed)
-            return target_location
-        except FileNotFoundError:
-            if self.metadata_cache is not None:
-                self.metadata_cache.remove(suffixed)
-            pool = component or self._component_of(suffixed)
-            self.fetch_miss_counts[pool] = self.fetch_miss_counts.get(pool, 0) + 1
-            self._report_miss(
-                f"Failed to fetch {suffixed} from HiCacheFile storage: no such "
-                f"{pool} page ({self.fetch_miss_counts[pool]} {pool} misses so far)."
-                + (
-                    ""
-                    if pool == str(PoolName.KV)
-                    else " A sidecar miss is an endpoint miss: the trailing "
-                    "window of the prefetched span is not restorable there, so "
-                    "the KV prefix read for it is forfeited too."
-                )
+    def _report_fetch_miss(self, suffixed: str, pool: str) -> None:
+        if self.metadata_cache is not None:
+            self.metadata_cache.remove(suffixed)
+        self.fetch_miss_counts[pool] = self.fetch_miss_counts.get(pool, 0) + 1
+        self._report_miss(
+            f"Failed to fetch {suffixed} from HiCacheFile storage: no such "
+            f"{pool} page ({self.fetch_miss_counts[pool]} {pool} misses so far)."
+            + (
+                ""
+                if pool == str(PoolName.KV)
+                else " A sidecar miss is an endpoint miss: the trailing "
+                "window of the prefetched span is not restorable there, so "
+                "the KV prefix read for it is forfeited too."
             )
-            return None
-        except OSError:
-            # Short read or other read failures on a corrupt / truncated page
-            # (e.g. one written by a build with a different page layout).
-            # Degrade to a miss with the tensor-or-None contract: the caller
-            # truncates the batch prefix, and a background storage thread never
-            # sees the exception (stack entry 24).
-            if self.metadata_cache is not None:
-                self.metadata_cache.remove(suffixed)
-            self._report_bad_page("read", suffixed)
-            return None
+        )
+
+    def _get_file(self, suffixed: str, target_location: torch.Tensor):
+        """Read one page file into target_location. Returns the tensor on
+        success; FileNotFoundError (absent page) and OSError (corrupt /
+        truncated page) propagate to the get() caller, which owns the miss
+        taxonomy, the metadata-cache removal and the tensor-or-None contract
+        the batch loops rely on (stack entries 24/209)."""
+        tensor_path = os.path.join(self.file_path, f"{suffixed}.bin")
+        expected = target_location.numel() * target_location.element_size()
+        with open(tensor_path, "rb", buffering=0) as f:
+            if os.fstat(f.fileno()).st_size != expected:
+                raise IOError(f"Incorrect object size for {suffixed}")
+            buf = memoryview(target_location.view(torch.uint8).contiguous().numpy())
+            if f.readinto(buf) != expected:
+                raise IOError(f"Short read for {suffixed}")
+        self._evictor.touch(suffixed, tensor_path)
+        if self.metadata_cache is not None:
+            self.metadata_cache.add(suffixed)
+        return target_location
 
     def batch_get(
         self,

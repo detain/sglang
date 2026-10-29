@@ -875,26 +875,48 @@ class TestDcpStorage(unittest.TestCase):
             controllers.append(cc)
             operations.append(op)
 
+        # Snapshot the RANK-LOCAL candidate sets before syncing: our sync
+        # writes the intersected set back onto the operation (and the
+        # terminated second call narrows it to []), so the peer masks must be
+        # built from the pre-sync views.
+        local_pages = [list(op.restorable_prefix_pages) for op in operations]
         for rank, cc in enumerate(controllers):
             other = operations[1 - rank]
-            peer = torch.zeros(9, dtype=torch.int)
-            peer[0] = 1
-            peer[other.pool_storage_result.restorable_prefix_pages] = 1
+            # Fork layout (stack entries 209/217/290, retargeted from the
+            # upstream collapsed-mask form the same way entry 290 retargeted
+            # test_hybrid_storage_sparse_allocation): the collective is
+            # [folded hit] + one verdict per pool + the restorable mask over
+            # the span's pages, page 0 NEVER restorable.
+            peer = torch.zeros(len(keys) + 1, dtype=torch.int)
+            peer[local_pages[1 - rank]] = 1
 
-            def reduce(tensor, op, groups, peer=peer):
-                # Restorable flags lead; per-pool verdicts trail them.
-                self.assertEqual(tensor.numel(), peer.numel() + len(PoolName))
+            def reduce(tensor, op, groups, peer=peer, other=other):
+                self.assertEqual(tensor.numel(), 1 + len(PoolName) + peer.numel())
                 self.assertEqual(op, torch.distributed.ReduceOp.MIN)
-                tensor[: peer.numel()] = torch.minimum(tensor[: peer.numel()], peer)
+                # The folded hits MIN too: the cancelled rank votes 0 below.
+                tensor[0] = min(
+                    int(tensor[0]), other.pool_storage_result.kv_hit_pages * 128
+                )
+                tail = tensor[1 + len(PoolName) :]
+                torch.minimum(tail, peer, out=tail)
 
             cc._all_reduce = mock.Mock(side_effect=reduce)
             local = operations[rank]
+            # The fork sync returns the folded MIN, not the deepest common
+            # endpoint; the endpoint choice moves to the allocation clamp
+            # (_trailing_endpoint_tokens), and the intersected candidate SET
+            # is what the sync must retain.
             self.assertEqual(
                 cc._sync_prefetch_hit_query(
                     local, local.pool_storage_result.kv_hit_pages * 128
                 ),
-                512,
+                min(
+                    local.pool_storage_result.kv_hit_pages,
+                    other.pool_storage_result.kv_hit_pages,
+                )
+                * 128,
             )
+            self.assertEqual(local.restorable_prefix_pages, [4])
             local.mark_terminate()
             self.assertEqual(cc._sync_prefetch_hit_query(local, 0), 0)
             self.assertEqual(cc._all_reduce.call_count, 2)
