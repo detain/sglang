@@ -274,7 +274,7 @@
 #         slow exists() WEDGES THE TP2 PAIR). 16 files, +166/-20 URC +147/-8
 #         controller + parallel_state.py. #44343/#44339/#44348/#44344 are its
 #         stacked drafts: #44339/#44344 = buffer_only-only -> SKIP permanently;
-#         #44343/#44348 take as a set with 44342 or not at all. State: TODO
+#         #44343/#44348 take as a set with 44342 or not at all. State: ** STILL-OPEN 2026-10-29 (B6 re-triage): gh OPEN, head 98bfcbd450 UNCHANGED, not in range; post-#46970x base now conflicts where it auto-merged pre-merge. **
 # #44732  open (head 68c917c75d) DECISION: separate storage keys for
 #         incompatible host layouts (silently-wrong-KV class; +6/+6
 #         pool_host/{mha,mla}.py). COST: current warm /root/hicache_store +
@@ -595,25 +595,25 @@
 #     schedule_batch/hicache_auto_size; #45703 = the shorter-FULL-device-match
 #     seam entry 209's P2 note wished for; entry-227's #44447 competing-design
 #     verdict partially obsolete. Recommendation on record: main-past-10-21
-#     needs a dedicated merge week. State: TODO
+#     needs a dedicated merge week. State: ** CLOSED 2026-10-29 (B6): merge #5 IS the dedicated week; all precursor names arrived in-range, B3/B4 re-planted (entry 311/312). **
 #  C2 #44993/#44994 (95+83 files, "effective execution backend" -- upstream
 #     converging on entry-230's gap; rewrites standard.py/layer.py/topk.py/
 #     modelopt_quant.py/fp8.py = entries 205/206/225/230/231/244/247; re-run
-#     standard_dispatcher 12P + modelopt suites BEFORE unioning). State: TODO
+#     standard_dispatcher 12P + modelopt suites BEFORE unioning). State: ** CLOSED 2026-10-29 (B6): arrived @ 4f8f06faf3/299a75ac5d; B5 fold complete, union gates green (entry 313). **
 #  C3 #45232/#45236/#45334 (URC test prune/split/re-home -- re-derive entry
-#     241's pinned baselines against the new file layout). State: TODO
+#     241's pinned baselines against the new file layout). State: ** CLOSED 2026-10-29 (B6): arrived @ b20cb3665d/ab580b2e06/4f96807ea8; B2 kits-gate + re-home re-derived the pins (entry 314). **
 #  C4 #45238/#45242/#45241 (radix logical-vs-reclaimable lengths, split-
 #     during-write-through action, num_children -- union vs entries 197/216/
-#     198/114/199/118-125; re-run donated/latch battery). State: TODO
+#     198/114/199/118-125; re-run donated/latch battery). State: ** CLOSED 2026-10-29 (B6): all three arrived in-range; B3 re-plant consumed them; battery green. **
 #  C5 #44913/#44912 -- see section B (port decision) + merge-#5 semantics note
 #     for expert-id/routing decisions guarded by our entry-230 dispatcher
-#     warning. State: TODO
+#     warning. State: ** CLOSED 2026-10-29 (B6): merged upstream 10-19, arrived in-range; entry-230 warning re-planted as the guard (B5-2). **
 #  C6 #45474 -- "different model" is NOT a valid skip (VERIFIED: zero model/
 #     arch gating; restructures decode_cuda_graph_runner._copy_replay_inputs,
 #     eagle_sample, generate_simulated_accept_index, gdn_backend.forward_extend,
 #     request_receiver -- all on our boot path; fastpaths env-default-False).
 #     Record: defensible skip = "flag-off behavior preserved", measured
-#     at first boot after merge #5. State: TODO (docs)
+#     at first boot after merge #5. State: TODO (docs) -- ** #45474 ARRIVED in-range @ b74fd392e1; the defensible-skip RECORD is done (B6); the first-boot MEASUREMENT stays boot-owed. **
 #  C7 #44014 -- VERIFIED SM90-ONLY (use_state_pool = sm_major>=10 -> our cc-12
 #     already on the indexed path; PR's test skipUnless cc==9). DROPPED per the
 #     both-halves rule. Also record: sm_major in (9,10) means FlashInfer GDN
@@ -624,7 +624,7 @@
 #  C9 #39727 (page_unified host layout + unified L3 key, merged-in-window) --
 #     library-only today; its follow-up integration would change L3 NAMING vs
 #     our warm stores = store-purge event. WATCH + block a silent key-scheme
-#     switch at merge #5. State: TODO
+#     switch at merge #5. State: ** CLOSED 2026-10-29 (B6): arrived @ 9ea5472833 OPT-IN verified; no purge, no silent switch (anti-needle in BOOT_DELTA). **
 #  C10 riders to union-note: #45559, #46674 (GIL-keep bindings; rust re-pin),
 #     #45503 (PyNccl half-init; page_interleave/dsa conflict), #46853+#46994
 #     (custom-AR v2 relaxations -- does NOT revive v1 under
@@ -650,7 +650,7 @@
 #     -- NOT found on origin/main despite merged flag: verify mergeCommit
 #     before ever porting; boot-needle adjacency per entry 245 trap #5),
 #     #45445 (/ping readiness -- we run SGLANG_ENABLE_HEALTH_ENDPOINT_
-#     GENERATION=false; probe-sequencing note). State: TODO (docs)
+#     GENERATION=false; probe-sequencing note). State: TODO (docs) -- ** B6 annotations landed for every rider with a merge-#5 action (#44029/#44280 via B2; #46543 via B5-2/B2-3; #45090 downgraded per CAVEATS; #45559/#46674 cargo debt carried); the remainder stay recorded notes. **
 #  C11 Watch-list (open PRs, no action): #46191 (HiSparse host KV tier for the
 #     QSA backend -- the most direct upstream answer to admission-over-1M for
 #     THIS arch, but 12 files +205 qsa_kv_pool... overlaps our hottest
@@ -687,6 +687,89 @@
 #     not our geometry), #43250 (sm_121 GB10 plan table -- port-the-dispatch-
 #     re-tune-the-table project, NOT a clean port; reference). State: TODO
 #     (measurement queue)
+#
+# --- MERGE-#5 POST-MERGE RE-TRIAGE (2026-10-29, session 3 / batch B6) ------
+# Every deferred item re-checked against the MERGED tip (main @ 2a6c204570;
+# arrival scan `git log 12dc623102..2a6c204570 --grep '(#N)'` + live gh state
+# + recorded head). One line per item; blocks annotated in place too.
+#   #42689  ** RELEASED-BY-MERGE ** arrived IN RANGE @ 7a632cf998 (the
+#           SECTION-B "merged accelerators" cherry is now redundant; the
+#           NaN-surfacing behavior note rides merge #5's restart instead).
+#   C1      ** CLOSED (absorbed) **: the dedicated merge week IS merge #5;
+#           all named precursors (#45439/#45444/#45701/#45702/#45703/#46981/
+#           #46977/#46988) arrived in-range and B3/B4 re-planted over them.
+#   C2      ** CLOSED **: #44993/#44994 arrived in-range; B5 folded the fork
+#           side (standard_dispatcher 21P, runner_backend 16P, fold probe 9P,
+#           entry-230 warn-once re-planted on the new shape).
+#   C3      ** CLOSED **: #45232/#45236/#45334 arrived; B2's kits gate +
+#           re-home re-derived the 241-era pins (new definitive dir pin in
+#           CAVEATS at the 315 tip).
+#   C4      ** CLOSED **: #45238/#45242/#45241 arrived in-range; B3's re-
+#           plant consumed them; donated/latch battery green (B2 batch 83P/5S).
+#   C5      ** CLOSED **: #44912/#44913 MERGED upstream 10-19, arrived;
+#           entry-230 dispatcher warning re-planted (B5-2) as its guard.
+#   C6      #45474 ** ARRIVED in-range @ b74fd392e1 **; the defensible-skip
+#           RECORD: B4 re-planted the gdn forward_extend half, the entry-203
+#           lossless ring is proven CPU-side; the "flag-off behavior
+#           preserved" MEASUREMENT stays boot-owed (BOOT_DELTA needle set).
+#   C9      ** CLOSED **: #39727 arrived @ 9ea5472833 VERIFIED OPT-IN (legacy
+#           suffix default; anti-needle re-verified at merged code in
+#           BOOT_DELTA); no store purge, no silent key-scheme switch.
+#   C10     riders: #44029/#44280 arrived -- page_interleave re-pin DONE by
+#           B2 (91P/17F-cargo, +9 fork cases restored); #46543 arrived --
+#           the qwen4_exp breakable-bridge fold DONE (B5-2 + B2-3's
+#           return-None contract fix); #45090 arrived -- environ removal
+#           stands, operator check DOWNGRADED (CAVEATS: the env var is GONE
+#           from the module, any /root export is inert, not load-bearing);
+#           #45559/#46674 rust re-pin rides B3-7 + the cargo UNVERIFIED-debt
+#           bullet; the rest of the C10 list stays a merge-#5 annotation
+#           set as recorded (nothing else was silently dropped -- the B2-B5
+#           marker censuses all closed to ZERO).
+#   #44342  ** STILL-OPEN ** (gh: OPEN, head 98bfcbd450 UNCHANGED; not in
+#           range). Its stacked-draft triage stands; port queue position
+#           unchanged (post-merge base: files it touches moved with #46970x,
+#           EXPECT CONFLICTS now where it auto-merged before).
+#   #44732  ** STILL-OPEN, OPERATOR-SCHEDULED CONSEQUENCE RECORDED **: merge
+#           #5 completed WITHOUT the tagging work, so the "one purge if
+#           done with the merge" premise lapsed -- doing it later now costs
+#           the SAME single purge once (keys unchanged since); no second
+#           purge penalty, no benefit from haste. Stays on the quant/KV-
+#           route queue at the operator's next sitting.
+#   #32479  ** STILL-OPEN / STALE-BASE ** (gh: OPEN, CONFLICTING, head
+#           b877f961a7 unchanged). b12x package decision couples #45391.
+#   #45391  ** STILL-OPEN / STALE-BASE ** (gh: OPEN, CONFLICTING, head moved
+#           to fcd0805a03 from the recorded one). Measurement queue C12.
+#   #37106  ** STILL-OPEN / STALE ** (gh: OPEN, CONFLICTING; head 939ffe8240
+#           unchanged since the STALE note -- no author activity; rebase
+#           needed before any evaluate).
+#   #46153  ** STILL-OPEN / CONFLICTING ** (gh OPEN, head 46da368e4b
+#           unchanged; entry-230/302's fail-safe layer already covers the
+#           boot-safety half -- value of porting drops every upstream move).
+#   #41624  ** STILL-OPEN ** (gh OPEN, head e12b074f74 unchanged; LARGE-
+#           EVALUATE framing stands).
+#   #42660  ** STILL-OPEN ** (gh OPEN, head 511bc4eed9 unchanged).
+#   #42525  ** STILL-OPEN ** (gh OPEN, head 7bb6a140d2 unchanged).
+#   #44462  ** STILL-OPEN ** (gh OPEN, head 46b69b8073 unchanged; "NEXT in
+#           the quant-selection queue" note stands, now post-merge base).
+#   #35617  ** STILL-OPEN ** (gh OPEN, head b870a0e713 unchanged; the entry-
+#           302 landing (#45520 port) narrowed its gap -- still the ONLY
+#           mapping-gap carrier for modelopt_mixed auto on SM110/120).
+#   #43356  ** HOLD STANDS (operator decision record; nothing changed the
+#           verdict: it is OPEN upstream @ c4ca4dff3c, NOT in range; our
+#           entry-175 port + B5's re-anchor carry the landed half; the step-1
+#           precondition "MERGE #5 lands first" IS NOW MET -- the sequence
+#           may be re-visited ONLY at an operator sitting with the PCIe-IPC
+#           post-merge measurement in hand). Same verdict mechanically for
+#           #46452 (OPEN @ c4d3b3666c), #43240 (OPEN @ 9020817fd8 -- the
+#           competing design, do-not-take), #43471 (OPEN @ 00f22164e9,
+#           optional step).
+#   #39845-class (HiCache series watch: #39845/#39856/#39745/#39747/#39395/
+#           #40512/#40576)  ** STILL-OPEN-WATCH ** -- none in range; #39845
+#           live gh OPEN @ 4cfe4d054d. Watch-list status only, as recorded.
+#   #46191  ** STILL-OPEN-WATCH ** (gh OPEN @ e405d4e3e0; the landed-ring
+#           re-evaluation instruction stands; B2's ring-test KEEP audit
+#           (test_qsa_kv_pool) documents the current ring shape on tree).
+# ----------------------------------------------------------------------------
 #
 # =============================================================================
 # STACK-OWNED FOLLOW-UPS (not upstream PRs; integrator-queued work)
