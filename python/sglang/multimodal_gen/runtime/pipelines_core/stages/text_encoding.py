@@ -28,6 +28,8 @@ from sglang.multimodal_gen.runtime.distributed import (
     get_local_torch_device,
     get_replica_group,
     get_tp_group,
+    get_tp_world_size,
+    get_world_group,
     model_parallel_is_initialized,
 )
 from sglang.multimodal_gen.runtime.managers.forward_context import set_forward_context
@@ -195,6 +197,23 @@ class TextEncodingStage(ConditionEncodingStage):
         self.tokenizers = tokenizers
         self.text_encoders = text_encoders
         self._dp_choice_logged = False
+
+    @property
+    def concurrency_safe(self) -> bool:
+        """This stage writes only text-conditioning fields on the request."""
+        return True
+
+    @property
+    def may_use_collectives(self) -> bool:
+        """Whether text encoding can enter a distributed collective."""
+        if get_tp_world_size() > 1:
+            return True
+        if self.server_args.encoder_parallel in ("auto", "dp"):
+            return get_world_group().world_size > 1
+        return any(
+            encoder.config.parallel_folding_mode is not None
+            for encoder in self.text_encoders
+        )
 
     def component_uses(
         self, server_args: ServerArgs, stage_name: str | None = None

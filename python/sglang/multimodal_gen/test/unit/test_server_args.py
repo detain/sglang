@@ -290,6 +290,18 @@ class TestServerArgsPathExpansion(_CudaPlatformTestCase):
             server_args = ServerArgs.from_cli_args(args, unknown_args)
         self.assertEqual(server_args.numa_node, [0, 1])
 
+    def test_parallel_stage_execution_cli_arg(self):
+        parser = FlexibleArgumentParser()
+        ServerArgs.add_cli_args(parser)
+
+        default_args, _unknown_args = parser.parse_known_args(["--model-path", "/fake"])
+        args, _unknown_args = parser.parse_known_args(
+            ["--model-path", "/fake", "--parallel-stage-execution", "auto"]
+        )
+
+        self.assertEqual(default_args.parallel_stage_execution, "serial")
+        self.assertEqual(args.parallel_stage_execution, "auto")
+
     def test_component_paths_are_expanded_before_pipeline_resolution(self):
         args = self._from_dict_without_model_resolution(
             {
