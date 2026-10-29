@@ -1,6 +1,6 @@
 # stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
 #
-# STACK: qwennext-stack-315-2026-10-29 (main @ 2a6c204570, MERGE #5 TAKEN + ALL RE-PLANT BATCHES LANDED -- entries 310-315)
+# STACK: qwennext-stack-318-2026-10-29 (main @ 2a6c204570, MERGE #5 TAKEN + ALL RE-PLANT BATCHES LANDED -- entries 310-315; ** POST-MERGE PORT QUEUE RESUMED: entries 316-318 ** -- origin/main had drifted to 2c6b95e035 = +1,154 since 12dc623102 by the pass-4 triage read)
 #   ** MERGE-ERA-CLOSED 2026-10-29 (session 3 / B6): B1-B6 ALL CLOSED, B2/B3/B4/B5 marker
 census ZERO, damage driven to env-class + documented survivors; the branch is BOOT-READY
 pending OPERATOR execution of the BOOT_DELTA first-boot choreography (see CAVEATS top
@@ -57,7 +57,10 @@ current-state bullet + entry 315). **
 #    pins, C0a/Section-C closure + parked-queue re-triage (RELEASED: #42689;
 #    HELD: KV route), CAVEATS master re-pin table at the 315 tip, graph_
 #    pool_borrow honest skip, marker census -- see entry 315)
-#   (entries 1-315; *=squash/ported, see commit messages. 10-10 added
+#   +b12xgemm-2026-10-29(pr45391*)
+#   +idxbytes-2026-10-29(pr44462*)
+#   +hicliveness-2026-10-29(pr44342*×4)
+#   (entries 1-318; *=squash/ported, see commit messages. 10-10 added
 #   entries 157-161: parser batch A (Qwen3-Coder tool-call fixes + sampling
 #   upper bounds), on top of upstream merge #3 (see synced). 10-10b added
 #   entries 162-166: SM120 batch B (#42863 PCIe-IPC vocab gathers, #42566
@@ -295,7 +298,7 @@ current-state bullet + entry 315). **
 #   make --enable-mixed-chunk safe and fix the QSA verify ring collision.
 #   * = picked with local modifications, see the entries)
 # branch : qwennext-stack
-# tip    : 5cde7a5ede   (MERGE-5 SESSION 2B: B4 re-plant commits 9bd9007c81..5cde7a5ede -- scheduler core/COW catcher/entry-200 capacity pair, schedule_batch+brp, schedule_policy #46977 reconciliation, spec cluster, misc markers; SESSION 2A's B3 2a5646b230..1dc41b2723 and entry 310's merge/B1/kvcache-graft history sit below; docs entry 312 above)
+# tip    : b7c656f69f   (post-merge waves: 81cb12f2b0 #45391 / cdd568bd6c #44462 / 29cb4fab8d+45da19f105+c50b262e23+b7c656f69f = the four #44342 commits; the stack.txt commits sit above it. Supersedes the merge-era tip line 5cde7a5ede -- B6's code commits f5c8a9ea23/244a992339/a4b8e21c6d sat ABOVE that value already, so read the synced block for merge history and this line for the live code tip.)
 # base   : upstream sgl-project/sglang main @ 7ad55e4386 ([HiCache] TMA-staged
 #          host<->device KV transfer kernel (sm_90+) (#40278), 2026-09-21)
 # synced : upstream main @ f209e67767 (#39643, 2026-09-28) MERGED IN as
@@ -444,6 +447,138 @@ current-state bullet + entry 315). **
 #          the ban itself STAYS until sessions 2B/3 + operator judgment.]
 #          [B4 LANDED -- entry 312; managers+spec damage closed to ENV-class
 #          residue; the ban STAYS (B2/B5/B6 + operator judgment remain).]
+# updated: 2026-10-29 (entries 316-318): ** POST-MERGE PORT QUEUE RESUMED
+#          AND THE FIRST THREE STAGED WAVES LANDED -- 6 commits, ZERO
+#          CONFLICTS ** (all three branches born at EXACTLY the settled
+#          merge tip 78783f0a36, verified by merge-base, so the waves were
+#          mutually conflict-free by construction AND each landed onto the
+#          advancing tip without a single textual conflict: 3 open-PR
+#          hand-ports + a 4-commit open-PR trunk). Nothing here reopens the
+#          merge; B1-B6 stay closed and the queue ahead of MERGE #6 is now
+#          shorter by three families.
+#          WHAT LANDED: ** 316 #45391 ** b12x MXFP8 DENSE GEMM for
+#          SM120/121 -- ** INERT ON BOTH PROD ARMS AND PROVED SO FROM THE
+#          PREDICATE, NOT THE PROSE: ** can_serve_block_fp8_as_mxfp8 needs
+#          weight_block_size[1]==32 AND ue8m0, our dense linears are BF16
+#          (NVFP4 arm) or block-FP8 [128,128] (FP8/draft arms), so
+#          128!=32 is shape-false at every layer and neither resolver the
+#          PR touches is ever CALLED -- therefore NOT an operator-visible
+#          default change (all 10 battery rows UNMOVED base->after is the
+#          same fact measured). It DOES flip `auto` (and any pin that does
+#          not own an MXFP8 dense kernel) to b12x for NATIVE-MXFP8
+#          checkpoints, where the old flashinfer_cutlass answer was a DEAD
+#          path (cutlass/cute-dsl MXFP8 hard-fails on SM120/121,
+#          tcgen05/TMEM absent) -- converts broken into working rather than
+#          changing a working default. Rollback is arg-level only
+#          (--fp8-gemm-backend flashinfer_cutlass; any non-auto pin also
+#          vetoes the DSv4.1 override; K%128 degrades per layer with a
+#          named warning, never a crash). ** THE GATE-SPLIT TRAP, MEASURED
+#          LIVE HERE: the requirements gate reads get_cuda_version() =
+#          torch.version.cuda = 13.0 and returns True, while
+#          /usr/local/cuda -> cuda-12.9 (nvcc 12.9.86) -- a GREEN GATE CAN
+#          STILL FAIL AT BUILD (entry-247 lineage; NEEDLE #1 IF A b12x-DENSE
+#          ARM EVER BOOTS). ** The PR ships NO tests, so the route is
+#          unpinned by construction: ** NEW S-item S-B12XDENSE filed in
+#          wanted_stack (fork contract test, entry-247 mock-wheel idiom,
+#          owed WHEN ARMED **; the fp8_utils add/add resolved as a UNION
+#          (pack_mxfp8_weight_scale_for_deepgemm KEPT alongside
+#          mxfp8_sf_swizzle_128x4) and entry-240's dispatch order preserved
+#          with neither route pre-empting the other.
+#          ** 317 #44462 ** indexer pools in hybrid host budgets -- the
+#          subsume-vs-land table is the entry's spine (the PR base's
+#          SWAKVPool/HybridLinearKVPool isinstance branches are SUBSUMED by
+#          #46970x's layer_router/_sub_pool_views chain; the qsa index-bytes
+#          block was PR CONTEXT, not content), and the two LANDING halves
+#          are red-at-base-proven: _pool_bytes' QSA branch (compressed-K is
+#          router-INVISIBLE -- a QSA pool otherwise collapses to its
+#          full_kv_pool view; 3F without it) and _mla_host_kv_fraction (all
+#          5 subTests red without it). The deviation that matters: ** the
+#          fraction is placed AFTER entry-219's --hicache-mamba-size-gb
+#          OVERRIDE, because that knob REPLACES kv_host_size and the PR-base
+#          slot would leave the re-armed route unreserved ** -- exactly what
+#          a merge auto-resolves wrong. NO-DOUBLE-COUNT proved three ways
+#          (declared-sidecars-only vs the MANUAL non-declared QSA indexer
+#          host + use_mla=False exclusivity + MambaPool remaining the SOLE
+#          host_capacity_bytes publisher per entry 295). ** CAVEAT ON THE
+#          RECORD: 106.9 -> 100 GB IS TEST-SCAFFOLD ARITHMETIC, NOT A PROD
+#          CAPACITY CLAIM -- the prod number is owed as a boot-dump
+#          auto-size read (entry-243 practice) in the restart watch.**
+#          ** 318 #44342 (4 commits, ONE entry) ** storage LIVENESS -- the
+#          pass-4 batch with real prod teeth: at the base the hit-count
+#          MIN-reduce was BARE under a comment that REQUIRES every rank to
+#          enter it (integrator re-verified the quote at
+#          cache_controller.py:1502-1505), so ONE slow exists() on ONE rank
+#          killed the storage worker on EVERY rank = ** SILENT TOTAL L3 LOSS
+#          ON OUR TP2 + file-L3 TOPOLOGY ** (#43550 guarded the backend
+#          call, never the collective; liveness was unchecked). B's ALWAYS-
+#          ENTER-POST-FAILURE invariant is the deeper half (gloo closes only
+#          the timed-out group's PAIR and the hit/completion groups are
+#          DISTINCT EVEN ON TP2, so skipping later collectives left a
+#          non-failed peer blocked 30 MIN with flush raising out of the
+#          scheduler; a retry on the broken group raises AT ONCE everywhere).
+#          Health bit is LAST in every payload; C gives the 300 s default +
+#          "started workers only" liveness (a controller doing I/O outside
+#          Python workers reads HEALTHY, not dead) + a bounded ticket group
+#          + the storage_unavailable stop-reason; D restores the shm row to
+#          9 (A-C deliberately ran width 8 on the GLOO FALLBACK -- the
+#          intermediate state is documented, since a 4-tuple would have
+#          broken this tree's 5-tuple unpack). ** ORDER NOTE CORRECTED
+#          AGAINST THE DISPATCH: rank-consistency is FLAG-THEN-PUBLISH (the
+#          bit folds in AFTER the queue-size reads -- a counted failed item
+#          implies the 0 bit in the same round); my sketch said
+#          publish-then-flag and the worker proved the correction from the
+#          PR's own code/docstring. ** The #43344-shaped guarded scheduler-
+#          thread reduce does NOT exist here, so the hook lands on the
+#          ticket thread's UNCONDITIONAL except-exit; B3's mask-pack
+#          TRAILING_PAGES payload is BIT-IDENTICAL through the port; the cut
+#          rides entry-217's deadline machinery with ** NO poll_miss re-arm
+#          and entry-293's shared retry cap untouched (timeout stop stays the
+#          earlier exit) **; extra-config gets NON-CONSUMING VALIDATION
+#          (fail-fast at boot AND runtime PUT) while _apply_storage_sync_-
+#          config remains the SOLE application point -- and the recorded
+#          asymmetry that entries 290/293's knobs are server_args FIELDS, not
+#          parser keys. ** NEW GAUGE sglang:hicache_storage_healthy -> the
+#          §3(l)-adjacent boot needle, =1 steady, 0 = degraded to no-L3
+#          (the default "disable" policy keeps requests succeeding WITHOUT
+#          L3 -- the failure mode that used to be silent). ** Family
+#          exclusions all STAND (#44339 skip-forever, #44344 DOA-by-history
+#          via entry-268, #44343/#44348 not-now-behind-trunk) with ZERO
+#          family lines pulled -- verified: exactly 4 cherry-pick trailers in
+#          the range and none of those four PRs is in origin/main. GPU DEBT:
+#          the kill -STOP file-backend-reader drill on TP4 (peers time out
+#          within storage_sync_timeout, threads SURVIVE, gauge drops one
+#          tick, re-attach recovers) -- unreachable here, so the 2-rank gloo
+#          CPU test is the only current proof.
+#          BATTERY OUTCOME: every predicted number reproduced EXACT except
+#          ONE, and that one is the WORKER'S OWN final log, not my tree --
+#          their mem_cache dir read 1887P/155F with 2 extra failures in
+#          ENTRY-290's TestSparseCheckpointCacheDrain; both pass standalone
+#          here (13P/14sub) AND inside my dir run, where the result is
+#          ** 1892P/153F/1447S/2err/4530sub with a FAILURE SET IDENTICAL to
+#          the base (diff = 0 lines) ** -- arithmetic closes exactly (1885 +
+#          wave2 +3P/+7sub + wave3 +4P/+5sub), so their 2 reds are recorded
+#          as a dir-context flake in their worktree (the 2-rank spawn test
+#          sorts before that file) and NOT propagated into the pins.
+#          Cross-wave: managers 1056P/2F/9S/474sub UNMOVED base->tip,
+#          server_args dir 461P/0F/276sub, kernels_namespace 107P,
+#          unit/distributed 156P/1S/35sub (measured identical at base -- the
+#          post-merge pin, superseding pass 3's 133P), b12x W4A16 67P/46sub,
+#          sync+gate 26P/1S/5sub, trailing_endpoint 17P, lifecycle
+#          28P/31sub, sync_recovery NEW 4P/5sub with base-tip collection
+#          ImportError teeth PROVEN HERE. Gates: 3 lint scripts rc=0, ruff
+#          repo ruleset + format clean on all 26 changed files, 0 rust
+#          touched. Also filed: the post-merge TRIAGE artifact
+#          (/tmp/opencode/post-merge-triage/TRIAGE.md), 6 dated verdict
+#          corrections into wanted_stack (mergeable flips, #44344 -> Section
+#          R DOA, #42525 path moved fla->linear, **#45520 STILL OPEN with
+#          entry-303's re-apply rule ARMED FOR MERGE #6 + a CAVEATS line**,
+#          the b12x-package ARCHIVED-CLAIM DISPUTE -- 1.5.1 is live and
+#          unyanked, the frozen cutlass-dsl==4.8.0 pin risk stands, #46191
+#          WATCH-HIGH with the re-derive-vs-QSA_RING_GROUPS=2 instruction,
+#          #46153/#41624 gated on an operator QAD trial, #37106 PARKED,
+#          #32479 gated behind the PCIe-IPC measurement). Code tip
+#          b7c656f69f, tree clean, NOTHING PUSHED BY THIS SESSION (the
+#          detain-lag line in the final report states who else moved).
 # updated: 2026-10-29 (entries 313-315): MERGE-5 SESSION 3 -- BATCHES B5, B2 AND THE
 #          B6 CLOSEOUT. THE MERGE ERA IS CLOSED. B5 (313): all 23 moe-zone markers
 #          consumed -- 4 true re-plants (entry-230 canary+b12x arm, layer.py routed-
@@ -9317,6 +9452,500 @@ STACK, IN BUILD ORDER (bottom first)
       #   (entry 298's own text). The merge era is CLOSED.
 
 
+
+  b12xgemm-2026-10-29 wave (branch port-b12xgemm, born at EXACTLY the
+  post-merge tip 78783f0a36; 1 hand-port of an OPEN PR -- git apply -3 of
+  the PR diff, not a pick; ** LANDED CLEAN, ZERO CONFLICTS **):
+
+        316. 81cb12f2b0  PR #45391 (open, head fcd0805a03, ported; base eae134d61f, CONFLICTING against upstream main)  [Kernel] fp8: FlashInfer b12x MXFP8 DENSE GEMM backend for SM120/SM121 -- ** INERT ON BOTH OUR PROD ARMS AS CONFIGURED, so this is NOT an operator-visible default change; on OTHER checkpoints it revives a hard-failing SM120 path **
+      # https://github.com/sgl-project/sglang/pull/45391 (author dqxlzlz;
+      # gh-verified OPEN at port time, single upstream commit fcd0805a03,
+      # NOT in origin/main -- re-verified by the integrator: git log
+      # origin/main --grep "(#45391)" = 0 hits). 6 files, +180/-9 = the
+      # PR's +177/-9 plus ** THREE WHITESPACE-ONLY format lines ** (ruff
+      # format fixed three PRE-EXISTING blank-line violations present at
+      # the base -- machine-checked: the base tree reads rc=1 -- zero
+      # non-blank changed lines; recorded because "format-clean" here is
+      # not the PR's doing).
+      # WHAT IT ADDS: "flashinfer_b12x" to FP8_GEMM_RUNNER_BACKEND_CHOICES
+      # (coexisting with the FP4 flashinfer_b12x of entry 225 and the MoE
+      # flashinfer_b12x_w4a16 of entry 247 -- THREE distinct b12x choices
+      # now, on three different axes: mm_fp4 / mm_mxfp8-dense / MoE-w4a16),
+      # the dense-route resolution + swizzle + K%128 guards in
+      # quantization/fp8.py + fp8_utils.py, a DeepSeek-V4.1 config-time
+      # override in model_overrides/deepseek_v4.py, and ONE autotune gate
+      # line.
+      # ** INERT-ON-OUR-ARMS ANALYSIS (the question the brief demands),
+      # INTEGRATOR-PROVED FROM THE PREDICATE ITSELF rather than argued: **
+      # can_serve_block_fp8_as_mxfp8 (fp8_utils.py:977-986) requires
+      # weight_block_size[1] == 32 AND scale_fmt == "ue8m0". Our dense
+      # projections are ** BF16 on the NVFP4 arm ** (entry 243's tensor
+      # scan: attention/GDN/router/shared-expert/hyper-connection/embed/
+      # lm_head) and ** block-FP8 [128,128] on the FP8 arm and the MTP/
+      # NEXTN draft ** -- 128 != 32, so the predicate is SHAPE-FALSE at
+      # EVERY layer regardless of any device state. Live probe on the
+      # landed tree: [128,128]/ue8m0 -> False, [128,128]/row -> False,
+      # [1,128]/ue8m0 -> False (and NOTE: under CVD=9 the final resolver
+      # clause is also False for every shape, so the honest claim rests on
+      # the [128,128] shape mismatch, which holds on hardware too).
+      # Neither resolver this PR touches is ever CALLED for our models; the
+      # block-fp8 MoE/dense linears dispatch through
+      # dispatch_w8a8_block_fp8_linear, which the PR does not touch. The
+      # deepseek_v4.py override keys on architectures==
+      # DeepseekV4ForCausalLM && model_type==deepseek_v41 -- not our arch.
+      # Autotune: model_quantization "fp8"/"modelopt_fp4"/"modelopt_mixed"
+      # never enter the mxfp8 branch (resolve not called) and the
+      # _serves_block_fp8_as_mxfp8_on_flashinfer scan stays False (no
+      # block_fp8_as_mxfp8 module) -- ** NO new b12x JIT at our startup;
+      # and entry 211's Triton cubin-prewarm does NOT cover b12x because
+      # b12x is a cutlass-DSL kernel, never a Triton cubin ** (a real
+      # coverage gap to know before any b12x-dense arm boots).
+      # WHERE THE DEFAULT DOES FLIP (patched-platform CPU proof, base vs
+      # port, same views; SM120 + b12x registered/supported + CUDA13 +
+      # dsl>=4.6): resolve_mxfp8_dense_gemm_backend() for `auto`, **AND for
+      # any pin that does not own an MXFP8 dense kernel** (plain "cutlass"/
+      # "triton" fall through to auto by the function's own contract):
+      # base auto/cutlass/triton -> flashinfer_cutlass; port -> 
+      # flashinfer_b12x. Explicit flashinfer_cutlass pins the old answer on
+      # BOTH trees; explicit flashinfer_b12x is the new option;
+      # flashinfer_cutedsl raises RuntimeError on SM120 on both. So for a
+      # NATIVE-MXFP8 / minimax_m3_nvfp4 checkpoint on this box the route is
+      # auto->b12x LIVE AT DEFAULT -- but the base's flashinfer_cutlass
+      # THERE WAS A DEAD PATH (PR body: cutlass/cute-dsl MXFP8 kernels
+      # hard-fail on SM120/121, tcgen05/TMEM absent -- the "blank in the
+      # MXFP8 dense matrix" the PR fills), i.e. the flip converts a broken
+      # path into a working one rather than changing a working default.
+      # ** ROLLBACK LEVERS, ALL ARG-LEVEL, NO ENV (each proved): ** (1)
+      # --fp8-gemm-backend flashinfer_cutlass pins the OLD resolution for
+      # native-MXFP8 dense; (2) ANY non-auto --fp8-gemm-backend ALSO vetoes
+      # the deepseek_v4 override (cutlass/triton pin -> no override, backend
+      # stays as pinned; requirement-fail -> WARNING "stay on the Triton
+      # fallback", no override); (3) the K%128 guard degrades ineligible
+      # layers to the Triton block kernel **per layer with a named warning,
+      # never a crash** (load-time K%128 check + wrapper refusal).
+      # ** THE GATE-SPLIT TRAP (entry-247 lineage; NEEDLE #1 IF b12x-DENSE
+      # EVER GETS AN ARM) -- MEASURED LIVE ON THIS BOX, NOT HYPOTHESIZED: **
+      # the requirements gate is _flashinfer_b12x_requirements_met
+      # (fp8_utils.py:844-856) and it calls get_cuda_version(), which
+      # (utils/common.py:254-257) parses ** torch.version.cuda ** -- here
+      # that is 13.0, so the gate evaluates ** True ** on the landed tree.
+      # BUT the CUDA toolkit on the default path is OLDER: /usr/local/cuda
+      # -> ** cuda-12.9 ** (nvcc 12.9.86; a 13.0 nvcc exists only at
+      # /usr/local/cuda-13.0). So a GREEN GATE CAN STILL FAIL AT BUILD --
+      # the gate-pass/build-fail class. Requirements: CUDA 13+ AND
+      # nvidia-cutlass-dsl >= 4.6.0 (installed: flashinfer 0.7.2 ships
+      # mm_mxfp8 backend="b12x" @supported_compute_capability([120,121]),
+      # cutlass-dsl 4.8.0), and this gate is exactly what the PR's
+      # docstring says is enforced "later, when the runner is first built"
+      # -- watch the FIRST REAL b12x-DENSE BOOT and read the DSL JIT's
+      # toolkit choice, not the gate's verdict.
+      # ** NO UPSTREAM TESTS SHIPPED ** (the PR carries none) -- so this
+      # route is pinned by the battery's existing files only, and a
+      # fork-owned contract test is owed the moment it is armed:
+      # ** wanted_stack S-B12XDENSE (new S-item, filed this pass) **.
+      # UNIONS / PRESERVATIONS (all mechanical, zero behavior deviation from
+      # the PR): (i) fp8_utils.py had ONE add/add -- the PR inserts
+      # mxfp8_sf_swizzle_128x4 where our fork carries
+      # pack_mxfp8_weight_scale_for_deepgemm (entry-163 era) -> ** RESOLVED
+      # AS UNION: BOTH FUNCTIONS KEPT, NEITHER MODIFIED **; (ii)
+      # ** ENTRY-240 DISPATCH ORDER PRESERVED, NEITHER ROUTE PRE-EMPTED **:
+      # the fork's _b12x_or_cutlass_mxfp8_linear + its guard (route
+      # block-fp8-as-MXFP8 to b12x under an EXPLICIT flashinfer_cutlass pin
+      # when the wheel supports it, K%128 per call) sit UNTOUCHED BEFORE the
+      # PR's new is_flashinfer_b12x() branch, and the two routes key on
+      # DIFFERENT enum members (Mxfp8DenseGemmBackend.FLASHINFER_CUTLASS vs
+      # FLASHINFER_B12X); the PR's K%128 WRAPPER guard cannot fire for the
+      # entry-240 route (it selects b12x only when weight.shape[1] % 128 ==
+      # 0 -- entry 240's own weight.shape[1]==K reading stands); (iii) the
+      # +1 autotune line lands ONLY inside _serves_block_fp8_as_mxfp8_on_
+      # flashinfer -- entries 257/258/259/260's sync-digest/seeded-dummy
+      # machinery and ** entry 304's extend wrap are UNTOUCHED ** (no
+      # candidate-profile hunk in this PR); (iv) fp8.py/fp8_utils.py SM120
+      # fork paths (entry-163 K-tile/UE8M0, entry-180 fp8_fa zone) have ZERO
+      # overlap, and entry-236's batch-invariant guard at the apply() hunk is
+      # INTACT above the widened if-chain; (v) fields/exec_.py is a
+      # help-string line only -- entry-247's _moe_runner_fusion_disable
+      # consumer and entry-300's frozen SharedExpertsConfig wiring untouched.
+      # STILL-DECLINED CONTEXT UNREOPENED: entry 225's refusal of #38170's
+      # FP4 auto->b12x flip and entry 240's keep-auto-cutlass posture are
+      # different families (mm_fp4 vs mm_mxfp8); the FP4 auto path is not
+      # touched here.
+      # GPU-WINDOW DEBT (all unexecuted here): (1) real b12x-vs-cutlass
+      # mm_mxfp8 A/B on a [x,32]-ue8m0 checkpoint (the dsv41flash family --
+      # now reachable via auto AND the explicit pin; grows entry 240's owed
+      # A/B); (2) K%128 per-layer Triton-fallback coverage on hardware (the
+      # warning + wrapper refusal are CPU-mock-tested only); (3) 1D
+      # 128x4 swizzle correctness -- mxfp8_sf_swizzle_128x4 is a pure-torch
+      # scatter, verify vs FlashInfer's compute_sf_index_swizzled_128x4_gpu
+      # numerics; (4) whether pin_tactic=True is right for b12x's small-M
+      # tiles (entry 240's inherited question, now applying to the explicit
+      # route too); (5) first-b12x-launch cute-DSL JIT cost on a
+      # DSv4.1-style boot (cold compile under .../0.7.2/120f; NOT a Triton
+      # cubin so entry 211 never prewarms it) PLUS the gate-split question
+      # above.
+      # MERGE NOTE: open port -- if #45391 merges before merge #6, the merge
+      # SUPERSEDES this hand-port and the fp8_utils add/add UNION + the
+      # whitespace-only format delta must be RE-CHECKED (the union is the
+      # only place the two trees differ).
+
+
+  idxbytes-2026-10-29 wave (branch port-idxbytes, born at EXACTLY
+  78783f0a36; 1 adapted port of an OPEN PR -- ** LANDED CLEAN, ZERO
+  CONFLICTS **):
+
+        317. cdd568bd6c  PR #44462 (open, head 46b69b8073, ADAPTED PORT -- base f7ad4345b8 predates merge #5; ** NOT-in-origin-main re-verified by the integrator: grep "(#44462)" = 0 hits **)  HiCache: include indexer pools in hybrid host memory budgets
+      # https://github.com/sgl-project/sglang/pull/44462 (4 files, +267/0,
+      # adapted -- not a pick: the PR base predates MERGE #5 so its
+      # isinstance branches no longer exist here).
+      # ** PREMISE, WHICH HOLDS POST-MERGE: ** the QSA compressed-K host
+      # mirror and the DECLARED DSA indexer sidecar are INVISIBLE to HiCache
+      # host sizing. Two distinct failures: the RATIO path undercounts
+      # device bytes (over-provisions host), and on the EXPLICIT --hicache-size
+      # MLA route _split_hicache_size weights the KV pool by
+      # get_kv_size_bytes() -- WHICH INCLUDES DSA INDEX BYTES -- while the
+      # MLA host allocates only KV rows and the declared indexer host then
+      # charges its rows AGAIN out of the SAME budget: the test scaffold's
+      # 100 GB cap over-commits to 106.9 GB.
+      # ** SUBSUME-VS-LAND TABLE (the record a future merge needs): **
+      # SUBSUMED, NOT PORTED -- (a) the PR base's SWAKVPool /
+      # HybridLinearKVPool isinstance branches in _pool_bytes: the #46970x
+      # merge took the layer_router / _sub_pool_views chain that REPLACES
+      # them; (b) the existing qsa_pool index-bytes block in
+      # build_hybrid_mamba_stack -- that was ** PR CONTEXT, NOT PR CONTENT **
+      # (verified in the diff: those lines are unmarked context, and the
+      # block already exists in our tree).
+      # LANDS (4 hunks): (1) hicache_auto_size._pool_bytes gains a
+      # QSATokenToKVPool branch BEFORE the router resolution -- a QSA pool
+      # otherwise COLLAPSES TO ITS full_kv_pool VIEW, hiding compressed-K;
+      # only compressed keys have a host mirror (pool_host/qsa.py
+      # QSAIndexerPoolHost mirrors EXACTLY qsa_compressed_k_buffer_pool,
+      # anchored to the KV host page count) and the request-local key/rope
+      # state in get_kv_size_bytes() STAYS DEVICE. (2) + (3) the two
+      # re-anchored test files (see below). (4) hybrid_pool_assembler
+      # ._mla_host_kv_fraction + call site.
+      # ** DEVIATION THAT MATTERS -- THE FRACTION IS PLACED AFTER ENTRY-219's
+      # --hicache-mamba-size-gb OVERRIDE, NOT at the PR base's slot. ** The
+      # PR put it immediately after _split_hicache_size, but entry 219's
+      # knob REPLACES kv_host_size outright, so the PR-base placement would
+      # leave the KNOB PATH -- ** the very path entry 219 RE-ARMED ** --
+      # unreserved. Placing it after the override covers BOTH the
+      # proportional split and the knob. This is the kind of ordering
+      # decision a merge auto-resolves WRONG; it is recorded here.
+      # ** NO-DOUBLE-COUNT PROOF (entry-295 semantics: persistent
+      # checkpoints only), THREE WAYS, each verified: ** (i) the fraction
+      # reads config.pools[1:] = ** DECLARED sidecars only ** (re-read on
+      # the landed hunk), while the QSA INDEXER entry is MANUAL (not
+      # declared) AND QSA is use_mla=False -- so the two reservations are
+      # MUTUALLY EXCLUSIVE BY CONSTRUCTION, never stacked; (ii) sidecar
+      # layers = owned live layers + packed drafts == DSAIndexerPoolHost.
+      # size_per_token EXACTLY; (iii) MambaPool.host_capacity_bytes (entry
+      # 295) is preferred by every budget reader and CARRIES NO INDEXER BYTES
+      # -- untouched by this port; and host_capacity_bytes on the MLA/DSA
+      # pools is None (class default), so the split keeps get_kv_size_bytes
+      # (with index) -- ** the fraction's premise is TRUE in our tree, not
+      # subsumed by entry 295's publisher change. **
+      # TEST RE-ANCHORING (both files had to move onto the post-merge API;
+      # ASSERTION ARITHMETIC PRESERVED VERBATIM): test_hicache_auto_size's 2
+      # QSA tests onto the #46970x _estimate_hicache_bytes API
+      # (holds_state_slots + allocator.state.pool replace
+      # req_to_token_pool.mamba_pool; SimpleNamespace idiom; the QSA mock
+      # carries the real KVLayerRouter full-view route incl. the gate +
+      # _draft_bytes SLIDING_WINDOW probe; ** the 2800-byte and
+      # budget*0.95/1200 arithmetic KEPT EXACTLY **).
+      # test_hybrid_pool_assembler's explicit-budget test onto the current
+      # ctor shape (MLAHostAllocation is_dummy path skips psutil booking;
+      # mamba_allocator -> token_to_kv_pool_allocator.state_slots per
+      # #44968; the mamba_layer_mapping ARG IS GONE, derived from
+      # DevicePoolInfo.layer_ids; start_layer=0 added; dummy_mamba_host gains
+      # the mamba_info positional; dummy_kv_host mirrors the per-rank
+      # ceil-shard layer count the fraction charges -- the PR's
+      # ctor-computed row made the shard subTests fail under the old shape).
+      # ** CAVEAT, VERBATIM-BEARING: 106.9 -> 100 GB IS TEST-SCAFFOLD
+      # ARITHMETIC, NOT A PROD CAPACITY CLAIM. ** It is the shape of the
+      # leak, not a measurement of prod; the prod number is owed as a
+      # ** boot-dump auto-size read (entry-243 practice) at the next
+      # restart-watch ** -- until then nobody should quote a GB figure from
+      # this entry.
+      # TEETH: red-at-base PROVEN PER HUNK -- the auto_size tests are ** 3F
+      # ** without the QSA branch and the assembler test is ** ALL 5 SUBTESTS
+      # RED ** without the fraction.
+      # NOTE: no flags added -> server_args battery N/A (unmoved by
+      # construction); no collectible test for hicache_best_practices, docs
+      # untouched by the PR; the module-level qsa_kv_pool import added to
+      # hicache_auto_size ** introduces NO CYCLE ** (import sglang proven --
+      # relevant because entry 285's QSA_RING_GROUPS cycle rule lives in the
+      # same neighbourhood).
+      # MERGE NOTE: open port; if #44462 merges before merge #6 the merge
+      # SUPERSEDES it, but the fraction PLACEMENT (after the entry-219
+      # override) is OURS and must be re-applied.
+
+
+  hicliveness-2026-10-29 wave (branch port-hicache-liveness, born at
+  EXACTLY 78783f0a36; ** ONE ENTRY FOR FOUR COMMITS ** of the open PR
+  #44342 (head 98bfcbd450) -- cherry-pick -x of its four CONTENT commits
+  6fa9f210a8 / 74a0e6ba9a / 6c375096cd / 98bfcbd450; its two "Merge branch
+  main" commits 60c5f3ed7f / 96850aef61 are SKIPPED with their
+  PR-relevant folds recorded; ALL FOUR LANDED CLEAN, ZERO conflicts).
+  Landed chain: 29cb4fab8d (A) -> 45da19f105 (B) -> c50b262e23 (C) ->
+  b7c656f69f (D). Verified by the integrator: ** exactly 4 cherry-pick
+  trailers in the range, one per content commit, and none of #44339/
+  #44343/#44344/#44348 appear in origin/main -- zero family lines were
+  pulled. **
+
+        318. 29cb4fab8d..b7c656f69f  PR #44342 (open, head 98bfcbd450, ported as 4 commits; NOT in origin/main -- re-verified: grep "(#44342)" = 0 hits)  HiCache storage LIVENESS: recover storage worker collectives, always enter them after a failure, expose liveness, bound the sync timeout, keep the shm row wide enough -- ** THE LIVE PROD PREMISE: ONE SLOW exists() COULD KILL ALL STORAGE WORKERS ON ALL RANKS = SILENT TOTAL L3 LOSS ON OUR TP2 + file-L3 TOPOLOGY **
+      # https://github.com/sgl-project/sglang/pull/44342 (16 files across
+      # the 4 commits: cache_controller.py, hybrid_cache_controller.py,
+      # unified_radix_cache.py, shm exchange, parallel_state,
+      # metrics_collector + the sync-recovery test).
+      # ** THE LIVE PREMISE, QUOTED FROM THE BASE ITSELF (integrator
+      # re-verified word-for-word at 78783f0a36, cache_controller.py:1502-
+      # 1505): ** "# Outside the guarded query on purpose: every rank must
+      # run the same number of hit-count all_reduces or the sync threads
+      # deadlock, so a locally failed query still participates (with a
+      # zero) instead of skipping the collective." -- and BELOW that
+      # comment, the call to _sync_prefetch_hit_query was BARE, i.e. the
+      # MIN-reduce itself had NO protection while the design REQUIRES every
+      # rank to enter it. So one rank stuck in its backend (a slow
+      # exists()) raised inside the collective on that rank only, killed the
+      # storage worker on EVERY rank, and left all ranks unable to publish
+      # L3 queries or acks: under wait_complete every later L3-hit request
+      # waited forever, under timeout every one paid the full deadline.
+      # **#43550 guarded the BACKEND CALL, not the COLLECTIVE, and nothing
+      # checked worker liveness at all. ** That is why this is a
+      # silent-total-L3-loss fix rather than a robustness nicety, and it is
+      # exactly the shape prod runs (TP2 + file L3).
+      # WHAT LANDS, COMMIT BY COMMIT:
+      #  A (29cb4fab8d, from 6fa9f210a8) -- wrap EVERY worker-thread
+      #    collective: on failure log ONCE, flag the controller
+      #    (storage_sync_failed), PUBLISH THE OPERATION AS FAILED (0 hits, 0
+      #    completed tokens) and KEEP THE THREAD ALIVE; after the first
+      #    failure the broken groups are skipped so the per-rank
+      #    publication sequence stays intact for the queue-count drain. Fold
+      #    a RANK-LOCAL HEALTH BIT (no sync failure AND all storage workers
+      #    alive) into the MIN-reduce the scheduler-thread drain already
+      #    issues; when the AGREED bit drops, apply storage_failure_policy:
+      #    "disable" (default) degrades to no-L3 until re-attach (no new
+      #    prefetch/backup, in-flight prefetches cut like a deadline,
+      #    drained hits read as misses, progress frozen, gauge -> 0),
+      #    "raise" fails the scheduler. Adds storage_sync_timeout
+      #    extra-config to bound the gloo timeout.
+      #  B (45da19f105, from 74a0e6ba9a) -- ** THE ALWAYS-ENTER-POST-FAILURE
+      #    INVARIANT, WHICH IS THE DEEPER HALF: ** "skipping every later
+      #    collective after the first sync failure was UNSOUND: gloo closes
+      #    ONLY THE PAIR OF THE GROUP THAT TIMED OUT, and the hit and
+      #    completion sync groups are DISTINCT EVEN ON TP2, so a peer that
+      #    had NOT failed blocked for the untouched group's full timeout
+      #    (30 MIN BY DEFAULT), during which reset/detach could not join and
+      #    flush RAISED OUT OF THE SCHEDULER. A retry on the broken group
+      #    raises AT ONCE on every rank, so the collective is now ALWAYS
+      #    ENTERED." Also: take_ready_pp_prefetch waits in 1 s slices and
+      #    FAILS LOUD when the local ticket thread is dead; the buffer-only
+      #    PP>1 health relay is limited to the ticket-less shape (with
+      #    tickets, PP0 decides per request); sync knobs validated BEFORE any
+      #    attach side effect; the gauge drops ON DETACH; a WARNING once a
+      #    minute while degraded; thread attributes initialised in __init__;
+      #    reset logs that L3 stays disabled.
+      #  C (c50b262e23, from 6c375096cd) -- storage_workers_healthy() watches
+      #    the worker threads the controller STARTED (a controller doing
+      #    storage I/O OUTSIDE Python workers has none and must read HEALTHY
+      #    on their account, not dead); ** storage_sync_timeout DEFAULTS TO
+      #    300 s ** instead of torch's 30-minute gloo default (null/absent ->
+      #    default, non-finite rejected) -- a hung peer noticed in minutes
+      #    while staying far above any healthy batch call; the PP ticket
+      #    broadcast group is created WHEN THE STORAGE WORKERS START, after
+      #    attach applied the timeout, so it is BOUNDED LIKE THE OTHER
+      #    STORAGE COLLECTIVES (it used to be built BEFORE the config was
+      #    parsed); a prefetch cut by the rank-agreed degrade reports
+      #    ** storage_unavailable ** in storage_prefetch_unfulfilled_tokens_
+      #    total INSTEAD OF BORROWING "deadline" (gauge label registered
+      #    additively).
+      #  D (b7c656f69f, from 98bfcbd450 = the PR head) -- the health bit is
+      #    ONE MORE WORD in the HiCache ready-count row, so the no-extra-pool
+      #    layout no longer fit the 8-word shm table and ** EVERY
+      #    STORAGE-ENABLED TICK FELL BACK TO THE GLOO REDUCE. **
+      #    get_shm_exchange takes the row width; the hicache exchange asks
+      #    for 9.
+      # ** ORDER NOTE -- A CORRECTION TO THE DISPATCH SKETCH, ON THE RECORD:
+      # the delegation said "publish-then-flag"; the worker corrected it to
+      # FLAG-THEN-PUBLISH and the correction is PROVEN BY THE PR'S OWN CODE
+      # AND DOCSTRING: the health bit folds into _sync_hicache_ready_counts
+      # AFTER the queue-size reads (flag-published-before-item order: a
+      # COUNTED FAILED ITEM IMPLIES THE 0 BIT IN THE SAME ROUND) -- publish-
+      # then-flag would let a rank vote on an item whose failure it had not
+      # yet recorded, i.e. an agreed-healthy round containing a dead item.
+      # Entry follows the code, not the sketch. **
+      # HOOK ADAPTATION (shape difference the PR cannot know about):
+      # upstream's guarded scheduler-thread reduce inside
+      # get_prefetch_submission (the #43344 shape, which the PR's OWN
+      # 60c5f3ed7f rebase resolved the same way) ** DOES NOT EXIST ON THIS
+      # TREE ** -- our ticket thread runs the hit query, so the failure hook
+      # lands on ITS UNCONDITIONAL EXCEPT-EXIT, and the fork's
+      # test_command_failure keeps LATER submissions TICKETED.
+      # FORK PAYLOAD CONTRACT KEPT: our rank-invariant MASK payload (entries
+      # 209/290, B3's mask-packs-only-when-TRAILING_PAGES refinement) is
+      # preserved on _sync_prefetch_hit_query -- the wrapper only converts a
+      # FAILED REDUCE into "no agreed boundary" ({} verdicts, 0 hits), so
+      # ** B3's TRAILING_PAGES CONTRACT IS BIT-IDENTICAL THROUGH THE PORT **
+      # (verified against the tests' reduce mocks: trailing_endpoint,
+      # buffer_mode_sidecar). The entry-293 pending_storage_hits park/drain +
+      # IDENTITY GUARD stays between the PR's degraded inserts in
+      # _drain_and_alloc_storage_hit, and entry 294's deferred ready-sync
+      # stays a no-op path for these setups (it refuses storage-attached).
+      # ** STUB-WIDTH HISTORY, DOCUMENTED AS AN INTERMEDIATE STATE: ** the
+      # PR's own 60c5f3ed7f resolution split the health bit out of the shm
+      # exchange, but this tree ALREADY carries the shm exchange -- a
+      # 4-tuple return from the mins path would BREAK the 5-tuple unpack at
+      # commit A. So ** commits A-C deliberately ran width 8 and took the
+      # GLOO-FALLBACK PATH on storage-enabled rounds, and commit D restores
+      # 9 with the seq==1 assertion exactly as upstream head. ** The width
+      # parameter is ADDITIVE on get_shm_exchange (ShmTagExchange/
+      # HierTagExchange already took it); every other caller keeps the 8-word
+      # default.
+      # ** EXTRA-CONFIG NON-CONSUMING VALIDATION (a deliberate design point,
+      # with the tree's asymmetry recorded): **
+      # parse_storage_backend_extra_config now REGISTERS storage_failure_
+      # policy and storage_sync_timeout as NON-CONSUMING validation, so a
+      # BAD extra-config fails at PARSE TIME on BOTH the boot and the
+      # runtime-PUT paths, while ** THE SOLE APPLICATION POINT STAYS
+      # _apply_storage_sync_config ** (registration validates, attach
+      # applies). Related asymmetry worth knowing: entries 290/293's knobs
+      # (prefetch wait-ms, async ready-sync) are SERVER_ARGS FIELDS, NOT
+      # PARSER KEYS -- recorded so a future reader does not go looking for
+      # them in the extra-config parser. Commit C then makes the fork-side
+      # registration MIRROR the 300 s default semantics (absent -> default,
+      # non-finite rejected) WITHOUT duplicating the constant.
+      # STOP-REASON ROUTING (the entry-293/217 interaction, on record):
+      # storage_unavailable marks operation.deadline_expired so the cut
+      # resolves through the EXISTING deadline_expired branch with ** NO
+      # poll_miss RE-ARM ** -- exactly like the deadline path -- so ** THE
+      # ENTRY-293 SHARED RETRY-MAX-ATTEMPTS CAP IS UNTOUCHED AND THE TIMEOUT
+      # STOP POLICY REMAINS THE EARLIER, ALREADY-PROVEN EXIT **;
+      # _prefetch_cut_reason routes that cut plus the hybrid discard and the
+      # token resolve to reason=storage_unavailable.
+      # ** NEW GAUGE -- THE BOOT NEEDLE: ** sglang:hicache_storage_healthy
+      # (metrics_collector.py:2303-2304, .set(int(healthy)) at :2397) ->
+      # §3(l)-adjacent needle, ** = 1 STEADY **; 0 means the rank-agreed
+      # health bit dropped and L3 has DEGRADED TO NO-L3 (policy "disable" --
+      # the default -- so requests keep succeeding WITHOUT L3, which is
+      # precisely the failure mode that used to be silent).
+      # FORK-ONLY TEST ADAPTATIONS (the PR cannot have these files):
+      # test_hybrid_storage_sparse_allocation's (entry-290)
+      # TestSparseCheckpointCacheDrain cache gains storage_unavailable=False;
+      # the new test's _scheduler_cache stubs pre-memoize _hcs_state=False
+      # (entry 294) and queued_backups={} (entry 199) plus the
+      # _storage_prefetch_wait fixture attribute; test_command_failure keeps
+      # the fork's ticket-thread shape.
+      # FAMILY EXCLUSION RECORD (unchanged verdicts, and ZERO lines pulled
+      # from any of them): **#44339 SKIP-forever stands (buffer_only-only);
+      # #44344 IS DOA-BY-HISTORY (subsumed by entry 268's unconditional
+      # batch_is_full clear -- see the dated correction in wanted_stack);
+      # #44343/#44348 NOT-NOW, BEHIND TRUNK ** (their stacked-draft premise
+      # is now carried by this landed trunk). Integrator check: the four
+      # landed commits carry EXACTLY four cherry-pick trailers (the PR's
+      # content commits) and none of these four PR numbers is in origin/main.
+      # ** GPU-DEBT DRILL, OWED AT THE NEXT GPU WINDOW: kill -STOP a
+      # file-backend reader on TP4 ** and assert the class this fix exists
+      # for: peers time out WITHIN storage_sync_timeout (300 s), THE THREADS
+      # SURVIVE, the gauge drops ONE TICK, L3 degrades rather than the
+      # scheduler dying, and re-attach recovers. Unreachable on this box
+      # (no GPU + no real L3 traffic), so the CPU-side two-rank gloo test is
+      # the only current proof.
+      # TEETH, RE-PROVED BY THE INTEGRATOR: at the base tip the new
+      # test_hicache_storage_sync_recovery.py fails COLLECTION with
+      # ** ImportError: cannot import name 'STORAGE_SYNC_TIMEOUT_DEFAULT_S'
+      # from sglang.srt.managers.cache_controller ** -- it cannot pass
+      # without this port, so it is a real gate, not a companion test.
+
+      # WAVE BATTERIES (integrator, MAIN TREE, prod venv /home/my/sglang/
+      # .venv, CVD=9, PYTHONPATH=/home/my/sglang/sglang/python -- the same
+      # harness the workers used: /tmp/opencode/b12x-battery/
+      # run_battery.sh copied verbatim and pointed at the main tree, so the
+      # 10 rows are node-for-node comparable).
+      # ** THE THREE BRANCHES WERE BORN AT EXACTLY 78783f0a36 (verified:
+      # git merge-base == the tip for all three), SO EVERY BASE MEASURED
+      # HERE IS THE WORKERS' OWN BASE -- REPRODUCED BEFORE ANY PICK LANDED:
+      # wave 1's 10 rows came back EXACT (23S / 2P-6S-5sub / 6P-2sub /
+      # 6P-20sub / 12P / 26P-1S-5sub / 103P-2S-73sub / 107P / 67P-46sub /
+      # 461P-276sub) and wave 2's six came back EXACT (auto_size 3P/2sub,
+      # assembler 52P/36sub, mamba_sizing 30P/17sub, explicit 5P, draft 11P,
+      # pool_configurator 71P/4S-34sub). Method identity, not luck. **
+      # WAVE 1 (entry 316): ** ALL TEN ROWS UNMOVED base -> after (10/10
+      # byte-equal summaries) -- the strongest possible confirmation of the
+      # INERT-ON-OUR-ARMS analysis: a default-resolution change that touches
+      # nothing on our arms moves NOTHING in the battery. fp8_blockwise 23S,
+      # fp8_utils 2P/6S/5sub, trtllm_fp8_fallback 6P/2sub, modelslim_mxfp8
+      # 6P/20sub, fp4_gemm_backend_sm120 12P (fp4_utils's OWN
+      # is_flashinfer_b12x coexists with the new fp8 enum method -- no
+      # collision), autotune gate+sync 26P/1S/5sub (** entry 304's pin
+      # HOLDS through this pick **), runner dir 103P/2S/73sub,
+      # kernels_namespace 107P (inventory guard: no KernelSpec added or
+      # removed), ** b12x W4A16 ROUTE 67P/46sub EXACT (entry 247's route
+      # semantics untouched -- the file list contains no moe/ files) **,
+      # server_args DIR 461P/0F/276sub (the new choice added, post-merge pin
+      # GREEN).
+      # WAVE 2 (entry 317): auto_size ** 3P/2sub -> 5P/4sub EXACT (+2P/+2sub)
+      # **; assembler ** 52P/36sub -> 53P/41sub EXACT (+1P/+5sub) **;
+      # mamba_sizing ** 30P/17sub UNMOVED **; explicit_budget ** 5P ** and
+      # draft_budget ** 11P ** EXACT; pool_configurator ** 71P/4S/34sub
+      # UNMOVED **; draft_gate ** 10P + 4F -- and the 4F are machine-
+      # identified here as the CARGO ENV CLASS (CalledProcessError: cargo
+      # build --release --locked --package sglang-radix-tree --features
+      # python-extension -> exit 101; RuntimeError: failed to build
+      # sglang.srt.mem_cache.rust_tree_core.mem_cache with Cargo), byte-
+      # identical baseline->after and the same class as the 2 dir-level
+      # collection errors. NO flags added, so server_args was not re-run for
+      # this wave (N/A by construction, as the worker recorded).
+      # WAVE 3 (entry 318): all named gates ** EXACT ** at the final tip --
+      # trailing_endpoint 17P, pp_prefetch_ticket 17P/19sub, buffer_mode_
+      # sidecar 6P/6sub, storage_prefetch_lifecycle 28P/31sub,
+      # sparse_allocation 13P/14sub (entry-290's pin survives the stub
+      # adaptation), pp_sync_drain 4P, async_ready 7P, ** NEW
+      # test_hicache_storage_sync_recovery 4P/5sub (23.7s -- it is the
+      # 2-rank gloo spawn case; 3 unit cases + 1 spawn case = the file's 4
+      # collected items) **, shm_tag_exchange 2P (now incl. the row-width
+      # case). ** TEETH RE-PROVED BY THE INTEGRATOR AT THE BASE TIP: the
+      # new file fails COLLECTION there with ImportError: cannot import name
+      # 'STORAGE_SYNC_TIMEOUT_DEFAULT_S' from cache_controller -- a real
+      # gate, not a companion test. ** managers dir ** 1056P/2F/9S/474sub
+      # EXACT, AND UNMOVED base->tip (I measured 1056/2F/9S/474 at
+      # 78783f0a36 TOO -- the new file lives in mem_cache, so this pin is a
+      # non-regression proof, and the 2F remain the known order-dependent
+      # test_mm_process_config pair) **. mem_cache dir: base (worker) 1885P/
+      # 153F/1447S/2err/4518sub -> ** MY TIP 1892P/153F/1447S/2err/4530sub =
+      # +7P/+12sub with ZERO FAILURE-COUNT CHANGE ** (1885 + wave 2's +3P/
+      # +7sub + wave 3's +4P/+5sub = 1892/4530 arithmetic closes EXACTLY),
+      # and the FAILURE SET IS IDENTITY-CHECKED, NOT COUNTED: my tip's 49
+      # distinct FAILED node ids == the worker's base-fails.txt set with
+      # ** diff = 0 lines **. ** DEVIATION FROM THE WORKER'S OWN PREDICTION,
+      # EXPLAINED NOT MATCHED: their final dir log reads 1887P/155F, i.e. 2
+      # EXTRA FAILURES that are NOT in the new file -- they are
+      # TestSparseCheckpointCacheDrain::test_cache_drain_stages_auxiliary_
+      # pools_for_selected_endpoint and ::test_no_legal_endpoint_retires_
+      # pending_prefetch_without_io in ENTRY-290's file, the very file this
+      # port had to stub-adapt (commit A adds storage_unavailable=False).
+      # Both pass STANDALONE here (13P/14sub exact) and both PASS inside my
+      # dir run, so their 2 reds are a DIR-CONTEXT FLAKE in their worktree
+      # (their run took 6:32 vs my 5:47 and the 2-rank gloo spawn test sorts
+      # BEFORE that file, i.e. cross-test process-state interference is the
+      # credible mechanism). I do NOT propagate their 153F->155F number; the
+      # pin here is 153F with an identical failure set. **
+      # CROSS-WAVE SURVIVAL at the final 318 tip (re-measured after ALL
+      # THREE waves): server_args dir ** 461P/276sub **, kernels_namespace
+      # ** 107P **, ** unit/distributed dir 156P/1S/35sub -- measured
+      # IDENTICAL at the base, so the liveness port's parallel_state.py
+      # edits and the extra-config registration move nothing in the comm
+      # battery (note this is the post-merge-#5 pin; the 133P figure of
+      # pass 3 is superseded) **. GATES: check_registered_tests /
+      # check_no_registered_tests_in_package / check_no_bare_pytest_main ALL
+      # rc=0; ruff v0.15.1 repo ruleset (--select=F401,F821,F823,UP037) +
+      # format clean on ** all 26 changed .py files **; ** 0 rust files in
+      # the entire 6-commit diff ** (the cargo failures above are the build
+      # ENV failing, not our diff touching rust).
+      # HONEST SCOPE NOTE: the 153 pre-existing mem_cache failures and the 2
+      # collection errors are the post-merge-#5 CPU-lane debt (cargo-offline
+      # + device-gated classes) inherited at the base -- this pass neither
+      # caused nor cured them; the set-identity check above is the proof.
+
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
 ==============================================================================
@@ -9546,6 +10175,202 @@ WATCH LIST (re-evaluate before next sync)
 ==============================================================================
 CAVEATS
 ==============================================================================
+
+  * CPU-BATTERY BASELINES RE-PINNED 2026-10-29 ** AT THE 316-318 TIP **
+    (b7c656f69f). THIRD TABLE OF THE DAY; it SUPERSEDES the 315-tip master
+    re-pin entries for the files named here and keeps the OLD value with
+    each so a stale log is recognised. All three waves were verified against
+    the SAME base as their workers (every branch born at 78783f0a36), so
+    these are reproductions, not translations.
+      MOVED / NEW:
+        test_hicache_auto_size.py   3P/2sub -> ** 5P/4sub ** (entry 317,
+          +2P/+2sub EXACT; the 2 QSA tests are RED AT BASE -- 3F -- without
+          the _pool_bytes QSA branch)
+        test_hybrid_pool_assembler.py 52P/36sub -> ** 53P/41sub ** (entry
+          317 +1P/+5sub EXACT; ALL 5 subTests red at base without the
+          fraction)
+        test_hicache_storage_sync_recovery.py ** NEW PIN 4P/5sub ** (entry
+          318; 3 unit cases + 1 two-rank gloo spawn, 23.7 s; ** TEETH
+          PROVEN AT THE BASE TIP BY THE INTEGRATOR: collection fails there
+          with ImportError: cannot import name STORAGE_SYNC_TIMEOUT_
+          DEFAULT_S from cache_controller ** -- a real gate)
+        test/registered/unit/mem_cache/ 1885P/153F/1447S/2err/4518sub ->
+          ** 1892P/153F/1447S/2err/4530sub ** -- arithmetic closes EXACTLY
+          (base + entry 317's +3P/+7sub + entry 318's +4P/+5sub). ** THE
+          FAILURE SIDE IS SET-IDENTITY, NOT A COUNT: my tip's 49 distinct
+          FAILED node ids == the worker's base-fails.txt set, diff 0 lines.
+          ** A dispatch figure of "1889P" counts ONLY wave 3 (+4) and omits
+          wave 2's +3 in the same dir -- 1892 is the dir truth at the 318
+          tip. ** The 153F + 2 collection errors are INHERITED post-merge
+          CPU-lane debt (cargo-offline + device-gated classes): this pass
+          neither caused nor cured them.
+        test_kv_cache_configurator_draft_gate.py ** 10P + 4F, AND THE 4F
+          ARE NOW MACHINE-IDENTIFIED: CalledProcessError cargo build
+          --release --locked --package sglang-radix-tree --features
+          python-extension -> exit 101 / "failed to build
+          sglang.srt.mem_cache.rust_tree_core.mem_cache with Cargo" ** --
+          the SAME env class as the 2 dir collection errors, byte-identical
+          baseline->after. Not a code failure; do not chase it in Python.
+        test/registered/unit/mem_cache/test_hybrid_storage_sparse_
+          allocation.py ** 13P/14sub HOLDS through entry 318's stub
+          adaptation ** (storage_unavailable=False on the
+          TestSparseCheckpointCacheDrain cache). ** READ BEFORE RE-RUNNING
+          THE DIR: the liveness worker's own final dir log read 1887P/155F
+          with 2 failures IN THIS FILE that pass standalone here AND inside
+          my dir run. Their 2 reds are a DIR-CONTEXT FLAKE in their worktree
+          (their run 6:32 vs mine 5:47, and the 2-rank gloo spawn test
+          SORTS BEFORE this file) -- recorded, NOT propagated into the pin.
+      UNMOVED (re-measured at the 318 tip): managers dir ** 1056P/2F/9S/
+        474sub ** (measured IDENTICAL at the base too -- a true
+        non-regression proof; the 2F remain the known order-dependent
+        test_mm_process_config pair); ** server_args dir 461P/0F/276sub **
+        (post-merge pin, GREEN with entry 316's new choice added -- entry
+        316 adds a CHOICE, not a flag); kernels_namespace ** 107P **
+        (inventory guard: no KernelSpec added or removed by any of the 6
+        commits); unit/distributed dir ** 156P/1S/35sub -- measured
+        IDENTICAL AT THE BASE, so entry 318's parallel_state.py edits and
+        the extra-config registration move nothing in the comm battery
+        ** (this SUPERSEDES the 133P pin recorded in pass 3: 133P was the
+        PRE-merge-#5 value, 156P is post-merge; a stale log quoting 133 is
+        from before the merge); b12x W4A16 route ** 67P/46sub EXACT **
+        (entry 247's route semantics untouched by entry 316); autotune
+        gate+sync ** 26P/1S/5sub ** (entry 304's pin holds); runner dir
+        ** 103P/2S/73sub **; fp8_blockwise 23S; fp8_utils 2P/6S/5sub;
+        trtllm_fp8_fallback 6P/2sub; modelslim_mxfp8 6P/20sub;
+        fp4_gemm_backend_sm120 12P; hicache trailing_endpoint ** 17P **;
+        pp_prefetch_ticket 17P/19sub; buffer_mode_sidecar 6P/6sub;
+        storage_prefetch_lifecycle ** 28P/31sub **; pp_sync_drain 4P;
+        async_ready 7P; shm_tag_exchange 2P; mamba_sizing 30P/17sub;
+        explicit_budget 5P; draft_budget 11P; pool_configurator
+        71P/4S/34sub. GATES: check_registered_tests /
+        check_no_registered_tests_in_package / check_no_bare_pytest_main
+        ** ALL rc=0 **; ruff v0.15.1 with the REPO ruleset (--select=
+        F401,F821,F823,UP037 per .pre-commit-config.yaml) + format clean on
+        ** all 26 changed .py files **; ** 0 rust files in the whole 6-
+        commit diff ** -- so the cargo failures above are the ENV, and
+        cargo sglang-radix-tree's own suite stays at its recorded pin
+        (unrunnable in a worktree without the build).
+      HARNESS NOTE FOR DIR RUNS OF mem_cache (cost me one aborted run):
+        the dir carries 2 pre-existing COLLECTION errors, so a plain
+        `pytest test/registered/unit/mem_cache/` ** INTERRUPTS AT ~14 s
+        AND REPORTS NOTHING ** (rc=2, "Interrupted: 2 errors during
+        collection"). Always add ** --continue-on-collection-errors **; the
+        1885P/153F numbers in this ledger are only reachable that way.
+
+  * b12x MXFP8 DENSE (entry 316) IS INERT ON BOTH OUR ARMS -- DO NOT READ
+    IT AS A DEFAULT CHANGE, AND DO NOT ARM IT WITHOUT THESE TWO CHECKS
+    (2026-10-29).
+      WHY INERT HERE (the predicate, not a probability):
+      can_serve_block_fp8_as_mxfp8 (fp8_utils.py:977-986) requires
+      weight_block_size[1] == 32 AND scale_fmt == "ue8m0"; our dense
+      projections are BF16 on the NVFP4 arm and block-FP8 [128,128] on the
+      FP8 + MTP/NEXTN draft arms, so it is ** SHAPE-FALSE AT EVERY LAYER **
+      (live probe: [128,128]/ue8m0 -> False, [128,128]/row -> False,
+      [1,128] -> False). Under CVD=9 the resolver clause is additionally
+      False for every shape, so the honest claim rests on the SHAPE
+      mismatch, which holds on hardware. Neither touched resolver is ever
+      CALLED for our models; block-fp8 dispatch (dispatch_w8a8_block_fp8_
+      linear) is untouched; the DSv4.1 override keys on an arch that is not
+      ours; no new b12x JIT enters our startup; entry 211's Triton cubin
+      prewarm does NOT cover b12x (cutlass-DSL kernel, never a Triton cubin)
+      -- a real coverage gap for any future arm.
+      CHECK 1 -- ** THE GATE-SPLIT TRAP, MEASURED ON THIS BOX: ** the
+      requirements gate (fp8_utils.py:844-856) calls get_cuda_version(),
+      which parses ** torch.version.cuda ** (= 13.0 here) and so returns
+      ** True **; but the default toolkit is ** /usr/local/cuda -> cuda-
+      12.9 ** (nvcc 12.9.86; a 13.0 nvcc exists only at /usr/local/cuda-
+      13.0). Gate-pass / build-fail is therefore POSSIBLE HERE -- entry-247
+      lineage. IF a b12x-dense arm ever boots, this is NEEDLE #1: read the
+      cute-DSL JIT's actual toolkit choice, never the gate's verdict, and
+      note the first-launch cold compile is NOT prewarmed.
+      CHECK 2 -- ROLLBACK IS ARG-LEVEL, NO ENV: --fp8-gemm-backend
+      flashinfer_cutlass pins the OLD answer for native-MXFP8 dense, ANY
+      non-auto pin ALSO vetoes the DSv4.1 override, and the K%128 guard
+      degrades ineligible layers to Triton PER LAYER with a named warning
+      (never a crash). Where it DOES flip: `auto` AND any pin that does not
+      own an MXFP8 dense kernel (plain "cutlass"/"triton" fall through to
+      auto by the function's own contract) -> flashinfer_b12x; explicit
+      flashinfer_cutlass is unchanged on both trees; flashinfer_cutedsl
+      still raises on SM120. For a NATIVE-MXFP8 checkpoint that is auto->
+      b12x LIVE AT DEFAULT -- but the base's flashinfer_cutlass there was a
+      DEAD PATH (cutlass/cute-dsl MXFP8 hard-fail on SM120/121, tcgen05/
+      TMEM absent), so this converts broken into working rather than
+      disturbing a working default. STILL-DECLINED CONTEXT UNREOPENED:
+      entry 225's refusal of #38170's FP4 auto->b12x flip and entry 240's
+      keep-auto-cutlass posture are mm_fp4 territory, untouched by this
+      mm_mxfp8 family.
+      UNTESTED BY CONSTRUCTION: the PR ships NO tests, so nothing on this
+      route is pinned until ** S-B12XDENSE ** (wanted_stack, filed this
+      pass) lands -- owed WHEN AND IF the route is armed, entry-247's
+      mock-wheel idiom.
+
+  * HICACHE STORAGE LIVENESS (entry 318) -- TWO THINGS TO KNOW BEFORE
+    READING A DEGRADED BOOT, PLUS THE NEW GAUGE (2026-10-29).
+      THE GAUGE: ** sglang:hicache_storage_healthy = 1 STEADY **
+      (metrics_collector.py:2303-2304; .set(int(healthy)) at :2397) -> the
+      §3(l)-adjacent boot needle. ** 0 means the RANK-AGREED health bit
+      dropped and L3 has DEGRADED TO NO-L3 under the default "disable"
+      policy: requests KEEP SUCCEEDING, WITHOUT L3, AND PROGRESS ON
+      IN-FLIGHT PREFETCHES IS FROZEN. ** That is precisely the failure mode
+      that used to be SILENT, so: a healthy-looking server with a flat
+      L3-hit rate is now a GAUGE question first, not a traffic question.
+      The gauge also DROPS ON DETACH (commit B), so a deliberate detach is
+      NOT an alarm.
+      THE ALWAYS-ENTER INVARIANT (the invariant that makes the fix correct
+      rather than cosmetic): ** NEVER skip a storage sync collective after
+      a failure. ** gloo closes only the PAIR OF THE GROUP THAT TIMED OUT,
+      and the hit and completion groups are DISTINCT EVEN ON TP2, so a
+      skip-then-proceed design leaves a non-failed peer blocked for the
+      UNTOUCHED group's FULL timeout (30 min at torch defaults) during which
+      reset/detach cannot join and flush RAISES OUT OF THE SCHEDULER; a retry
+      on the broken group raises AT ONCE on every rank, which is why the
+      collective is always entered. Anyone "optimising" the failure path by
+      skipping work re-introduces the 30-minute wedge.
+      RELATED INVARIANTS ON THE RECORD: ** FLAG-THEN-PUBLISH ** for the
+      health bit (folded AFTER the queue-size reads; a counted failed item
+      implies the 0 bit IN THE SAME ROUND -- publish-then-flag would let a
+      rank vote on an item whose failure it had not recorded); storage cut
+      rides the ** deadline machinery with NO poll_miss re-arm ** so entry
+      293's shared retry-max-attempts cap stays untouched and the timeout
+      stop policy stays the EARLIER exit; ** storage_sync_timeout now
+      DEFAULTS TO 300 s ** (absent/null -> default, non-finite rejected) so
+      a hung peer is noticed in MINUTES -- and the PP ticket group is created
+      at worker-start so it is BOUNDED LIKE THE OTHERS (it used to be built
+      before the config parsed); ** shm row width is 9 for the hicache
+      exchange ** (width 8 on intermediate commits meant storage rounds took
+      the gloo fallback -- a tree stuck at 8 is a PARTIAL port); and
+      ** extra-config validation is NON-CONSUMING: registration validates,
+      _apply_storage_sync_config APPLIES -- the sole application point. **
+      GPU DEBT: the kill -STOP file-backend-reader drill on TP4 (peers time
+      out within 300 s, threads SURVIVE, gauge drops ONE tick, re-attach
+      recovers) -- unreachable on this box.
+
+  * #45520 IS STILL OPEN UPSTREAM (re-verified 2026-10-29 against
+    origin/main 2c6b95e035: grep "(#45520)" = 0 hits), so ** MERGE #6 CANNOT
+    BE ASSUMED TO BRING IT, AND ENTRY 303'S RE-APPLY RULE IS NOW ARMED FOR
+    THAT MERGE: if #45520 lands upstream in the meantime, take upstream's
+    version and RE-APPLY entry-230's FAIL-SAFE LAYER ** -- upstream reads
+    model_config RAW and INTENTIONALLY leaves `auto` where it cannot read
+    the expert-algo list, which is exactly the shape of the silent expert-id
+    misroute (published-auto + built-GLOBAL-ids runner = rank 0 routes
+    right, EP ranks >0 route NOTHING). Do NOT let a conflict resolution
+    delete _model_config_or_none's fail-safe reads or the algo-unknown
+    mixed->cutlass publish on the strength of "already fixed upstream"; the
+    standard.py once-per-pair mismatch warning stays the loud backstop.
+    Recorded as a Section-C-style rider so B-next-session sees it without
+    re-deriving entry 303.
+
+  * S-B12XDENSE IS AN OPEN STACK-OWNED DEBT (wanted_stack, filed 2026-10-29).
+    Entry 316's dense b12x route has NO TEST COVERAGE AT ALL because PR
+    #45391 ships none -- every claim in that entry rests on CPU-proved
+    resolution tables and the battery's UNMOVED rows, which is sufficient to
+    prove INERTNESS but NOT to pin the route's behavior. ** When (not if) a
+    b12x-dense arm is ever planned, the contract test comes FIRST **
+    (entry-247's mock-wheel idiom: fake the wheel's supported_compute_
+    capability/requirements, assert the resolution table, the K%128
+    degradation warning, the wrapper refusal, and the DSv4.1 override's
+    veto-by-pin). This is also the item that would carry the gate-split
+    check (torch.version.cuda vs nvcc) as an ASSERTION rather than a CAVEAT.
 
   * ** MERGE-#5 ERA CLOSED (2026-10-29, session 3 / batch B6). ALL BATCHES
     B1-B6 LANDED (entries 310-315). PRODUCTION BOOT READINESS: the FORBIDDEN
