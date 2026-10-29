@@ -1,6 +1,6 @@
 # stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
 #
-# STACK: qwennext-stack-309-2026-10-29
+# STACK: qwennext-stack-309+merge5-2026-10-29 (main @ 2a6c204570, MERGE #5 TAKEN -- see synced)
 #   main+pr36787+pr37275+pr38144+pr38209+pr36644+pr39862+pr39809+pr39893+local_hicache_qsa_fixes
 #   +pr39614+pr39978+pr40002+pr39065+pr40501+pr40175+pr40362+pr39391+pr37061+pr39333+pr33778
 #   +pr38977+pr39977+pr40480+pr39880+pr40235+pr39807+cpu-triage+boot-fix+plan_updates_perf
@@ -265,7 +265,7 @@
 #   make --enable-mixed-chunk safe and fix the QSA verify ring collision.
 #   * = picked with local modifications, see the entries)
 # branch : qwennext-stack
-# tip    : 3cdba955a4   (the stack.txt commits sit above it)
+# tip    : a688f11ac9   (MERGE #5 commit ae6ee527ba + B1; stack.txt commits sit above)
 # base   : upstream sgl-project/sglang main @ 7ad55e4386 ([HiCache] TMA-staged
 #          host<->device KV transfer kernel (sm_90+) (#40278), 2026-09-21)
 # synced : upstream main @ f209e67767 (#39643, 2026-09-28) MERGED IN as
@@ -312,14 +312,14 @@
 #          batch branched off the then-tip; g->h->i auto-merged the
 #          rust-side overlap). range-diff: patch-identical to source
 #          branches. cargo sglang-radix-tree 932P/0F on the union.
-#          FIFTH MERGE NOT TAKEN (2026-10-19): origin/main has moved to
+#          [HISTORY -- MERGE #5 SINCE TAKEN, see entry 310] FIFTH MERGE NOT TAKEN (2026-10-19): origin/main has moved to
 #          417606527d -- +319 commits since the 12dc623102 of merge #4 --
 #          and this week was synced PER-PR instead (33 picks/ports,
 #          entries 215-227), which keeps the stack reviewable one commit
 #          at a time and cost ZERO conflicts. MERGE #5 REMAINS OWED (its
 #          conflict surface is 4-5x a per-PR batch); what the sweep
 #          looked at and did NOT pick is the review record in entry 227.
-#          MERGE #5 STILL OWED (refreshed at the 228/229 docs commit, and
+#          [HISTORY] MERGE #5 STILL OWED (refreshed at the 228/229 docs commit, and
 #          again at the 230-242 batch): origin/main is now 553836c164 =
 #          +378 commits since 12dc623102. [The 716c9151f2/+325 figure was
 #          the count at the 228/229 commit; the 417606527d/+319 one before
@@ -333,10 +333,10 @@
 #          revisit that floor AND take the probe in the same step, and
 #          conversely rolling the flashinfer wheel back requires
 #          reverting 2b46270c5d first (see entry 228).
-#          MERGE #5 STILL OWED (refreshed at the 248/249 docs commit):
+#          [HISTORY] MERGE #5 STILL OWED (refreshed at the 248/249 docs commit):
 #          origin/main is now 1dd0f361b8 = +435 commits since 12dc623102.
 #          [The 553836c164/+378 figure was the count at the 230-242 batch.]
-#          MERGE #5 STILL OWED (refreshed at the 275-295 docs commit):
+#          [HISTORY] MERGE #5 STILL OWED (refreshed at the 275-295 docs commit):
 #          origin/main is now 1776e2dcf8 = +1,111 commits since 12dc623102
 #          (+676 since 1dd0f361b8; the wanted_stack Section-C header's
 #          f2d3188925/+1,097 figure was the count at the 10-28 sweep).
@@ -345,7 +345,7 @@
 #          are 18 '+' (fork-divergent ports/adaptations) + 3 '-' whose
 #          patches match upstream byte-for-byte (#44288, #46049, #43216;
 #          #46049's equality additionally proved by patch-id, entry 278).
-#          MERGE #5 STILL OWED (refreshed at the 296-309 docs commit,
+#          [HISTORY] MERGE #5 STILL OWED (refreshed at the 296-309 docs commit,
 #          2026-10-29, by a read-only fetch): origin/main is now
 #          ** 2a6c204570 = +1,120 commits since 12dc623102 ** (+685 since
 #          1dd0f361b8). git cherry at the 309 code tip: ** 440 '+' / 31 '-'
@@ -363,6 +363,49 @@
 #          entry 303 describes; if #45520 merges during the merge window,
 #          RE-APPLY the fail-safe reads (upstream reads model_config raw
 #          and still leaves `auto` on unreadable expert lists).
+#          FIFTH MERGE TAKEN (2026-10-29, session 1): main @ ** 2a6c204570 **
+#          (+1,120 commits since 12dc623102) merged as ** ae6ee527ba ** on
+#          top of the 309 tip 3cdba955a4; follow-up B1 a688f11ac9 (LTX docs
+#          fold; diffusion battery env-class failures recorded). CONFLICTS:
+#          167 files at the settled 309 tip (dossier predicted 146 +/-25; the
+#          +21 shift is the 275-309 waves' deltas landing in the conflict
+#          zone: qsa-ring/hicache-ctrl/gdn/moe/llguard). Class counts:
+#          A 13 / B 80 / C 56 / D 18. The FOURTH-MERGE-pattern resolution
+#          (take upstream restructure, keep fork semantics where mechanical)
+#          held; where union was NOT mechanical (mem_cache/controllers,
+#          scheduler trio, moe contracts, environ.py -- plus every C-class
+#          re-home) the merge TOOK UPSTREAM STRUCTURE and planted 102
+#          TODO(merge5) markers (B1 15 / B2 29 / B3 12 / B4 23 / B5 23) with
+#          ALL dropped fork hunks extracted to /tmp/opencode/merge5-dossier/
+#          replant/ (117 artifacts: 76 fork-hunks patches, 19 upstream-side
+#          patches, 14 AA fork copies, 8 preremove snapshots). D-list +
+#          modify/delete outcomes are IN THE MERGE COMMIT MESSAGE (read it --
+#          it is the ledger: 45289-verified, dispatcher union-gate 16P+121P+
+#          probe 6P/2F, 219 gauges KEPT as serving schema, 221 deduped with
+#          prefill-t/s debt, 168 fence ALREADY-UPSTREAM, 45090 removal taken
+#          with operator-owed harness check, 39727 verified OPT-IN default-
+#          legacy, urc-unittest+fused_moe_config+latch REMOVED, test_qsa_kv_
+#          pool KEPT). Key upstream landings absorbed: the #46970..#46991 22-
+#          PR mem_cache/KV rewrite (incl. #46977 re-priced admission and
+#          #46981 pool-stats in our entries-73/209/219 file), #44993/#44994
+#          effective-execution-backend (converging on entry-230), #45232/
+#          #45236/#45334 URC test split + kits package move, #45474 decode-
+#          graph host-work restructure, the logits trilogy + softcap (271-274
+#          dedupe), #45672 CPU-test prune (source of the 4 modify/deletes).
+#          DEDUPE STATS: 60 of 430 fork commits were already upstream at the
+#          dossier snapshot; at the post-merge tip git cherry vs origin/main
+#          reads -- see entry 310 for the fresh count. ** #45520 (entry 302)
+#          REMAINS OPEN UPSTREAM (re-verified against 2a6c204570): the merge
+#          does NOT bring it; entry-230's fail-safe layer stays exactly as
+#          entry 303 describes. ** NOT ADOPTED, RE-ASSERTED: #44590 (sgl-
+#          kernel stays 0.4.9 floor + probe coupled, entry 228 rule).
+#          INTEGRATION OWED (sessions 2/3): B2 test re-home, B3 mem_cache +
+#          rust re-plant (absorbing the 8 hicache-ctrl re-ports; #46954-vs-
+#          209 subsumption decision lives THERE), B4 scheduler/admission,
+#          B5 moe/quant/dispatcher (incl. flashinfer_cutlass flipped fork-
+#          owned -- upstream #44993 hunks are a 95-line FOLD patch, not a
+#          re-plant), B6 environ+C0a+CAVEATS re-pin. PROD BOOT FORBIDDEN
+#          until B3 completes.
 # updated: 2026-10-29 (entries 296-309): FIVE-WAVE INTEGRATION BATCH,
 #          14 picks + 1 integrator rider = 15 code commits, ** ZERO CONFLICTS
 #          AT THE INTEGRATOR ** (every documented union held; nothing
@@ -8331,6 +8374,119 @@ STACK, IN BUILD ORDER (bottom first)
       # ALL EXACT; spec dir 329P/11S/192sub (moved by 300, attributed
       # above); managers 1027P/2F/3S/935sub; mem_cache 2105P/3047S/3991sub.
 
+        310. ae6ee527ba  STACK-OWNED  ** FIFTH MERGE TAKEN -- main @ 2a6c204570 (+1,120 since 12dc623102); rider: B1 integration a688f11ac9 **
+      # THE merge #5 dossier (both rounds) executed in ONE merge commit +
+      # B1. Conflicts 167 (149 content / 14 add-add / 4 modify-delete) at
+      # the settled 309 tip -- vs the dossier's 146 @ cca3ef84eb x
+      # 1776e2dcf8; the delta is exactly the 275-309 waves' landings INTO
+      # the conflict zone (moe 43-file cluster files, model_runner,
+      # kv_cache_builder, test_server_args, multi_tokenizer, http_server,
+      # hicache_best_practices -- all classified here and logged in
+      # /tmp/opencode/merge5-dossier/work/session1-conflicts.tsv with
+      # class+batch; that tsv + session1-resolution-log.tsv ARE the
+      # resolution map sessions 2/3 work from). Classes: A 13 / B 80 /
+      # C 56 / D 18. D-list outcomes, modify/delete evidence, cascading
+      # silent-auto-merge repairs (the kernels/ops activation _CUDA
+      # duplicate, the diffusion 5-tuple, the KernelSpec-field removals,
+      # the runner_utils import-contract retargets, the FIVE grafted
+      # fork-helpers: memory_pool.spec_intermediate_bytes_per_req,
+      # kv_cache_builder._adjust_hicache_size_for_draft +
+      # _device_pool_size_per_token, hybrid_cache_controller.
+      # local_restorable_mask, validation_hook.validate_replayssm_spec_
+      # algorithm) -- ALL IN THE MERGE COMMIT MESSAGE. Read it.
+      # ** flashinfer_cutlass.py FLIPPED to fork-owned mid-resolution:
+      # origin/main has ZERO b12x refs (the entry-247 route is fork-only,
+      # 760 vs 95 lines), so the dossier's take-upstream default was
+      # WRONG-DIRECTION there; #44993/#44994's hunks on it are saved as a
+      # FOLD patch for B5. The same asymmetry audit was run over every
+      # take-upstream file (8 candidates, 1 flip, 7 confirmed by the
+      # dispatch's own zone rules).
+      # MARKER CENSUS 102 = B1 15 / B2 29 / B3 12 / B4 23 / B5 23 (B6
+      # carries ZERO markers: its environ.py union landed complete at the
+      # merge -- re-pin + C0a docs ledger work is CAVEATS/entry-side, not
+      # code-side). REPLANT INVENTORY: 117 files under replant/ (76 fork-
+      # hunks patches = B3/B4/B5 re-plant source, 19 upstream-side patches
+      # = B1/B5 fold source, 14 AA fork copies, 8 preremove snapshots for
+      # the deleted test files incl. the 357-line urc-unittest fork body
+      # B2 re-homes).
+      # GATES AT MERGE COMMIT: import sglang OK; check_registered_tests +
+      # check_no_bare_pytest_main + check_no_registered_tests_in_package
+      # ALL rc=0 (deletions/keeps included); ruff F821+E9+format clean on
+      # the FULL changed .py set (3,726 files); collect-only over unit/
+      # {mem_cache,model_executor,distributed,layers/moe}: 4,337 nodes,
+      # 3 errors = 2x PRE-EXISTING torch-sys/cargo env breakage (repro-
+      # duced byte-identically at the pre-merge tip in a scratch worktree)
+      # + test_hicache_async_ready_sync 1err = EXPECTED PRE-B3.
+      # UNION GATES (D-2, run pre-commit): standard_dispatcher 12P ->
+      # **16P** (suite grew upstream, ALL green), model_overrides 112P ->
+      # **121P/1S/210sub** (green), fold probe 8P -> 6P/2F (upstream added
+      # the runner_backend arg to the predicate -- B5 re-pins), scales
+      # oracle taken upstream per D-1.
+      # POST-MERGE CHECKPOINT BATTERY (damage map, per-file, CVD=9, prod
+      # venv; NOT chased to green -- semantic losses are sessions 2/3):
+      #   unit/mem_cache   2105P/3047S/3991sub -> 1753P/1351F/364S/4439sub/
+      #     4err: 1,351F over 37 files. The URC split files themselves are
+      #     GREEN (upstream's new fixtures skip honestly on CPU -- entry-
+      #     241's old build_fixture gate is OBSOLETE by the split; B2's
+      #     re-home is fork CASES only, not the gate). The storm is the
+      #     hicache family against the #46970x storage rewrite (fast_file
+      #     58F, dcp_host_pool 24F, explicit_budget 5F, file-path-unit 5F,
+      #     hybrid_storage_sparse 13F, lru_unit, kv_layer_router 3F = NO-
+      #     CUDA ENV CLASS, rust_tree_core 2F) = EXPECTED-REPLANT B3.
+      #   unit/managers    1027P/2F/3S/935sub -> 1009P/81F/9S/412sub/2err:
+      #     13 red files, 81F = prefill_adder 39F (#46977 pricing vs fork
+      #     arms), dcp_logical 7F, mixed_mamba_track 7F, grammar_mixed_tail,
+      #     hybrid_ssm latch/retry, retract_ratio, io_struct 1F (NEEDS
+      #     ATTENTION -- not a conflict file), batch_result mixed-token-
+      #     ids 3F = EXPECTED-REPLANT B4; -523sub = upstream test PRUNE
+      #     (#45672) of upstream's OWN subtest families -- needs-attention-
+      #     audit in B4, NOT a fork loss (fork subtests were ~50).
+      #   unit/spec        329P/11S/192sub -> 363P/20F/21S/238sub/2err:
+      #     +34P from upstream's new spec tests; 17F = eagle_decode_
+      #     allocation (B4 spec-arg graft) + 3 others; 2err = the two
+      #     DOCUMENTED pre-existing (gdn cutedsl probe, replayssm_ring_fold)
+      #     = mostly B4.
+      #   unit/distributed 133P/1S/35sub -> 156P/0F/1S/35sub GREEN (+23P
+      #     upstream comm tests; entries 308/309 guards intact).
+      #   unit/server_args 308P/128sub -> 459P/7F/271sub (332P/7F in
+      #     test_server_args.py): 7F are FIELD-ORDERING/EXPORTABILITY
+      #     tuple pins -- fork fields (qsa_cache_sharding_size,
+      #     hicache_mamba_size_gb, watermark_*) vs upstream's new
+      #     (grpc_response_timeout_secs, paged_experts_*). Needs-attention
+      #     B6 re-pin (same class as the 261-274 era's docs_coverage
+      #     re-pins); NOT semantic.
+      #   function_call    652P/1964sub -> 678P/5F/2473sub: 5F = upstream
+      #     NEW deepseekv41 detector requiring the deepseek-recipe wheel
+      #     (absent venv -- ENV class; spark25's transient err NOT
+      #     reproducing: 6P standalone). Green modulo env.
+      #   kernels_namespace 76P -> 107P/0F GREEN (+31 upstream kernel
+      #     registrations; the fork's kvcache.store_cache_fp8 registry
+      #     entry grafted back after the merge dropped it -- found BY this
+      #     battery's 6F, closed pre-B-commit).
+      #   moe 43-file      573P/682S/195F/444sub -> 637P/683S/201F/558sub:
+      #     +64P/+114sub upstream growth, +6F on top of the pre-existing
+      #     CUDA-gated classes = needs-attention B5 (fold probe 2F + 4 in
+      #     the pre-existing trtllm-gen/rocm families; standard_dispatcher
+      #     16P and model_overrides 121P/1S/210sub GREEN -- the D-2 union
+      #     gate).
+      #   trailing_endpoint (entry-209 GATE) 17P -> **8P/9F** -- LOUD: the
+      #     clamp half is DEAD against the rewritten controllers exactly as
+      #     the MERGE-ERA CAVEATS bullet predicts. 8P survive on the
+      #     hicache_storage side; B3's completion test = back to 17P.
+      #   cargo sglang-radix-tree: UNMEASURABLE -- torch-sys/libtorch build
+      #     probe FAILS REPRODUCIBLY at the PRE-MERGE tip too (byte-ident
+      #     error in a scratch worktree) = pre-existing ENV breakage from
+      #     this seat, NOT merge damage; the 932P/0F pin carries unverified.
+      #   The URC-split re-pin against the NEW file set: split files
+      #     collected 100% clean (0 errors), green/skips by design; their
+      #     exact per-file pins are B2's to record.
+      # OWED: sessions 2/3 per CAVEATS top bullet (B2/B3/B4/B5/B6);
+      # PROD BOOT FORBIDDEN until B3. git cherry vs origin/main at the
+      # post-merge tip reads 475 '+' (the 31 '-' at the 309 tip stop
+      # being reported once origin/main is an ancestor -- tool artifact,
+      # NOT a regression: the dedupe facts are the merge's own 1,120-commit
+      # absorption).
+
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
 ==============================================================================
@@ -8560,6 +8716,26 @@ WATCH LIST (re-evaluate before next sync)
 ==============================================================================
 CAVEATS
 ==============================================================================
+
+  * ** MERGE-#5 ERA -- SESSIONS 2/3 IN PROGRESS (2026-10-29). PRODUCTION BOOT
+    IS FORBIDDEN UNTIL BATCH B3 COMPLETES. ** Hard rule with teeth: the
+    entry-209 trailing-endpoint clamp (no restorable trailing sidecar +
+    deferred{deadline} policy) and the entry-218 write-back ordering live in
+    files that TOOK UPSTREAM STRUCTURE at the merge (#46970..#46991 KV
+    rewrite); until B3 re-plants them from /tmp/opencode/merge5-dossier/
+    replant/*.fork-hunks.patch, a prod boot would run the HiCache L3 path
+    with fork semantics LOST -- the trailing_endpoint gate reads RED pre-B3
+    by design (battery evidence in entry 310; when that file returns 17P on
+    re-plant, B3's load-bearing half is proven back). Also boot-relevant in
+    this window: environ.py took #45090's removal (operator owed: confirm no
+    /root harness exports SGLANG_ENABLE_UNIFIED_RADIX_TREE; the upstream docs
+    snippets deepseek-v4.jsx/glm-5.2.jsx STILL export it upstream-side), the
+    entry-219 per-pool gauge names are the serving schema (already restored
+    at merge time -- first-boot /metrics must show
+    hicache_host_pool_{used,total}_tokens{pool}), and #45520 (entry 302)
+    arrived with the merge? **NO -- still OPEN upstream, fail-safe layer
+    intact.** Marker census 102 (B1 15 / B2 29 / B3 12 / B4 23 / B5 23);
+    every marker names its batch and its replant patch.
 
   * CPU-BATTERY BASELINES RE-PINNED 2026-10-29 ** AT THE 296-309 TIP **
     (3cdba955a4). SECOND TABLE OF THE SAME 10-29 DAY: this SUPERSEDES the

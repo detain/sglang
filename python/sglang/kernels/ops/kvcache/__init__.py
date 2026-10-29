@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Optional
 
 from sglang.kernels.registry import register_kernel
 from sglang.kernels.selector import get_kernel
-from sglang.kernels.spec import KernelBackend, KernelSpec
+from sglang.kernels.spec import CapabilityRequirement, KernelBackend, KernelSpec
 
 if TYPE_CHECKING:
     import torch
@@ -86,3 +86,13 @@ register_kernel(
 )
 
 # TODO(merge5): re-plant entry 186 semantics (batch B5); fork hunks saved /tmp/opencode/merge5-dossier/replant/python__sglang__kernels__ops__kvcache____init__.py.fork-hunks.patch
+
+
+register_kernel(
+    KernelSpec(
+        op="kvcache.store_cache_fp8",
+        backend=KernelBackend.TRITON,
+        target="sglang.kernels.ops.kvcache.cache_move:store_cache_fp8",
+        capabilities=frozenset({CapabilityRequirement.cuda(min_sm=(8, 9))}),
+    )
+)

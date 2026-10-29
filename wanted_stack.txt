@@ -439,7 +439,11 @@
 #         the record). State: LANDED(299/300)
 # #43216  -- LANDED 2026-10-28 as entry 284 @ code tip 41b7d5afb4 (clean
 #         merged pick, patch-equal to origin/main 786cdfc040; server_args
-#         303P -> 308P/128sub). ** THE NCCL NEEDLE FLAG: NCCL_GRAPH_REGISTER
+#         303P -> 308P/128sub). ** MERGE-#5 DEDUPE: the PR (786cdfc040) is
+#         INSIDE 12dc623102..2a6c204570 -- post-merge the pick is redundant
+#         as CONTENT; entry 284's fork-side test unions ride the merged tree.
+#         The NCCL_GRAPH_REGISTER=0 needle below SURVIVES (upstream form in
+#         tree). ** THE NCCL NEEDLE FLAG: NCCL_GRAPH_REGISTER
 #         =0 is now setdefault'd on EVERY multi-rank graph-capable boot --
 #         THE 9.sh TP4 ARM TOO, not just TP2 ** (the narrow
 #         LM-head/pausable-pool triggers became
@@ -531,6 +535,19 @@
 #
 # =============================================================================
 # SECTION C -- MERGE #5 BOOKKEEPING (origin/main = f2d3188925 = +1,097 since
+#  [CONSUMED 2026-10-29: MERGE #5 TAKEN @ ae6ee527ba off 2a6c204570 =
+#   +1,120. C0a CLOSED (arrival evidence at its item); C1/C2/C3/C4/C5/C6
+#   ARRIVED -- their AT-MERGE semantics were executed per the dossier D-list
+#   in the merge commit message + entry 310; C9 VERIFIED OPT-IN (legacy key
+#   default, anti-needle in entry 310); C10 riders: #45090 TAKEN (zero .py
+#   readers, 2 upstream docs jsx still export the removed env -- operator-
+#   owed /root-harness check RECORDED HERE, unreadable from this seat);
+#   the 33-trailer dedupe families spot-verified IN-RANGE at merge: #44351
+#   @3b5ae4ea86 #44800 @f75232cb42 #44968 @bb1d4cddd9 #44158 @14ad64c411
+#   #44591 @44be30d216 #45213 @b326e8349d #44150 @9ab74b8517 #45923
+#   @3a62cdfb3d #46127 @a99eaf9a76 + the moe five (#44901 #44904 #44912
+#   #44913 #45289). B2..B6 RE-PLANT WORK IS NOT SECTION C -- it is entries
+#   310's owed-sessions list.]
 # 12dc623102; +662 since 1dd0f361b8). These arrive with the owed merge; the
 # actionable-now items are DOCS-ONLY (integrator writes them into stack.txt so
 # a future merge does not auto-resolve them wrong). DO NOT port the series.
@@ -541,6 +558,15 @@
 #      rescan top-k family -- the follow-up our entry-28 note named), #39727,
 #      #43927, #44849 merged INSIDE 12dc623102..417606527d but are absent from
 #      the 227 skip record. State: TODO (OPEN -- gaps still outstanding)
+#      ** MERGE-#5 UPDATE 2026-10-29: CLOSED -- all four gap names ARRIVED
+#      with the fifth merge (verified by message-scan against 2a6c204570:
+#      #37625 @ c5bf3aafbc, #37941 @ 86f4ede4fb, #44849 @ 3fc08b939a
+#      [--enable-hicache alias now EXISTS server_args-side], #39727 @
+#      9ea5472833 [page_unified + unified L3 key, VERIFIED OPT-IN: the
+#      default file-key suffix stays the legacy _<model>_<tp_rank>_<tp_size>
+#      composition at HiCacheFile._init_config_suffix -- C9 store-purge
+#      threat CLOSED for /root/hicache_store warm contents]). #43927 had
+#      landed ahead as entry 259. State now: DONE.
 #      [10-28 PARTIAL: #43927 LANDED ahead of merge #5 as entry 259 (port-
 #       autotune) -- gap correction for it is IN the ledger; only #43927 and
 #       #44849 count PARTIALLY SATISFIED so far (#44849 is carried in the
