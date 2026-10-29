@@ -1647,5 +1647,3 @@ def unwrap_shm_features(obj):
                     item.precomputed_embeddings
                 )
     return obj
-
-# TODO(merge5): re-plant entry 263 semantics (batch B4); fork hunks saved /tmp/opencode/merge5-dossier/replant/python__sglang__srt__managers__mm_utils.py.fork-hunks.patch

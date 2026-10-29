@@ -53,6 +53,7 @@ from sglang.srt.model_executor.forward_batch_info import (  # noqa: E402
 from sglang.srt.runtime_context import get_context  # noqa: E402
 from sglang.srt.sampling.sampling_params import SamplingParams  # noqa: E402
 from sglang.srt.speculative.spec_info import SpeculativeAlgorithm  # noqa: E402
+from sglang.test.tree_slots import tree_slots_of  # noqa: E402
 
 register_cpu_ci(est_time=15, suite="base-a-test-cpu")
 
@@ -122,13 +123,19 @@ class _Lifecycle:
             kvcache=kv_pool,
             need_sort=False,
         )
+        # #46970x: the configurator binds the KV allocator to the request
+        # table's StateStorage (kv_cache_configurator.runner_state); a manual
+        # classic build must do the same or ensure_mamba_capacity has no slots.
+        self.allocator.state = self.req_to_token_pool.state
         self.tree = UnifiedRadixCache(
             params=CacheInitParams(
                 req_to_token_pool=self.req_to_token_pool,
                 token_to_kv_pool_allocator=self.allocator,
                 page_size=1,
                 disable=False,
-                tree_components=(ComponentType.FULL, ComponentType.MAMBA),
+                # #46970x: the slots drive the components; the FULL+MAMBA pair
+                # below is the same tree the old tree_components kwarg built.
+                tree_slots=tree_slots_of((ComponentType.FULL, ComponentType.MAMBA)),
                 tree_core_backend="python",
                 enable_mamba_extra_buffer=extra_buffer,
                 enable_mamba_extra_buffer_lazy=lazy,
@@ -148,6 +155,9 @@ class _Lifecycle:
         backend.kernel_dispatcher = SimpleNamespace(extend_uses_state_checkpoints=False)
         backend.enable_unified_memory = False
         backend.forward_metadata = None
+        # #46970x: mamba ids feed the kernels through the runner-id space; the
+        # classic slot allocator hands out ids the pool indexes directly.
+        backend._state_ids = SimpleNamespace(ids=lambda t: t, read_v2p=None)
         self.backend = backend
 
     def new_req(self, rid: str, tokens: list[int], *, max_new_tokens: int) -> Req:

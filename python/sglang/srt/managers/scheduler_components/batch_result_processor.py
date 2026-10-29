@@ -94,6 +94,14 @@ def _get_speculative_output_stride(result: GenerationBatchResult) -> int:
     return stride
 
 
+def _logprob_rows_to_host(rows: List) -> List:
+    # Producers emit per-row mixed types: tensors for rows that were computed,
+    # [] placeholder lists for requests that did not request these logprobs
+    # (logprob_processor.get_token_ids_logprobs_raw None branches). copy_to_cpu
+    # passes both through; convert tensors only, mirroring managers/utils.py.
+    return [r.tolist() if torch.is_tensor(r) else r for r in rows]
+
+
 @dataclass(kw_only=True, slots=True, frozen=True)
 class SchedulerBatchResultProcessor:
     is_generation: bool
@@ -304,6 +312,7 @@ class SchedulerBatchResultProcessor:
 
             # Check finish conditions
             logprob_pt = 0
+            decoding_req_ids = None
 
             for i, (req, next_token_id) in enumerate(zip(batch.reqs, next_token_ids)):
                 should_commit_output = (
@@ -370,10 +379,16 @@ class SchedulerBatchResultProcessor:
                         req.update_finish_state()
                     # A mixed spec tail committed its pending bonus token; advance
                     # so the next spec prepare_for_decode reserves from the right base.
+                    if decoding_req_ids is None:
+                        decoding_req_ids = (
+                            {id(r) for r in batch.decoding_reqs}
+                            if batch.decoding_reqs
+                            else ()
+                        )
+                    is_decoding_req = id(req) in decoding_req_ids
                     if (
                         not req.finished()
-                        and batch.decoding_reqs
-                        and req in batch.decoding_reqs
+                        and is_decoding_req
                         and not batch.spec_algorithm.is_none()
                     ):
                         req.kv.kv_committed_len += 1
@@ -383,7 +398,7 @@ class SchedulerBatchResultProcessor:
                             self._maybe_collect_indexer_topk(req)
                         if get_memory().enable_hisparse:
                             self.hisparse_coordinator.request_finished(req)
-                        if batch.decoding_reqs and req in batch.decoding_reqs:
+                        if is_decoding_req:
                             self._prepare_kv_cache_release(req)
                         release_kv_cache(
                             req,
@@ -391,7 +406,7 @@ class SchedulerBatchResultProcessor:
                             checkpoint=discard_finish_reason is None,
                         )
                         req.time_stats.set_completion_time()
-                    elif not batch.decoding_reqs or req not in batch.decoding_reqs:
+                    elif not is_decoding_req:
                         checkpoint_kv_cache(req, self.tree_cache)
                         if get_memory().enable_hisparse:
                             self.hisparse_coordinator.admit_request_into_staging(req)
@@ -551,16 +566,16 @@ class SchedulerBatchResultProcessor:
                     logits_output.input_token_logprobs.tolist()
                 )
             if logits_output.next_token_top_logprobs_val:
-                logits_output.next_token_top_logprobs_val = [
-                    v.tolist() for v in logits_output.next_token_top_logprobs_val
-                ]
-                logits_output.next_token_top_logprobs_idx = [
-                    x.tolist() for x in logits_output.next_token_top_logprobs_idx
-                ]
+                logits_output.next_token_top_logprobs_val = _logprob_rows_to_host(
+                    logits_output.next_token_top_logprobs_val
+                )
+                logits_output.next_token_top_logprobs_idx = _logprob_rows_to_host(
+                    logits_output.next_token_top_logprobs_idx
+                )
             if logits_output.next_token_token_ids_logprobs_val:
-                logits_output.next_token_token_ids_logprobs_val = [
-                    v.tolist() for v in logits_output.next_token_token_ids_logprobs_val
-                ]
+                logits_output.next_token_token_ids_logprobs_val = _logprob_rows_to_host(
+                    logits_output.next_token_token_ids_logprobs_val
+                )
 
     def _apply_prefill_logprobs(
         self,
@@ -1134,17 +1149,17 @@ class SchedulerBatchResultProcessor:
         if batch.return_logprob:
             next_token_logprobs = logits_output.next_token_logprobs.tolist()
             if logits_output.next_token_top_logprobs_val:
-                logits_output.next_token_top_logprobs_val = [
-                    v.tolist() for v in logits_output.next_token_top_logprobs_val
-                ]
-                logits_output.next_token_top_logprobs_idx = [
-                    x.tolist() for x in logits_output.next_token_top_logprobs_idx
-                ]
+                logits_output.next_token_top_logprobs_val = _logprob_rows_to_host(
+                    logits_output.next_token_top_logprobs_val
+                )
+                logits_output.next_token_top_logprobs_idx = _logprob_rows_to_host(
+                    logits_output.next_token_top_logprobs_idx
+                )
 
             if logits_output.next_token_token_ids_logprobs_val:
-                logits_output.next_token_token_ids_logprobs_val = [
-                    v.tolist() for v in logits_output.next_token_token_ids_logprobs_val
-                ]
+                logits_output.next_token_token_ids_logprobs_val = _logprob_rows_to_host(
+                    logits_output.next_token_token_ids_logprobs_val
+                )
         return next_token_ids, next_token_logprobs
 
     def _apply_decode_logprobs(
@@ -1693,5 +1708,3 @@ class SchedulerBatchResultProcessor:
             kv_storage_of(
                 batch.req_to_token_pool, batch.token_to_kv_pool_allocator
             ).release_tracking_slot(req, other_idx)
-
-# TODO(merge5): re-plant entry 95,169,262,263,265 semantics (batch B4); fork hunks saved /tmp/opencode/merge5-dossier/replant/python__sglang__srt__managers__scheduler_components__batch_result_processor.py.fork-hunks.patch

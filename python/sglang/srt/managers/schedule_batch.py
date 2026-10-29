@@ -4169,5 +4169,3 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
 class NextBatchPlan(msgspec.Struct):
     batch_to_run: Optional[ScheduleBatch]
     running_batch: ScheduleBatch
-
-# TODO(merge5): re-plant entry 94,119,122,215,262,263,265 semantics (batch B4); fork hunks in /tmp/opencode/merge5-dossier/replant/python__sglang__srt__managers__schedule_batch.py.fork-hunks.patch
