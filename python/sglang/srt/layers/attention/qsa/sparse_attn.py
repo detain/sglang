@@ -518,6 +518,10 @@ def _sparse_gqa_chunk_prefill(
         # Same bound as the non-chunked kernel: kv_len is this request's
         # packed K/V length, so an index at or past it is another request's.
         valid = (token >= 0) & (token < kv_len)
+        if SLOT_INDICES:
+            # Upstream fold: 64-bit -- slot * sk_n overflows int32 on a pool
+            # of a few M tokens.
+            token = token.to(tl.int64)
         keys = tl.load(
             k_base + token[None, :] * sk_n + offs_d[:, None] * sk_d,
             mask=valid[None, :],
@@ -2014,5 +2018,3 @@ __all__ = [
     "sparse_gqa_packed_decode_with_lse_triton",
     "sparse_gqa_paged_prefill_triton",
 ]
-
-# TODO(merge5): fold upstream changes dropped here (entries 1,4,6,10,12,16,76,86,87,166,200,210,212,213 own this file; batch B5)

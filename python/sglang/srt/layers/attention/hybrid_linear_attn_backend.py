@@ -2030,4 +2030,3 @@ class ShortConvHybridAttnBackend(HybridLinearAttnBackend):
     def conv_state_metadata(self, layer_id: int, forward_batch: ForwardBatch):
         return self.short_conv_backend.conv_state_metadata(layer_id, forward_batch)
 
-# TODO(merge5): fold upstream changes dropped here (entries 102,176,203 own this file; batch B5)

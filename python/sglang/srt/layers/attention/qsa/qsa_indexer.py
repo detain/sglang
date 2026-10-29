@@ -42,6 +42,7 @@ from sglang.srt.layers.cp.utils import (
     get_cp_strategy,
 )
 from sglang.srt.layers.layernorm import GemmaRMSNorm
+from sglang.srt.model_executor.runner_utils.capture_mode import get_is_capture_mode
 from sglang.srt.layers.linear import ReplicatedLinear
 from sglang.srt.layers.rotary_embedding.utils import apply_rotary_emb
 from sglang.srt.layers.utils.multi_platform import MultiPlatformOp
@@ -209,6 +210,7 @@ class QSAIndexer(MultiPlatformOp):
         pool=None,
         cache_loc: torch.Tensor | None = None,
         q_heads_padded: int | None = None,
+        ensure_cos_sin_cache: bool = True,
     ) -> tuple[torch.Tensor, torch.Tensor, bool]:
         qk, _ = self.index_qk_proj(hidden_states)
         token_k = qk[:, self.index_n_heads * self.index_head_dim :].reshape(
@@ -224,9 +226,20 @@ class QSAIndexer(MultiPlatformOp):
                 qsa_index_q_norm_rope_store,
             )
 
-            # ModelRunner expands every RoPE cache to the serving context
-            # bound after loading and before any graph capture. Reading the
-            # maximum position back to the host here serializes every QSA layer.
+            # Upstream fold, reconciled with the fork's load-time reservation:
+            # ModelRunner expands every RoPE cache to the serving context bound
+            # after loading and before any graph capture, so the guarded host
+            # read below is an out-of-capture sizing SAFETY NET (hasattr-gated,
+            # skipped during capture); the CP caller passes
+            # ensure_cos_sin_cache=False to stay device-async on hot paths.
+            if (
+                ensure_cos_sin_cache
+                and not get_is_capture_mode()
+                and hasattr(self.rotary_emb, "_ensure_cos_sin_cache_length")
+            ):
+                self.rotary_emb._ensure_cos_sin_cache_length(
+                    int(positions.max().item())
+                )
             key_state_buffer = pool.get_qsa_key_state_buffer(self.layer_id)
             fused_state_slots = cache_loc[: qk.shape[0]].long()
             assert_qsa_indices_in_bounds(
@@ -256,7 +269,9 @@ class QSAIndexer(MultiPlatformOp):
         q = self.q_layernorm(q_raw.reshape(-1, self.index_head_dim)).reshape(
             -1, self.index_n_heads, self.index_head_dim
         )
-        q = self.apply_rope(positions, q)
+        # Upstream fold: the flag forwards so apply_rope's guarded sizing
+        # safety net honors the CP caller's async intent.
+        q = self.apply_rope(positions, q, ensure_cos_sin_cache=ensure_cos_sin_cache)
         if pool is not None:
             q = q.to(pool.qsa_compressed_dtype)
         return q, token_k, False
@@ -654,8 +669,15 @@ class QSAIndexer(MultiPlatformOp):
         )
         if num_positions != tensor.shape[0]:
             raise ValueError("QSA RoPE positions must match the token dimension")
-        # RoPE capacity is reserved once by ModelRunner after model loading.
-        # Keep this per-layer path device-asynchronous.
+        # Upstream fold: guarded out-of-capture sizing safety net (see
+        # project_qk); the CP caller's ensure_cos_sin_cache=False keeps the
+        # hot path device-async.
+        if (
+            ensure_cos_sin_cache
+            and not get_is_capture_mode()
+            and hasattr(self.rotary_emb, "_ensure_cos_sin_cache_length")
+        ):
+            self.rotary_emb._ensure_cos_sin_cache_length(int(positions.max().item()))
 
         # position_cos/position_sin repeat cos/sin to the full rotary width;
         # apply_rotary_emb consumes one half.
@@ -1266,5 +1288,3 @@ class QSAIndexer(MultiPlatformOp):
 __all__ = [
     "QSAIndexer",
 ]
-
-# TODO(merge5): fold upstream changes dropped here (entries 15,32,34,35,118,125,166,184,200 own this file; batch B5)

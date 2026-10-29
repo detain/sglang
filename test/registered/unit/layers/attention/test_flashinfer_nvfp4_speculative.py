@@ -31,13 +31,17 @@ def _make_backend():
     updater.update = create_autospec(updater.update_single_wrapper)
     backend.indices_updater_prefill = updater
     backend.use_sliding_window_kv_pool = False
-    backend.prefill_split_tile_size = None
+    backend.dispatch_reason = None
     backend.num_wrappers = 1
+    backend.prefill_split_tile_size = None
     backend.prefill_uses_dequant_workspace = True
     backend.kv_cache_quant_method = SimpleNamespace(needs_global_scale=lambda: True)
     backend.req_to_token_pool = SimpleNamespace(
         req_to_token=torch.arange(64, dtype=torch.int32).view(2, 32)
     )
+    # Post-#46970x store seam: backend.kv_layers derives from the pool's
+    # layer_router; writes go through the per-layer KVLayer's store.
+    kv_layer = Mock()
     backend.prefill_wrappers_paged = [Mock()]
     backend.prefill_wrappers_verify = [Mock()]
     backend.prefill_wrappers_ragged = [Mock()]
@@ -50,14 +54,15 @@ def _make_backend():
     backend.cpu_req_pool_indices = None
     pool_methods = object.__new__(MHATokenToKVPool)
     backend.token_to_kv_pool = SimpleNamespace(
+        layer_router=SimpleNamespace(layer=lambda layer_id: kv_layer),
         get_flashinfer_speculative_dequant_workspace_kv_buffer=create_autospec(
             pool_methods.get_flashinfer_speculative_dequant_workspace_kv_buffer
         ),
         get_flashinfer_dequant_workspace_kv_buffer=Mock(
             side_effect=AssertionError("speculative forward used prompt workspace")
         ),
-        set_kv_buffer=create_autospec(pool_methods.set_kv_buffer),
     )
+    backend.kv_layer_store = kv_layer
     return backend
 
 
@@ -78,8 +83,9 @@ def _make_batch(mode, explicit_prefix):
         encoder_lens=None,
         out_cache_loc=torch.tensor([12, 13, 14, 21, 22, 23], dtype=torch.int32),
         out_cache_loc_is_physical=True,
-        kv_loc_plan=object(),
+        iteration_ids=object(),
         spec_info=SimpleNamespace(num_tokens_per_req=width, ragged_verify_layout=None),
+        ragged_verify_layout=None,
     )
 
 
@@ -98,7 +104,7 @@ def test_speculative_metadata_and_forward_use_physical_workspace(mode, explicit_
     backend.init_forward_metadata(batch)
 
     update_kwargs = backend.indices_updater_prefill.update.call_args.kwargs
-    assert update_kwargs["plan"] is batch.kv_loc_plan
+    assert update_kwargs["plan"] is batch.iteration_ids
     assert update_kwargs["spec_info"] is batch.spec_info
     assert update_kwargs["use_ragged"] is False
     expected_wrappers = (
@@ -146,7 +152,7 @@ def test_speculative_metadata_and_forward_use_physical_workspace(mode, explicit_
     assert args[7] == batch.spec_info.num_tokens_per_req
     assert args[8] == (3 if mode.is_draft_extend_v2() else 0)
     pool.get_flashinfer_dequant_workspace_kv_buffer.assert_not_called()
-    write_loc = pool.set_kv_buffer.call_args.args[1]
+    write_loc = backend.kv_layer_store.store.call_args.args[1]
     assert write_loc.loc is batch.out_cache_loc
     assert write_loc.physical
     assert expected_wrappers[0].forward.call_args.args[1] is workspace
@@ -164,7 +170,7 @@ def test_speculative_graph_metadata_passes_location_plan(mode):
     backend.init_forward_metadata_out_graph(batch)
 
     update_kwargs = backend.indices_updater_prefill.update.call_args.kwargs
-    assert update_kwargs["plan"] is batch.kv_loc_plan
+    assert update_kwargs["plan"] is batch.iteration_ids
     assert update_kwargs["use_ragged"] is False
     expected_wrappers = (
         backend.prefill_cuda_graph_metadata[batch.batch_size]
@@ -194,7 +200,7 @@ def test_non_quantized_draft_extend_preserves_ragged_metadata():
     assert update_args.args[4] is batch.extend_prefix_lens
     assert update_args.kwargs["spec_info"] is None
     assert update_args.kwargs["use_ragged"] is True
-    assert update_args.kwargs["plan"] is batch.kv_loc_plan
+    assert update_args.kwargs["plan"] is batch.iteration_ids
     assert backend.forward_metadata.use_ragged is True
 
 

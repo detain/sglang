@@ -4994,7 +4994,12 @@ class DeepseekV4ForCausalLM(nn.Module):
 
     def _setup_fp8_wo_a_scales(self, is_nextn: bool) -> None:
         if _FP8_WO_A_UE8M0:
-            from deep_gemm import transform_sf_into_required_layout
+            # Guarded wrapper import (entry-163 sibling of mega_moe's): raw
+            # deep_gemm breaks import-only surfaces (this file's CPU tests)
+            # on seats without the wheel; the wrapper shims when absent.
+            from sglang.srt.layers.deep_gemm_wrapper import (
+                transform_sf_into_required_layout,
+            )
 
         if is_nextn:
             layers = [self.model.decoder]
@@ -5793,4 +5798,3 @@ def _fuse_deepseek_v4_wqkv_a_pair(
         return q
     return torch.cat([q, kv], dim=0)
 
-# TODO(merge5): re-plant entry 57,176 semantics (batch B5); fork hunks saved /tmp/opencode/merge5-dossier/replant/python__sglang__srt__models__deepseek_v4.py.fork-hunks.patch

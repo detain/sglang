@@ -1946,4 +1946,3 @@ class Glm5NextForConditionalGeneration(nn.Module):
 
 EntryClass = [Glm5NextForConditionalGeneration]
 
-# TODO(merge5): fold upstream changes dropped here (entries 176 own this file; batch B5)

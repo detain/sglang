@@ -1040,6 +1040,45 @@ class FlashInferAttnBackend(AttentionBackend):
                 False,
                 swa_out_cache_loc=swa_out_cache_loc,
             )
+        elif (
+            forward_batch.forward_mode.is_draft_extend_v2()
+            and self.prefill_uses_dequant_workspace
+        ):
+            # Entry-175, re-planted: the NVFP4 draft-extend keeps the physical
+            # workspace plan (see forward_extend) instead of the ragged path.
+            spec_info = forward_batch.spec_info
+            if spec_info is None or spec_info.num_tokens_per_req <= 0:
+                raise RuntimeError(
+                    "FlashInfer draft extend requires speculative metadata with "
+                    "num_tokens_per_req > 0."
+                )
+            prefix_lens = forward_batch.extend_prefix_lens
+            if prefix_lens is None:
+                prefix_lens = forward_batch.seq_lens - spec_info.num_tokens_per_req
+
+            # Draft extend uses the same physical-slot page table as target
+            # verification. It intentionally ignores dq_page_table and the CPU
+            # mirrors owned by prompt/chunk prefill; those may remain bound to
+            # a capture-stable full-prefill graph.
+            self.indices_updater_prefill.update(
+                forward_batch.req_pool_indices,
+                forward_batch.seq_lens,
+                forward_batch.seq_lens_cpu,
+                forward_batch.seq_lens_sum,
+                prefix_lens,
+                prefill_wrappers=self.prefill_wrappers_paged,
+                use_ragged=False,
+                encoder_lens=forward_batch.encoder_lens,
+                spec_info=spec_info,
+                fixed_split_size=self.prefill_split_tile_size,
+                plan=forward_batch.iteration_ids,
+            )
+            self.forward_metadata = PrefillMetadata(
+                self.prefill_wrappers_paged,
+                False,
+                False,
+                swa_out_cache_loc=swa_out_cache_loc,
+            )
         else:
             prefix_lens = forward_batch.extend_prefix_lens
 
@@ -1327,7 +1366,14 @@ class FlashInferAttnBackend(AttentionBackend):
         spec_info: Optional[SpecInput],
     ) -> None:
         if forward_mode.is_decode_or_idle():
-            decode_wrappers = self._create_decode_wrappers(bs, num_tokens)
+            # Entry-233 (#45092), re-planted: a batch size captured more than
+            # once (attention graph variants, LoRA / no-LoRA) must share one set
+            # of wrappers: replay plans only decode_cuda_graph_metadata[bs], so
+            # a fresh set per capture leaves the earlier graphs reading plans
+            # nobody refreshes.
+            decode_wrappers = self.decode_cuda_graph_metadata.get(
+                bs
+            ) or self._create_decode_wrappers(bs, num_tokens)
             self.decode_cuda_graph_metadata[bs] = decode_wrappers
             self.forward_metadata = DecodeMetadata(decode_wrappers)
         elif forward_mode.is_target_verify() or forward_mode.is_dllm_extend():
@@ -1336,7 +1382,9 @@ class FlashInferAttnBackend(AttentionBackend):
                 and spec_info is not None
                 and getattr(spec_info, "custom_mask", None) is not None
             )
-            prefill_wrappers = self._create_prefill_wrappers(bs, use_custom_mask)
+            prefill_wrappers = self.prefill_cuda_graph_metadata.get(
+                bs
+            ) or self._create_prefill_wrappers(bs, use_custom_mask)
             self.prefill_cuda_graph_metadata[bs] = prefill_wrappers
             self.forward_metadata = PrefillMetadata(
                 prefill_wrappers, forward_mode.is_dllm_extend(), False
@@ -1396,18 +1444,62 @@ class FlashInferAttnBackend(AttentionBackend):
         # We perform dequant for chunk prefill/cache reuse.
         pool = self.token_to_kv_pool
         if self.prefill_uses_dequant_workspace:
-            kv_cache = pool.get_flashinfer_dequant_workspace_kv_buffer(
-                layer,
-                self.req_to_token_pool.req_to_token,
-                self.cpu_req_pool_indices,
-                forward_batch.extend_prefix_lens_cpu,
-                forward_batch.extend_seq_lens_cpu,
-                self.page_size,
-                prepare_workspace=self.dq_page_table is not None,
-                use_ragged=self.forward_metadata.use_ragged,
-                k_cur=k,
-                v_cur=v,
-            )
+            if (
+                forward_batch.forward_mode.is_target_verify()
+                or forward_batch.forward_mode.is_draft_extend_v2()
+            ):
+                # Entry-175 (#43356), re-planted: speculative metadata indexes
+                # physical KV slots, so verify/draft-extend get their own
+                # graph-safe workspace instead of the prompt page-table one.
+                phase = (
+                    "target verification"
+                    if forward_batch.forward_mode.is_target_verify()
+                    else "draft extend"
+                )
+                if k is None or v is None:
+                    raise RuntimeError(f"NVFP4 {phase} requires current K/V tensors.")
+                spec_info = forward_batch.spec_info
+                if spec_info is None or spec_info.num_tokens_per_req <= 0:
+                    raise RuntimeError(
+                        f"NVFP4 {phase} requires speculative metadata with "
+                        "num_tokens_per_req > 0."
+                    )
+                cache_loc = KVWriteLoc.for_layer(
+                    forward_batch,
+                    layer,
+                    swa_loc=self.forward_metadata.swa_out_cache_loc,
+                ).loc
+                if cache_loc is None:
+                    raise RuntimeError(f"NVFP4 {phase} requires KV write locations.")
+                prefix_len_delta = (
+                    spec_info.num_tokens_per_req
+                    if forward_batch.forward_mode.is_draft_extend_v2()
+                    else 0
+                )
+                kv_cache = pool.get_flashinfer_speculative_dequant_workspace_kv_buffer(
+                    layer,
+                    self.req_to_token_pool.req_to_token,
+                    forward_batch.req_pool_indices,
+                    forward_batch.seq_lens,
+                    k,
+                    v,
+                    cache_loc,
+                    spec_info.num_tokens_per_req,
+                    prefix_len_delta,
+                )
+            else:
+                kv_cache = pool.get_flashinfer_dequant_workspace_kv_buffer(
+                    layer,
+                    self.req_to_token_pool.req_to_token,
+                    self.cpu_req_pool_indices,
+                    forward_batch.extend_prefix_lens_cpu,
+                    forward_batch.extend_seq_lens_cpu,
+                    self.page_size,
+                    prepare_workspace=self.dq_page_table is not None,
+                    use_ragged=self.forward_metadata.use_ragged,
+                    k_cur=k,
+                    v_cur=v,
+                )
         else:
             kv_cache = self.kv_layers.read(layer.layer_id).kv()
 
@@ -1438,9 +1530,15 @@ class FlashInferAttnBackend(AttentionBackend):
                 sm_scale=layer.scaling,
                 window_left=paged_window_left,
                 logits_soft_cap=logits_soft_cap,
-                # Must use _float to avoid device-to-host copy that breaks cuda graph capture.
-                k_scale=layer.k_scale_float,
-                v_scale=layer.v_scale_float,
+                # Must use _float to avoid a device-to-host copy that breaks
+                # CUDA-graph capture. Entry-208 (#43524), re-planted: the
+                # dequant workspace already contains globally scaled values.
+                k_scale=(
+                    None if self.prefill_uses_dequant_workspace else layer.k_scale_float
+                ),
+                v_scale=(
+                    None if self.prefill_uses_dequant_workspace else layer.v_scale_float
+                ),
             )
         else:
             # If `k`/`v` are not explicitly provided, fall back to the KV cache stored in
@@ -1500,9 +1598,20 @@ class FlashInferAttnBackend(AttentionBackend):
                     sm_scale=layer.scaling,
                     window_left=paged_window_left,
                     logits_soft_cap=logits_soft_cap,
-                    # Must use _float to avoid device-to-host copy that breaks cuda graph capture.
-                    k_scale=layer.k_scale_float,
-                    v_scale=layer.v_scale_float,
+                    # Must use _float to avoid device-to-host copy that breaks
+                    # cuda graph capture. Entry-208 (#43524), re-planted: the
+                    # cached prefix in the workspace has already been globally
+                    # scaled by the dequant restore.
+                    k_scale=(
+                        None
+                        if self.prefill_uses_dequant_workspace
+                        else layer.k_scale_float
+                    ),
+                    v_scale=(
+                        None
+                        if self.prefill_uses_dequant_workspace
+                        else layer.v_scale_float
+                    ),
                 )
 
                 o, _ = _safe_merge_state(o1, s1, o2, s2)
@@ -2846,5 +2955,3 @@ def should_use_tensor_core(
         return gqa_group_size >= 4
     else:
         return False
-
-# TODO(merge5): re-plant entry 175,178,192,194,208,233 semantics (batch B5); fork hunks saved /tmp/opencode/merge5-dossier/replant/python__sglang__srt__layers__attention__flashinfer_backend.py.fork-hunks.patch

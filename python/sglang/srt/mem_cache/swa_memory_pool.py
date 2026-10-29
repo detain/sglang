@@ -440,6 +440,19 @@ class SWAKVPool(BaseSWAKVPool):
             layer, *args, layer_id_override=layer_id_pool, **kwargs
         )
 
+    def get_flashinfer_speculative_dequant_workspace_kv_buffer(
+        self, layer, *args, **kwargs
+    ):
+        # Entry-175 pair of the decode twin: speculative metadata indexes
+        # physical slots; route to the layer's own sub-pool like the wrapper's
+        # other workspace accessors do.
+        self._wait_for_layer(layer.layer_id)
+        layer_id_pool, is_swa_layer = self.layers_mapping[layer.layer_id]
+        pool = self.swa_kv_pool if is_swa_layer else self.full_kv_pool
+        return pool.get_flashinfer_speculative_dequant_workspace_kv_buffer(
+            layer, *args, layer_id_override=layer_id_pool, **kwargs
+        )
+
     def set_mla_kv_buffer(
         self,
         layer: RadixAttention,

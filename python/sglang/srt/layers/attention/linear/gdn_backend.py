@@ -48,6 +48,10 @@ from sglang.srt.runtime_context import (
     get_schedule,
     mamba_cache_chunk_size,
 )
+from sglang.srt.speculative.spec_utils import (
+    fold_gdn_replayssm_history_for_extend,
+    gdn_replayssm_circular_active,
+)
 from sglang.srt.utils import is_cpu, is_cuda, is_hip, is_npu, is_xpu
 from sglang.srt.utils.common import is_pin_memory_available, rank0_log
 
@@ -553,6 +557,7 @@ class GDNAttnBackend(MambaAttnBackendBase):
         super().__init__(model_runner)
         self.enable_mis = get_exec().features.enable_mis
         self.mis_metadata: Optional[GDNMISMetadata] = None
+        self._replayssm_fold_req_pool_indices: Optional[torch.Tensor] = None
         self.conv_states_shape = self.state_pool.mamba_cache.conv[0].shape
         if not is_cpu() and not is_npu():
             assert self.conv_states_shape[-1] < FLA_CHUNK_SIZE, (
@@ -560,6 +565,9 @@ class GDNAttnBackend(MambaAttnBackendBase):
             )
 
         backends = model_runner.linear_attn_backends
+        self._replayssm_verify_num_stages = (
+            envs.SGLANG_GDN_REPLAYSSM_VERIFY_NUM_STAGES.get()
+        )
         validate_gdn_mis_backend(backends.prefill)
         self.linear_attn_backends = backends
         self.kernel_dispatcher = GDNKernelDispatcher(
@@ -573,10 +581,34 @@ class GDNAttnBackend(MambaAttnBackendBase):
             )
         )
         self._use_strided_target_verify_qkv = False
+        # Checked once at the first lossless verify (see
+        # _assert_lossless_verify_kernel).
+        self._lossless_kernel_checked = False
         # A prefill batch never holds more requests than the pool.
         self.prefill_graph_max_seqs = min(
             self.req_to_token_pool.size, envs.SGLANG_GDN_PREFILL_GRAPH_MAX_SEQS.get()
         )
+
+    def _assert_lossless_verify_kernel(self):
+        """Only the Triton verify kernel writes the (u, k, g) tuple ring.
+
+        The FlashInfer verify kernel -- picked by GDNKernelDispatcher when
+        --linear-attn-decode-backend flashinfer is set and it supports MTP
+        verify -- takes ``**kwargs`` and would silently DROP the three tuple
+        buffers: the ring stays zero, the replay commits a wrong state, and
+        nothing fails. Fail here instead.
+
+        Runs exactly once: this sits in forward_extend, i.e. once per GDN layer
+        per verify step, so the isinstance must not stay on the hot path.
+        """
+        kernel = self.kernel_dispatcher.verify_kernel
+        if not isinstance(kernel, TritonGDNKernel):
+            raise RuntimeError(
+                "--enable-linear-lossless-verify requires the Triton GDN verify "
+                f"kernel, but the dispatcher selected {type(kernel).__name__}. "
+                "Pass --linear-attn-verify-backend triton."
+            )
+        self._lossless_kernel_checked = True
 
     def supports_prefill_graph_extend(self) -> bool:
         # Read here, not in __init__: the support check reads model_config.
@@ -717,6 +749,16 @@ class GDNAttnBackend(MambaAttnBackendBase):
         self.prefill_graph_metadata = None
         super().init_forward_metadata(forward_batch)
         self._init_target_verify_qkv_routing(forward_batch)
+        # Rows whose circular ReplaySSM history must reach `temporal` before
+        # this forward's first GDN layer; folded on the forward stream there.
+        self._replayssm_fold_req_pool_indices = (
+            forward_batch.req_pool_indices
+            if (
+                forward_batch.forward_mode in (ForwardMode.EXTEND, ForwardMode.MIXED)
+                and gdn_replayssm_circular_active(self.req_to_token_pool)
+            )
+            else None
+        )
         self.mis_metadata = None
         if forward_batch.multi_item_delimiter_indices is not None:
             if not self.enable_mis:
@@ -1246,6 +1288,11 @@ class GDNAttnBackend(MambaAttnBackendBase):
                 cache_indices[: query_start_loc.shape[0] - 1] >= 0,
                 self.req_to_token_pool.size,
             )
+            # Lossless verify writes (u, k, g) tuples instead of the full
+            # [HV, V, K] state cache (None unless --enable-linear-lossless-verify).
+            u_tuple_cache = mamba_cache_params.intermediate_ssm_u
+            k_tuple_cache = mamba_cache_params.intermediate_ssm_k
+            g_tuple_cache = mamba_cache_params.intermediate_ssm_g
             mamba_pool = self.state_pool
             use_replayssm_fold = (
                 mamba_cache_params.replayssm_rawv is not None
@@ -1385,12 +1432,26 @@ class GDNAttnBackend(MambaAttnBackendBase):
                     draft_token_num=forward_batch.spec_info.draft_token_num,
                 )
             else:
-                # The recurrent fallback needs the per-draft snapshots, which
-                # the pool gates OFF under --enable-linear-replayssm-spec (the
-                # same flag that makes `use_replayssm_spec` true above), so
-                # this branch is unreachable with a None buffer by
-                # construction -- keep it loud rather than silently frozen.
-                assert intermediate_state_cache is not None, (
+                # Under --enable-linear-lossless-verify the pool swaps the
+                # per-draft full-state snapshots for the (u, k, g) tuple ring,
+                # so the full-state buffer is None and the tuples are written.
+                _lossless = u_tuple_cache is not None
+                if _lossless:
+                    if not self._lossless_kernel_checked:
+                        self._assert_lossless_verify_kernel()
+                    # Runtime half of the topk == 1 gate: the replay follows
+                    # one linear chain and cannot honour tree parents.
+                    assert retrieve_parent_token is None, (
+                        "--enable-linear-lossless-verify got an EAGLE tree verify "
+                        "batch; it supports --speculative-eagle-topk 1 only."
+                    )
+                # The recurrent fallback needs the per-draft snapshots (or the
+                # lossless tuples), which the pool gates OFF under
+                # --enable-linear-replayssm-spec (the same flag that makes
+                # `use_replayssm_spec` true above), so this branch is
+                # unreachable with a None buffer by construction -- keep it
+                # loud rather than silently frozen.
+                assert _lossless or intermediate_state_cache is not None, (
                     "recurrent target_verify fallback requires intermediate_ssm, "
                     "which is not allocated under --enable-linear-replayssm-spec"
                 )
@@ -1410,8 +1471,18 @@ class GDNAttnBackend(MambaAttnBackendBase):
                     cache_steps=forward_batch.spec_info.draft_token_num,
                     retrieve_parent_token=retrieve_parent_token,
                     stable_rows=pp_spec_stable_rows_enabled(),
+                    u_states_buffer=u_tuple_cache,
+                    k_states_buffer=k_tuple_cache,
+                    g_states_buffer=g_tuple_cache,
                 )
         else:
+            if getattr(self, "_replayssm_fold_req_pool_indices", None) is not None:
+                # Once per forward (the fold covers every GDN layer), before
+                # any layer reads `temporal`.
+                fold_gdn_replayssm_history_for_extend(
+                    self.req_to_token_pool, self._replayssm_fold_req_pool_indices
+                )
+                self._replayssm_fold_req_pool_indices = None
             g, beta = self._prefill_gates(layer, a, b)
             h_track_buf = None
             if (
@@ -1772,8 +1843,9 @@ class GDNAttnBackend(MambaAttnBackendBase):
             # Capacity folds are committed once across every GDN layer after
             # acceptance; the active path is therefore a single launch/layer.
             launch_mode="verify",
+            num_stages=self._replayssm_verify_num_stages,
         )
         # Match the recurrent target_verify output shape (== value.shape).
         return out.reshape(value.shape)
 
-# TODO(merge5): re-plant entry 54,120,203 semantics (batch B5); fork hunks saved /tmp/opencode/merge5-dossier/replant/python__sglang__srt__layers__attention__linear__gdn_backend.py.fork-hunks.patch
+
