@@ -36,6 +36,8 @@ not the per-rank group membership logic.
 
 from __future__ import annotations
 
+import inspect
+import logging
 import sys
 from contextlib import nullcontext
 from unittest.mock import Mock, patch
@@ -463,6 +465,175 @@ def test_group_desc_none_normalized_to_anonymous():
     """group_name=None keeps the existing "anonymous" normalization, so the
     emitted descs must be anonymous:device / anonymous:cpu (not None:device)."""
     assert _read_group_descs(None) == ("anonymous:device", "anonymous:cpu")
+
+
+# ---------------------------------------------------------------------------
+# LLGUARD: refuse the LL allreduce on a group PCIe-IPC arms. Fork guard over
+# the entry-256 port of PR #39605; there is no upstream test to mirror, so
+# these follow the stub-coordinator style of this file and the sys.modules
+# stand-in style of test_pcie_ipc_ar.py.
+# ---------------------------------------------------------------------------
+
+_LL_LOGGER = "sglang.srt.distributed.parallel_state"
+_LL_MODULE = "sglang.srt.distributed.device_communicators.ll_allreduce"
+
+
+def _ll_stub_coordinator(pcie_ipc_eligible: bool, world_size: int = 2):
+    """A GroupCoordinator without __init__: the LL gate needs no live groups."""
+    coordinator = parallel_state.GroupCoordinator.__new__(
+        parallel_state.GroupCoordinator
+    )
+    coordinator.world_size = world_size
+    coordinator.pcie_ipc_eligible = pcie_ipc_eligible
+    coordinator.rank_in_group = 1
+    coordinator.cpu_group = Mock(name="cpu_group")
+    coordinator.device = torch.device("cpu")
+    return coordinator
+
+
+def _ll_module_stub():
+    """Stand in for ll_allreduce, whose extension needs CUDA to build."""
+    module = Mock(name="ll_allreduce")
+    comm = Mock(name="ll_comm")
+    module.LLAllReduce.return_value = comm
+    return module, comm
+
+
+def _ll_warnings(caplog):
+    return [
+        r.getMessage()
+        for r in caplog.records
+        if r.name == _LL_LOGGER and r.levelno >= logging.WARNING
+    ]
+
+
+def test_ll_allreduce_refused_when_pcie_ipc_armed(monkeypatch, caplog):
+    """SGLANG_LL_ALLREDUCE=1 must not build LL on a group PCIe-IPC arms.
+
+    Both claim the <=64 KiB captured-bf16 size class, and prod run scripts
+    export SGLANG_ENABLE_PCIE_IPC_ALLREDUCE=1 today, so a future LL arming
+    would silently double-claim it. The refusal warns naming BOTH envs and
+    leaves the LL communicator unbuilt -- not deferred, not disabled later.
+    """
+    monkeypatch.setenv("SGLANG_LL_ALLREDUCE", "1")
+    module, _ = _ll_module_stub()
+    coordinator = _ll_stub_coordinator(pcie_ipc_eligible=True)
+    with (
+        patch.dict(sys.modules, {_LL_MODULE: module}),
+        patch.object(parallel_state, "is_cuda_alike", return_value=True),
+        caplog.at_level(logging.WARNING, logger=_LL_LOGGER),
+    ):
+        assert coordinator._build_ll_allreduce("tp") is None
+    module.LLAllReduce.assert_not_called()
+    text = "\n".join(_ll_warnings(caplog))
+    assert "SGLANG_LL_ALLREDUCE" in text
+    assert "SGLANG_ENABLE_PCIE_IPC_ALLREDUCE" in text
+
+
+def test_ll_allreduce_still_builds_when_pcie_ipc_off(monkeypatch, caplog):
+    """The guard is inert when PCIe-IPC does not arm the group: entry-256
+    behavior -- LL builds on two CUDA-alike ranks -- is unchanged, and the
+    collision warning stays silent."""
+    monkeypatch.setenv("SGLANG_LL_ALLREDUCE", "1")
+    module, comm = _ll_module_stub()
+    coordinator = _ll_stub_coordinator(pcie_ipc_eligible=False)
+    with (
+        patch.dict(sys.modules, {_LL_MODULE: module}),
+        patch.object(parallel_state, "is_cuda_alike", return_value=True),
+        caplog.at_level(logging.WARNING, logger=_LL_LOGGER),
+    ):
+        assert coordinator._build_ll_allreduce("tp") is comm
+    module.LLAllReduce.assert_called_once_with(
+        coordinator.cpu_group, 1, 2, coordinator.device
+    )
+    assert _ll_warnings(caplog) == []
+
+
+@pytest.mark.parametrize(
+    "env_value,world_size,pcie_eligible",
+    [(None, 2, True), ("", 2, True), ("0", 2, True), ("1", 1, False), ("1", 4, True)],
+)
+def test_guard_inert_when_ll_was_never_requested(
+    monkeypatch, caplog, env_value, world_size, pcie_eligible
+):
+    """No warning and no construction unless the env asked for LL on two
+    GPUs: the refusal message is for an operator who armed a collision, not
+    for every group boot. The PCIe-armed rows are the adversarial ones --
+    the LL gate must fail on its own terms before the collision check."""
+    if env_value is None:
+        monkeypatch.delenv("SGLANG_LL_ALLREDUCE", raising=False)
+    else:
+        monkeypatch.setenv("SGLANG_LL_ALLREDUCE", env_value)
+    module, _ = _ll_module_stub()
+    coordinator = _ll_stub_coordinator(
+        pcie_ipc_eligible=pcie_eligible, world_size=world_size
+    )
+    with (
+        patch.dict(sys.modules, {_LL_MODULE: module}),
+        patch.object(parallel_state, "is_cuda_alike", return_value=True),
+        caplog.at_level(logging.WARNING, logger=_LL_LOGGER),
+    ):
+        assert coordinator._build_ll_allreduce("tp") is None
+    module.LLAllReduce.assert_not_called()
+    assert _ll_warnings(caplog) == []
+
+
+def test_ll_env_acceptance_is_exactly_one(monkeypatch):
+    """entry-256 reads the raw env with a == "1" check; pin that the guard
+    honors nothing else. An environ.py migration must change this test on
+    purpose, with the delta stated, never silently."""
+    monkeypatch.setenv("SGLANG_LL_ALLREDUCE", "true")
+    module, _ = _ll_module_stub()
+    coordinator = _ll_stub_coordinator(pcie_ipc_eligible=False)
+    with (
+        patch.dict(sys.modules, {_LL_MODULE: module}),
+        patch.object(parallel_state, "is_cuda_alike", return_value=True),
+    ):
+        assert coordinator._build_ll_allreduce("tp") is None
+    module.LLAllReduce.assert_not_called()
+
+
+def test_host_transport_needle_names_which_transport_won(caplog):
+    """Boot-verify: one INFO line per armed group naming the trio's state, so
+    operators can read a log line, not the env, for who serves the group."""
+    coordinator = _ll_stub_coordinator(pcie_ipc_eligible=True)
+    coordinator.host_staged_comm = None
+    coordinator.ll_comm = None  # the guard refused it on this armed group
+    with caplog.at_level(logging.INFO, logger=_LL_LOGGER):
+        coordinator._log_host_transport_state("tp")
+    assert (
+        "[AR] group tp host-memory transports: "
+        "PCIe-IPC=True host-staged=False LL=False" in caplog.text
+    )
+
+
+def test_host_transport_needle_shows_ll_serving_the_group(caplog):
+    coordinator = _ll_stub_coordinator(pcie_ipc_eligible=False)
+    coordinator.host_staged_comm = None
+    coordinator.ll_comm = Mock(name="ll_comm")
+    with caplog.at_level(logging.INFO, logger=_LL_LOGGER):
+        coordinator._log_host_transport_state("tp")
+    assert "PCIe-IPC=False host-staged=False LL=True" in caplog.text
+
+
+def test_host_transport_needle_absent_when_nothing_is_armed(caplog):
+    """Default boots stay quiet: nothing to verify when no opt-in transport
+    claims the group."""
+    coordinator = _ll_stub_coordinator(pcie_ipc_eligible=False)
+    coordinator.host_staged_comm = None
+    coordinator.ll_comm = None
+    with caplog.at_level(logging.INFO, logger=_LL_LOGGER):
+        coordinator._log_host_transport_state("tp")
+    assert "host-memory transports" not in caplog.text
+
+
+def test_ll_construction_and_needle_are_wired_into_init():
+    """The stubs above cannot catch __init__ dropping the guard or the needle
+    call. The repo's own test_the_deterministic_predicate_still_exists pins a
+    predicate's existence for exactly this blind spot; pin both call sites."""
+    init_src = inspect.getsource(parallel_state.GroupCoordinator.__init__)
+    assert "self._build_ll_allreduce(group_name)" in init_src
+    assert "self._log_host_transport_state(group_name)" in init_src
 
 
 if __name__ == "__main__":

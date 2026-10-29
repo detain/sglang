@@ -574,19 +574,9 @@ class GroupCoordinator:
 
         # Same two GPUs, decode-sized all-reduces: one kernel through host
         # memory in NCCL's LL form, capturable in a CUDA graph.
-        self.ll_comm = None
-        if (
-            os.environ.get("SGLANG_LL_ALLREDUCE") == "1"
-            and self.world_size == 2
-            and is_cuda_alike()
-        ):
-            from sglang.srt.distributed.device_communicators.ll_allreduce import (
-                LLAllReduce,
-            )
+        self.ll_comm = self._build_ll_allreduce(group_name)
 
-            self.ll_comm = LLAllReduce(
-                self.cpu_group, self.rank_in_group, self.world_size, self.device
-            )
+        self._log_host_transport_state(group_name)
 
         # Create communicator for other hardware backends
         from sglang.srt.distributed.device_communicators.hpu_communicator import (
@@ -622,6 +612,57 @@ class GroupCoordinator:
             self.mq_broadcaster = MessageQueue.create_from_process_group(
                 self.cpu_group, 1 << 22, 6
             )
+
+    def _build_ll_allreduce(self, group_name: Optional[str]):
+        """Build the LL all-reduce for this group, or refuse and return None.
+
+        The entry-256 dispatch comment promoted to a guard: LL claims bf16
+        messages up to SGLANG_LL_ALLREDUCE_MAX_BYTES (64 KiB) with no capture
+        guard -- exactly the size class an ARMED PCIe-IPC allreduce autotunes,
+        and prod run scripts export SGLANG_ENABLE_PCIE_IPC_ALLREDUCE=1 today.
+        PCIe-IPC wins; LL refuses and the group keeps its current path. The
+        predicate is pcie_ipc_eligible -- PCIe-IPC's own rank-consistent gate
+        (eligible_group: the env AND this group's world size AND the tp name
+        AND non-deterministic), not merely the env -- so the guard fires
+        exactly when the two paths would collide. It must be that group-level
+        value rather than the rank-local pcie_ipc_comm, because LL
+        construction rendezvouses: refuse on every rank or on none.
+        """
+        if not (
+            os.environ.get("SGLANG_LL_ALLREDUCE") == "1"
+            and self.world_size == 2
+            and is_cuda_alike()
+        ):
+            return None
+        if self.pcie_ipc_eligible:
+            logger.warning(
+                "SGLANG_LL_ALLREDUCE is ignored on group %r: "
+                "SGLANG_ENABLE_PCIE_IPC_ALLREDUCE already arms this group, and the "
+                "two transports collide on the <=64 KiB captured-bf16 size class. "
+                "PCIe-IPC keeps the group; unset one of the two envs to arm only "
+                "one.",
+                group_name,
+            )
+            return None
+        from sglang.srt.distributed.device_communicators.ll_allreduce import (
+            LLAllReduce,
+        )
+
+        return LLAllReduce(
+            self.cpu_group, self.rank_in_group, self.world_size, self.device
+        )
+
+    def _log_host_transport_state(self, group_name: Optional[str]) -> None:
+        """Boot-verify needle: which host-memory transports serve this group."""
+        if not (self.pcie_ipc_eligible or self.host_staged_comm or self.ll_comm):
+            return
+        logger.info(
+            "[AR] group %s host-memory transports: PCIe-IPC=%s host-staged=%s LL=%s",
+            group_name,
+            self.pcie_ipc_eligible,
+            self.host_staged_comm is not None,
+            self.ll_comm is not None,
+        )
 
     def __repr__(self):
         return (
@@ -760,7 +801,9 @@ class GroupCoordinator:
         # later by _resolve_outplace_all_reduce_method, which stays ca -> pcie_ipc).
         # Host-staged claims only eager >= 1 MiB messages outside capture (the
         # prefill NCCL path); LL additionally claims captured bf16 <= 64 KiB --
-        # PCIe-IPC's size class -- so never arm both on one group.
+        # PCIe-IPC's size class. Both cannot arm one group: _build_ll_allreduce
+        # refuses LL on any group PCIe-IPC arms, so this dispatch pair and the
+        # pcie_ipc route never claim the same tensor.
         if self.host_staged_comm is not None and self.host_staged_comm.should_use(
             input_
         ):
