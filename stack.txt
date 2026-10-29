@@ -265,7 +265,7 @@
 #   make --enable-mixed-chunk safe and fix the QSA verify ring collision.
 #   * = picked with local modifications, see the entries)
 # branch : qwennext-stack
-# tip    : a688f11ac9   (MERGE #5 commit ae6ee527ba + B1; stack.txt commits sit above)
+# tip    : d76b8d0f45   (MERGE #5 ae6ee527ba + B1 a688f11ac9 + kvcache-registry graft; docs sit above)
 # base   : upstream sgl-project/sglang main @ 7ad55e4386 ([HiCache] TMA-staged
 #          host<->device KV transfer kernel (sm_90+) (#40278), 2026-09-21)
 # synced : upstream main @ f209e67767 (#39643, 2026-09-28) MERGED IN as
