@@ -349,10 +349,11 @@
 #          2026-10-29, by a read-only fetch): origin/main is now
 #          ** 2a6c204570 = +1,120 commits since 12dc623102 ** (+685 since
 #          1dd0f361b8). git cherry at the 309 code tip: ** 440 '+' / 31 '-'
-#          ** (426/29 at the 295 HEAD) -- this pass's 14 commits are 12 '+'
-#          + 2 '-' (#44912 and #46127 landed PATCH-IDENTICAL to upstream,
-#          patch-id-proved; #44901/#44904/#44913/#45289/#45923 differ
-#          exactly by their documented fork unions). MERGE-#5 PREP, NOW ON
+#          ** (427 '+' / 29 '-' at the 295 HEAD ab6b98a3ec) -- this pass's
+#          15 code commits are 13 '+' + 2 '-', and the 2 '-' are #44912 and
+#          #46127, which landed PATCH-IDENTICAL to upstream (patch-id
+#          proved); #44901/#44904/#44913/#45289/#45923 differ exactly by
+#          their documented fork unions). MERGE-#5 PREP, NOW ON
 #          THE RECORD IN THE ENTRIES: all FIVE merged moe picks + BOTH
 #          riders are present in origin/main and carry per-entry DEDUPE
 #          lines, so B5 treats them as PRE-RECONCILED and does not re-run
@@ -363,7 +364,7 @@
 #          RE-APPLY the fail-safe reads (upstream reads model_config raw
 #          and still leaves `auto` on unreadable expert lists).
 # updated: 2026-10-29 (entries 296-309): FIVE-WAVE INTEGRATION BATCH,
-#          13 picks + 1 integrator rider = 14 commits, ** ZERO CONFLICTS
+#          14 picks + 1 integrator rider = 15 code commits, ** ZERO CONFLICTS
 #          AT THE INTEGRATOR ** (every documented union held; nothing
 #          exceeded it). ** THE BATCH-8 RANGE RECONCILIATION IS THE
 #          HEADLINE LESSON OF THIS PASS AND IS RECORD IN FULL IN THE MOE
