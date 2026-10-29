@@ -249,7 +249,7 @@
 #   make --enable-mixed-chunk safe and fix the QSA verify ring collision.
 #   * = picked with local modifications, see the entries)
 # branch : qwennext-stack
-# tip    : d598eff7da   (the stack.txt commits sit above it)
+# tip    : 0df18e97a0   (the stack.txt commits sit above it)
 # base   : upstream sgl-project/sglang main @ 7ad55e4386 ([HiCache] TMA-staged
 #          host<->device KV transfer kernel (sm_90+) (#40278), 2026-09-21)
 # synced : upstream main @ f209e67767 (#39643, 2026-09-28) MERGED IN as
@@ -5913,6 +5913,88 @@ STACK, IN BUILD ORDER (bottom first)
       # test_hicache_file_parallel_reads.py 5P CPU-only
       # (register_cpu_ci, base-a-test-cpu); tranche-wide numbers in the
       # header note.
+
+        255. a13e98bb9d  PR #44448 (open, head ad19c6ade7, ported)  CustomAllreduce v1 STAGES VMM graph inputs through its pre-registered IPC buffer instead of cudaIpcGetMemHandle-ing them -- DEFENSE-IN-DEPTH behind the entry-75 init refusal
+      # https://github.com/sgl-project/sglang/pull/44448, tracking issue
+      # #44291. WHAT: register_graph_buffers fed every captured graph input
+      # to cudaIpcGetMemHandle, which accepts only cudaMalloc memory -- one
+      # VMM (cuMemCreate/cuMemMap) input made graph capture die with
+      # "RuntimeError: invalid argument" (custom_all_reduce.cuh:614). The
+      # fix (+11/-1, custom_all_reduce.py) decides registration PER INPUT at
+      # capture time: is_vmm_pointer(input) -> stage through the already
+      # IPC-registered workspace instead of registering the buffer.
+      # THREAT MODEL, STATED HONESTLY: our entry-75 VMM-allocator REFUSAL
+      # (a89d298bac) is what ACTUALLY guards the imminent TP2 boot -- under
+      # expandable_segments v1 disables itself at __init__ and never reaches
+      # this path. This staging fix is DEFENSE-IN-DEPTH: reachable only via
+      # VMM inputs DESPITE a non-VMM init probe -- e.g. graph buffers from
+      # torch symmetric-memory pools, invisible to entry 75's one-byte
+      # probe.
+      # DEVIATIONS (ported): (i) the shipped test's _init_comm gained a
+      # fork-only branch -- a VMM-allocator refusal from entry 75 ->
+      # pytest.skip (upstream's bare raise made the test dead-on-arrival on
+      # this tree), while a non-P2P refusal still RAISES, so a
+      # misprovisioned runner cannot silently skip the suite; (ii)
+      # is_vmm_pointer joins the existing cuda_vmm_utils import line
+      # (entry-75 union). THE SHIPPED "CPU" TEST IS NOT CPU: it is a 2-GPU
+      # torchrun test (register_cuda_ci stage extra-b, runner_config
+      # 8-gpu-h200, multigpu_pytest_main) -- the CPU side exercised was
+      # COLLECTION ONLY.
+      # BATTERY (landed tip 0df18e97a0, prod venv, CVD=9): the 8-file comm
+      # named set under test/registered/unit/distributed/ (all files except
+      # test_attn_cp_tp_broadcast.py and test_get_default_distributed_
+      # backend.py) = 114P/1S/30sub, EXACTLY the worker's numbers; whole
+      # dir 120P/1S/35sub 0F (the two extra files add 1P/5sub and 5P);
+      # new test collects 9.
+      # NEEDLES: the run-script needle (i) (the entry-75 guard warning)
+      # stays valid VERBATIM -- this PR changes no log strings and no init
+      # decision.
+
+        256. 0df18e97a0  PR #39605 (open, head b2d47b8539, ported)  two OPT-IN TP2-only PCIe transports without peer access -- HOST-STAGED all-reduce (prefill: eager >=1MiB outside capture) and LL (decode-sized bf16 <=64KiB) -- carrying a PCIe-IPC COLLISION WARNING on the LL env
+      # https://github.com/sgl-project/sglang/pull/39605. WHAT: for TWO
+      # GPUs with NO peer access (nvidia-smi topo says SYS on our pairs;
+      # claimed win: Qwen3.8 TP2 TTFT 6.36 -> 1.10 s):
+      #  * SGLANG_HOST_STAGED_ALLREDUCE=1 (+ _MIN_BYTES default 1 MiB,
+      #    + _PIECE) -- NEW host_staged_allreduce.py (+204): prefill-chunk
+      #    messages staged through a /dev/shm pinned region with the copy
+      #    engines, cuStreamWriteValue32/WaitValue32 piece counters,
+      #    double-buffered slots, never blocks the CPU, bit-identical to
+      #    NCCL (a+b on both ranks).
+      #  * SGLANG_LL_ALLREDUCE=1 (+ _MAX_BYTES default 64 KiB) -- NEW
+      #    ll_allreduce.py (+181): decode-sized bf16 reduced in ONE
+      #    graph-capturable kernel in NCCL LL form (8-byte word = seq + two
+      #    bf16).
+      #  Both constructed in parallel_state.py (+46) behind world_size == 2
+      #  gates -> INERT ON TP4 (prod today); dispatch hooks sit AHEAD of the
+      #  ca/pcie_ipc chain in GroupCoordinator.all_reduce.
+      # FORK-CONVENTION DEVIATION, FLAGGED FOR THE OPERATOR: the opt-in
+      # envs are read via RAW os.environ.get at the construction/dispatch
+      # sites, NOT registered in environ.py -- PR as-is, deliberately not
+      # normalized. A future merge or env audit must reconcile them.
+      # CLAIM ENVELOPES -- READ BEFORE ARMING ANYTHING:
+      #  * HOST-STAGED claims ONLY eager messages >= 1 MiB OUTSIDE capture
+      #    (is_current_stream_capturing in should_use) -- it COMPLEMENTS
+      #    PCIe-IPC, which today declines exactly those numel-capped sizes.
+      #  * LL claims bf16 <= 64 KiB with NO capture guard and therefore
+      #    COLLIDES WITH PCIe-IPC's autotune size class -- **DO NOT arm
+      #    SGLANG_LL_ALLREDUCE on a TP group with SGLANG_ENABLE_PCIE_IPC_
+      #    ALLREDUCE=1** (entry 245: BOTH prod run scripts export that
+      #    today). The collision is documented in a 5-line comment at the
+      #    dispatch site (parallel_state.py).
+      #  * The Dynamo/auto-op path NEVER sees either transport: the hooks
+      #    are evaluated at TRACE TIME, vs the fork's defer-into-op design
+      #    for the custom-AR paths. Upstream follow-up worth filing.
+      # DEVIATIONS (ported): (a) dispatch ordering unioned with the
+      # naming/collision comment above; (b) the entry-75-era stub in
+      # test_parallel_state.py takes +3 lines for the two new None
+      # attributes it must carry; (c) the PR's GPU tests are test/manual
+      # (NOT CI-registered), ported as-is: test_host_staged_allreduce.py +
+      # test_ll_allreduce.py collect green here (9 tests), they need 2 GPUs
+      # to RUN.
+      # BATTERY: comm named set 114P/1S/30sub (numbers shared with entry
+      # 255 -- one landed state), test_parallel_state.py green inside it;
+      # both transports default-off => prod behavior byte-identical until
+      # an operator arms an env on a TP2 boot.
 
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED

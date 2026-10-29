@@ -132,21 +132,12 @@
 # --- FAM-A6a  port-comm (files: custom_all_reduce.py, parallel_state.py,
 #     new host-staged AR kernel + environ; context entries 75/162-164/228/245
 #     + the 2026-10-26/28 run-script notes)
-# #44448  open RE-PULL at head ad19c6ade7 (older revisions were watch-listed;
-#         entry-227 re-arm condition TP2+expandable_segments is NOW TRUE and
-#         the PR's repro says arming PCIe-IPC does NOT prevent the v1
-#         graph-capture cudaIpcGetMemHandle crash). +10/-1
-#         custom_all_reduce.py + 114-line CPU test. Tracking issue #44291.
-#         Do first -- it guards the imminent PCIe-IPC first boot.
-#         State: IN-WT(port-comm)
-# #39605  open (head b2d47b8539) [Feat] host-staged all-reduce for TWO GPUs
-#         without peer access (opt-in SGLANG_HOST_STAGED_ALLREDUCE(+_MIN_BYTES)
-#         , /dev/shm + cuStreamWriteValue32 counters, bit-identical, prefill
-#         chunks only, decode untouched). Qwen3.8 TP2 TTFT 6.36->1.10s
-#         claimed. 204-line new file + 181-line ll_allreduce.py; tests are
-#         test/manual (port them, expect non-CI). Check the no-P2P assumption
-#         against nvidia-smi topo (9b notes say our pair has no P2P).
-#         State: IN-WT(port-comm)
+#     BOTH LANDED 2026-10-28 as entries 255-256 @ code tip 0df18e97a0;
+#     branch port-comm kept for forensics.
+#     NOTE FOR FAM-A3b: #44342's parallel_state.py HOLD IS NOW RELEASED --
+#     the comm tranche's +46 dispatch hunks are landed and stable, so the
+#     controller wave can reason over the real file in its later wave.
+#     (LL-vs-PCIe-IPC collision warning travels with entry 256.)
 #
 # =============================================================================
 # WAVE 2+ QUEUE (file sets overlap wave 1 -- strictly serial after the
