@@ -102,6 +102,7 @@ def _model_uses_compressed_tensors_nvfp4(model: Optional[torch.nn.Module]) -> bo
 
 def _serves_block_fp8_as_mxfp8_on_flashinfer(model_runner: ModelRunner) -> bool:
     from sglang.srt.layers.quantization.fp8 import Fp8LinearMethod
+
     for module in model_runner.model.modules():
         method = getattr(module, "quant_method", None)
         if (
@@ -111,10 +112,13 @@ def _serves_block_fp8_as_mxfp8_on_flashinfer(model_runner: ModelRunner) -> bool:
             and (
                 method.mxfp8_dense_backend.is_flashinfer_cutedsl()
                 or method.mxfp8_dense_backend.is_flashinfer_cutlass()
+                or method.mxfp8_dense_backend.is_flashinfer_b12x()
             )
         ):
             return True
     return False
+
+
 def should_run_flashinfer_autotune(
     model_runner: ModelRunner, *, for_speculative_draft: bool = False
 ) -> bool:
