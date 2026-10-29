@@ -188,6 +188,15 @@ def test_replay_stages_padded_inputs_after_load(staged):
     runner.model_runner = SimpleNamespace(model=model, device_timer=None)
     model.needs_replay_prepare = staged
     runner.validate_model_support = lambda: None
+    # #44913 wrapped decode-graph REPLAY in the per-model shared-experts
+    # context (base_runner.model_context -> get_model().override(...)), and
+    # get_model() raises "config namespace 'model' not published" because a
+    # __new__-built runner never publishes that namespace -- production
+    # always does. The shared-experts layout is irrelevant to THIS contract
+    # (load/prepare/publish/replay ORDER + padded staging), so the context
+    # is stubbed exactly like the other runner hooks here. Same adaptation
+    # class as the entry-294 pp_sync_drain _hcs_state pre-memoization.
+    runner.model_context = lambda: nullcontext()
     runner._init_model_hooks()
     assert (runner._replay_prepare_hook is not None) == staged
     runner.backend = SimpleNamespace(replay_session=nullcontext, replay=replay)
