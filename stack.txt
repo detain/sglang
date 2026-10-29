@@ -1,6 +1,6 @@
 # stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
 #
-# STACK: qwennext-stack-260-2026-10-28
+# STACK: qwennext-stack-274-2026-10-28
 #   main+pr36787+pr37275+pr38144+pr38209+pr36644+pr39862+pr39809+pr39893+local_hicache_qsa_fixes
 #   +pr39614+pr39978+pr40002+pr39065+pr40501+pr40175+pr40362+pr39391+pr37061+pr39333+pr33778
 #   +pr38977+pr39977+pr40480+pr39880+pr40235+pr39807+cpu-triage+boot-fix+plan_updates_perf
@@ -13,7 +13,10 @@
 #   +hicache-file-2026-10-28(pr42482+pr42488+pr44422+pr42676*+pr44776*)
 #   +comm-2026-10-28(pr44448*+pr39605*)
 #   +autotune-2026-10-28(pr40420*+pr45543*+pr43927+pr44514)
-#   (entries 1-260; *=squash/ported, see commit messages. 10-10 added
+#   +spec-mamba-2026-10-28(pr45491+pr45435+pr45472+pr45670)
+#   +admission-2026-10-28(pr46272*+pr43484*+pr46496*+pr46643*+pr45607*+pr45789*)
+#   +parsers-2026-10-28(pr44124+pr45631+pr45855+pr46167)
+#   (entries 1-274; *=squash/ported, see commit messages. 10-10 added
 #   entries 157-161: parser batch A (Qwen3-Coder tool-call fixes + sampling
 #   upper bounds), on top of upstream merge #3 (see synced). 10-10b added
 #   entries 162-166: SM120 batch B (#42863 PCIe-IPC vocab gathers, #42566
@@ -251,7 +254,7 @@
 #   make --enable-mixed-chunk safe and fix the QSA verify ring collision.
 #   * = picked with local modifications, see the entries)
 # branch : qwennext-stack
-# tip    : 2705ebb0a6   (the stack.txt commits sit above it)
+# tip    : 2714457128   (the stack.txt commits sit above it)
 # base   : upstream sgl-project/sglang main @ 7ad55e4386 ([HiCache] TMA-staged
 #          host<->device KV transfer kernel (sm_90+) (#40278), 2026-09-21)
 # synced : upstream main @ f209e67767 (#39643, 2026-09-28) MERGED IN as
@@ -322,6 +325,48 @@
 #          MERGE #5 STILL OWED (refreshed at the 248/249 docs commit):
 #          origin/main is now 1dd0f361b8 = +435 commits since 12dc623102.
 #          [The 553836c164/+378 figure was the count at the 230-242 batch.]
+# updated: 2026-10-28 (entries 261-274): THREE-WAVE INTEGRATION BATCH,
+#          14 picks, ZERO INTEGRATOR CONFLICTS (every predicted
+#          collision zone auto-merged or landed clean; the two mandated
+#          interlocks were OBSERVED as pick-order constraints, not
+#          patches: admission had to rebase conceptually onto the
+#           spec-mamba rewrites -- verified by semantic audit, entry 265
+#          -- and #45472's shipped-red window was carried through
+#          UNREORDERED to #45670). entry-119 SUPERSEDED by upstream
+#          #45435/#45472 (the lazy-undo gives back the 59MB slot the
+#          local fix leaked; freed_rows guard + pin-memory predicate
+#          carried forward). CLASSIC-POOL mamba admission gate lands
+#          (#43484*) WITH AN UPSTREAM PR BUG CAUGHT: imports of
+#          MAMBA_STATE_PER_REQ_PREFIX_CACHE(_LAZY) that exist NOWHERE
+#          upstream (entry 266a). BEHAVIOR CHANGE OWED A TTFT WATCH AT
+#          THE RESTART: #46643* clears batch_is_full UNCONDITIONALLY
+#          every round (admission re-runs for ALL models; the
+#          entry-198 per-round arms are removed as strict subsets) --
+#          same owed restart must ALSO measure #45472's default-ON
+#          no-sync extend planning (entry 263) and the entry-198
+#          precedent starvation watch. CODER-PARSER UNION: #44124 keeps
+#          our STRING_PARAM_TYPES + entries 159/160, adapts our
+#          streaming fast path (141F-before-amend lesson, entry 271).
+#          LOGITS TRILOGY LANDED AS A CONTRACT UNIT (#45631+45855+
+#          46167): NEVER take the first two without the third (entry
+#          274), its silent CUDA_ONLY auto-merge hazard fixed to local
+#          _CUDA, kernels_namespace 76P proving value-identity.
+#          Pins after 274: spec dir 335P/11S/180sub (survives all 14
+#          picks), managers dir RE-PINNED 1013P/2F/3S/933sub (base was
+#          988P/2F/3S/904sub; the 2F the known test_mm_process_config
+#          order-dependency), function_call 652P/1964sub, kernels_ns
+#          76P, retract+pause 29P/8sub. FLAGGED NON-ATTRIBUTABLE:
+#          predicted sampling 263P vs 223P measured (irreproducible on
+#          the worker's own tip; diff-0 across waves -- prediction/
+#          method gap), logits 56P/7S unmeasurable on this box (file's
+#          module-level get_device() collect failure PREDATES the
+#          trilogy; all 4 GPUs busy with the live prod server). GPU
+#          debt: mixed-chunk mamba checkpoint e2e at real page-64 +
+#          track-state numerics parity (263); classic-pool ledger at a
+#          REAL HybridReqToTokenPool + fork-split at page-64/QSA
+#          boundaries (266/270); fp32-lm-head test rewrite + cast-
+#          kernel numerics + spec-verify cast perf spot (272-274).
+#          Code tip 2714457128, tree clean, NOTHING pushed.
 # updated: 2026-10-28 (entries 255-260): TWO WAVES FROM THE SAME SWEEP
 #          QUEUE, BOTH CLEAN (ZERO conflicts vs the landed hicache-file
 #          tranche -- disjoint files as the FAM split planned; no other
@@ -6692,6 +6737,46 @@ WATCH LIST (re-evaluate before next sync)
 ==============================================================================
 CAVEATS
 ==============================================================================
+
+  * #37958 + #45559 VERIFIED INERT FOR PROD GEOMETRY -- DO-NOT-RE-LITIGATE
+    AT MERGE #5 (2026-10-28, docs-only close of wanted_stack.txt C8/
+    Section-B; no pick involved). The prefill shared-read event chain is
+    UNREACHABLE HERE on two INDEPENDENT hard gates: NEXTN FAILS
+    supports_prefill_shared_read_done(), AND hierarchical cache is the
+    second gate (shared_read_event early-returns under
+    enable_hierarchical_cache -- code-verified 2026-10-28). The consumer
+    falls back to the COARSE BARRIER -- i.e. what prod runs today IS the
+    correct behavior for this geometry. Only trtllm_mha / deepseek_v4 /
+    minimax_sparse declare PRE_REPLAY; none is our attention backend.
+    #45559 itself is mooncake/umbp LINKER ORDERING only -- the file
+    backend is unaffected. THE ONLY REVISIT CONDITION: prod config ever
+    DROPS NEXTN or HiCache (or an attention backend above is ever
+    adopted). At merge #5 these two PRs arrive IN-TREE via the sync-by-
+    port merge -- that is FINE (they stay inert behind the same gates);
+    do NOT spend merge time re-deriving this verdict.
+
+  * DATED LEDGER CORRECTIONS 2026-10-28 (wanted_stack.txt C0b/C0c marked
+    DONE on this commit; C0a stays OPEN): (i) #44030's skip rationale
+    "INERT WHILE L3 PARKED" is OBSOLETE -- L3 is LIVE since the 10-28
+    hicache-file wave; re-evaluate #44030 at merge #5 on the LIVE-L3
+    premise, not the parked one. (ii) #44858's entry-227 skip note is
+    REVERSED: #45289 undid its call-site workaround (canonical [gate,up]
+    + 1/g1_alphas_up correction) -- the stale note is corrected HERE and
+    #45289 is additionally PORTED-PENDING in wt-moe RIGHT NOW: whoever
+    integrates that branch re-checks this pairing. (iii) #44115 is
+    PERMANENTLY NOT-APPLICABLE (not "declined" -- the uniform_q_len
+    autotune kwarg cannot reach our geometry; entry-228 era evidence
+    stands). (iv) OPEN-STATUS RE-VERIFIED 2026-10-28 for #44462/#43471/
+    #45298/#42388/#43795/#45091 -- all retain their ledger verdicts for
+    this date; a merge-week re-check is still owed if the window grows.
+    (v) NO PIN MOVES (C0c): the flashinfer 0.7.2 / sgl-kernel 0.4.9
+    (0.4.10-recorded) FLOOR IS UNCHANGED through the whole 10-28 three-
+    wave integration -- entry-228 pairing rules (probe + wheel together,
+    revert 2b46270c5d before any wheel rollback) remain the governing
+    text. (vi) C0a tick: #37625/#37941/#39727 sweep-gap docs stay
+    OUTSTANDING at merge #5; only #43927 (entry 259, landed) and #44849
+    (C10 rider + owed-name note; ALIAS NOT ported) count partially
+    satisfied so far.
 
   * STALE PASS-NEEDLES + COLD BOOT 2026-10-28 (entries 259/260, branch
     port-autotune landed @ 2705ebb0a6): the "no tactic=-1" cache-inspection

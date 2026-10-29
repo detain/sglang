@@ -76,56 +76,34 @@
 #     components/mamba.py admission half, BatchResultProcessor; context
 #     entries 215/196-198/119 + mixed-chunk group pr39575*/pr39526*/pr40458/
 #     pr40143*)
-# #46272  open (head 4b57095434, CI SUCCESS) [Fix] remove O(B^2) `not in list`
-#         scans in filter_batch/BatchResultProcessor/RankMetadata -- free CPU
-#         decode headroom, model-neutral. State: IN-WT(port-admission)
-# #43484  open (head via gh, CI SUCCESS) [Fix] Mamba slot admission on the
-#         CLASSIC hybrid pool: gate the scheduler, never assert the engine
-#         (rem_mamba_slots isinstance-gated to Unified* -> our pool checks
-#         nothing -> deterministic 'Can not alloc mamba cache' crash at
-#         max-mamba 256 over 1M ctx). Read in-stack #37619/#40128/#37943
-#         (same _alloc_mamba_slot path) as a set. State: IN-WT(port-admission)
-# #46496  open DRAFT (head 1947555adf) [Fix] clamp new-token ratio at floor
-#         after KV-full retraction (1 line + comment; unset max_tokens over
-#         1M context = our exact over-admission amplifier; CPU repro in issue
-#         #46495). State: IN-WT(port-admission)
-# #46643  open (head 0954308f69) [Fix] keep chunked prefill within allocatable
-#         KV under pressure (3 admission bugs: over-ask on continuation,
-#         second chunked request under non-shortest policies, latched
-#         batch_is_full stall -- absorbs closed #35609). Expect a
-#         schedule_policy.py union vs the mixed-chunk entry group + entry 215;
-#         SKIP any aiter-backend hunk. State: IN-WT(port-admission)
-# #45607  open (head 7ba034ad7f) [Fix] align truncated hybrid-Mamba chunks to
-#         KV pages (double-free class; QSA page-64 + mixed-chunk exposure;
-#         body cites in-stack #39526). +17/-1 + 54-line test. Review together
-#         with #46643/#45789. State: IN-WT(port-admission)
-# #45789  open (head 0e2097072e) [Fix] preserve Mamba fork+tail states across
-#         chunked prefills (opt-in SGLANG_SPLIT_PREFILL_AT_MAMBA_FORK;
-#         eligibility requires extra-buffer strategy = ours; HiCache
-#         load-back path). Touches the single-unfinished-chunk guard the way
-#         #46643 does -- land 46643 first, then 45789 unioned onto it.
-#         State: IN-WT(port-admission)
+#     ALL SIX LANDED 2026-10-28 as entries 265-270 (cherry-pick -x chain
+#     cf15d20c48..26f8b3c0e7 @ code tip 2714457128; MANDATED AFTER the
+#     spec-mamba wave -- #46272's brp/schedule_batch hunks land on
+#     #45435/#45472's rewrites, auto-merge SEMANTICALLY AUDITED at entry
+#     265). Records carried in the entries: #43484 upstream ImportError
+#     bug caught (266a); components/mamba.py half superseded by entries
+#     197/198/216, OUR retry semantics kept (266b); isinstance-not-hasattr
+#     pool gate (266c); #46496 DRAFT-upstream flag (267); #46643
+#     UNCONDITIONAL batch_is_full clear = BEHAVIOR CHANGE, TTFT/starvation
+#     watch at the owed restart, entry-198 arms removed as subsets (268);
+#     #45789 default-OFF fork-split, guard reconciled to #46643 (270).
+#     Branch port-admission kept for forensics.
 #
 # --- FAM-B234  port-spec-mamba-merged (cherry-picks from origin/main
 #     417606527d..f2d3188925; files: spec_utils.py, eagle_worker_v2.py,
 #     schedule_batch.py, forward_batch_info.py, mamba track modules; context
 #     entries 102/119/121/122/123/169/185/194/196-199/213/215/220/222/234)
-# #45491  merged 2026-10-21 [Fix] spec: post-verify KV move targets from the
-#         verify window (overlap + finished-request row re-ownership copied KV
-#         into a NEW request's slots incl. radix-cached prefix). Union vs our
-#         entry-194 spec_kv_index work. Wrong-output family. State: IN-WT(port-spec-mamba-merged)
-# #45435  merged 2026-10-21 [Fix] mamba: keep prefill rows' checkpoint tracking
-#         through mixed chunked prefill -- this is our ENTRY-119 production
-#         half re-derived upstream on the UnifiedRadixCache API; + #45670
-#         (test fix). Resolve to the UPSTREAM form where it collides with
-#         entry 119; keep our orthogonal deltas; integrator records the
-#         supersession. State: IN-WT(port-spec-mamba-merged)
-# #45472  merged 2026-10-21 [Perf] scheduler: plan hybrid Mamba extend batches
-#         WITHOUT host-device syncs (extra_buffer/_lazy hot path -- ours;
-#         new track_position + _gather_mamba_track_indices; DEFAULT-ON, no
-#         flag). Changes the _MambaRadixCacheV2TrackEntry contract entries
-#         119/169/196/216 read -- union carefully, expect the deepest
-#         conflicts of wave 1. State: IN-WT(port-spec-mamba-merged)
+#     ALL FOUR LANDED 2026-10-28 as entries 261-264 (cherry-pick -x chain
+#     b151717af7..afc7dca4ae; STRICT order #45491->#45435->#45472->#45670,
+#     shipped-red window between #45472/#45670 carried through UNREORDERED
+#     as mandated). ENTRY-119 SUPERSESSION RECORDED: upstream #45435+
+#     #45472 own the prefill-track machinery now (decode-tail -1 pads +
+#     mamba_lazy_undo_prealloc_at_boundary give back the 59MB slot entry
+#     119 leaked; ReqKvInfo.mamba_untracked_decode_batch_idx brp gate;
+#     freed_rows->-1 guard + pin-memory predicate carried forward);
+#     #45472 is DEFAULT-ON on the mixed-chunk hot path -> TTFT/decode +
+#     track-state-numerics owed at the restart (entry 263). Branch
+#     port-spec-mamba-merged kept for forensics.
 #
 # --- FAM-A6a  port-comm (files: custom_all_reduce.py, parallel_state.py,
 #     new host-staged AR kernel + environ; context entries 75/162-164/228/245
@@ -330,16 +308,19 @@
 #         recycling graph-pool temporaries under expandable_segments -- the old
 #         guards missed our shape). Flips NCCL env for graph-heavy boots ->
 #         verify TP2 capture needles at first boot. State: TODO
-# #45631 -> #45855 -> #46167  merged 2026-10-22/22/23 -- logits/lm_head
-#         shared-buffer trilogy; TAKE AS A UNIT (never 45631 alone -- 45855
-#         fixes its precision regression, 46167 adds the bf16->fp32 cast
-#         kernel whose stated motivation is spec-verify decode steps on our
-#         hardware class). logits_processor.py = entries 161/232 territory.
-#         State: TODO
-# #44124  merged 2026-10-27 [Fix] qwen3_coder: preserve structured values in
-#         mixed unions (string|object params passed through as STRINGS incl.
-#         streamed) -- our live tool-call-parser file; union vs entries
-#         159/160; re-run the function_call 644P battery. State: TODO
+# #45631 -> #45855 -> #46167  -- LANDED 2026-10-28 as entries 272-274
+#         @ code tip 2714457128, TAKEN AS THE UNIT (muse_spark hunk of
+#         #45631 DROPPED: file absent from our tree; re-check the out=
+#         kwarg if #44666 ever ports -- entry 272). GPU debt recorded:
+#         test_fp32_lm_head.py CPU-collection rewrite (its module-level
+#         get_device() predates the trilogy), cast-kernel numerics,
+#         spec-verify cast perf spot. State: LANDED
+# #44124  -- LANDED 2026-10-28 as entry 271 @ code tip 2714457128
+#         (STRING_PARAM_TYPES union KEPT vs the inline list, value-
+#         identical; entries 159/160 retained; streaming fast-path call
+#         site adapted -- 141F-before-amend caught by the battery).
+#         function_call battery re-run at tip: 652P/1964sub (the file
+#         grew since the 644P note). State: LANDED
 # #42689  merged 2026-10-21 [Fix] preserve BF16 NaNs through per-token FP8
 #         quantization (INTENDED behavior change: undoes #32188/#32296
 #         sanitization; a boot that "worked" by hiding NaN now surfaces it --
@@ -357,16 +338,17 @@
 #         correctness for tool-calling). State: TODO
 # #45923  merged 2026-10-26 [Fix] weak Req __req__ self-reference (entry-207
 #         class GC fix; our parsers attach customized_info). State: TODO
-# #37958  merged 2026-10-20 + #45559  merged 2026-10-21 -- VERIFIED INERT FOR
-#         PROD GEOMETRY: NEXTN fails supports_prefill_shared_read_done() AND
-#         HiCache is a second hard gate (code-verified 2026-10-28:
-#         shared_read_event.py early-returns on enable_hierarchical_cache;
-#         consumer falls back to the coarse barrier; only trtllm_mha/
-#         deepseek_v4/minimax_sparse declare PRE_REPLAY). 45559 = mooncake/
-#         umbp linker ordering, file backend unaffected. ACTION: integrator
-#         records the verdict in stack.txt (do-not-re-litigate at merge #5);
-#         no port needed unless the config ever drops NEXTN or HiCache.
-#         State: TODO (docs-only)
+# #37958  merged 2026-10-20 + #45559  merged 2026-10-21 -- VERDICT RECORDED
+#         IN stack.txt CAVEATS 2026-10-28 (docs-only DONE, no pick):
+#         VERIFIED INERT FOR PROD GEOMETRY -- NEXTN fails
+#         supports_prefill_shared_read_done() AND HiCache is a second hard
+#         gate; consumer falls back to the coarse barrier; only
+#         trtllm_mha/deepseek_v4/minimax_sparse declare PRE_REPLAY;
+#         #45559 = mooncake/umbp linker ordering, file backend unaffected.
+#         DO NOT RE-LITIGATE at merge #5 (gate line in CAVEATS). REVISIT
+#         ONLY IF: prod config ever drops NEXTN or HiCache. C8's merge-#5
+#         bookkeeping now points at that CAVEATS bullet. State: DONE
+#         (docs-only, recorded)
 #
 # =============================================================================
 # SECTION C -- MERGE #5 BOOKKEEPING (origin/main = f2d3188925 = +1,097 since
@@ -379,18 +361,26 @@
 #  C0a Record the sweep-gap correction to entry 227: #37625, #37941 (exact-
 #      rescan top-k family -- the follow-up our entry-28 note named), #39727,
 #      #43927, #44849 merged INSIDE 12dc623102..417606527d but are absent from
-#      the 227 skip record. State: TODO
+#      the 227 skip record. State: TODO (OPEN -- gaps still outstanding)
 #      [10-28 PARTIAL: #43927 LANDED ahead of merge #5 as entry 259 (port-
-#       autotune) -- gap correction for it is IN the ledger; the other four
-#       names remain owed as docs at merge #5.]
+#       autotune) -- gap correction for it is IN the ledger; only #43927 and
+#       #44849 count PARTIALLY SATISFIED so far (#44849 is carried in the
+#       C10 at-merge rider + the entry-259 owed-name note -- the ALIAS
+#       itself is NOT ported: no --enable-hicache exists in server_args/
+#       environ as of the 274 tip). STILL OUTSTANDING AS DOCS AT MERGE #5:
+#       #37625/#37941/#39727. Refreshed 2026-10-28 at the entries-261-274
+#       integration.]
 #  C0b Record stale-decision refreshes: #44030 skip rationale ("inert while L3
 #      parked") OBSOLETE -- L3 live now, re-evaluate at merge #5; #44858 was
 #      REVERSED by #45289 (entry-227 note stale); #44115 permanently N/A;
 #      #44448 re-arm condition TRUE (promoted to FAM-A6a); open-status
 #      re-verified 2026-10-28 for #44462/#43471/#45298/#42388/#43795/#45091.
-#      State: TODO
+#      State: DONE (written to stack.txt CAVEATS as dated corrections
+#      2026-10-28; #45289 additionally now ported-PENDING in wt-moe, not
+#      merely a stale-note)
 #  C0c Record the pairing state: no flashinfer/sgl-kernel pin moves beyond
-#      0.7.2/0.4.9-recorded-0.4.10 in the window. State: TODO
+#      0.7.2/0.4.9-recorded-0.4.10 in the window. State: DONE (written to
+#      stack.txt CAVEATS as a dated note 2026-10-28)
 #
 # AT-MERGE-TIME (record only):
 #  C1 #46970..#46991 (22-PR mem_cache/KV-storage rewrite, merged 10-28) +
@@ -423,7 +413,9 @@
 #     already on the indexed path; PR's test skipUnless cc==9). DROPPED per the
 #     both-halves rule. Also record: sm_major in (9,10) means FlashInfer GDN
 #     target-verify is NOT offered on SM120 either way. State: DONE-VERIFIED
-#  C8 #37958/#45559 -- see section B docs-only entry. State: TODO (docs)
+#  C8 #37958/#45559 -- verdict RECORDED in stack.txt CAVEATS 2026-10-28
+#     (VERIFIED-INERT bullet, do-not-re-litigate-at-merge-#5 line + revisit
+#     condition); see the Section-B #37958/#45559 entry. State: DONE (docs)
 #  C9 #39727 (page_unified host layout + unified L3 key, merged-in-window) --
 #     library-only today; its follow-up integration would change L3 NAMING vs
 #     our warm stores = store-purge event. WATCH + block a silent key-scheme
