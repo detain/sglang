@@ -68,6 +68,7 @@ from sglang.srt.runtime_context import (
     num_dp_ranks_of,
 )
 from sglang.srt.utils.common import (
+    get_mixed_precision_moe_quant_algos,
     get_quantization_config,
     is_fi_a2a_supported,
     is_gfx95_supported,
@@ -1425,20 +1426,31 @@ def _dp_lm_head_validation(view: Any) -> dict:
     return {}
 
 
-def _checkpoint_quantization_or_none(view: Any) -> Optional[str]:
-    """The quantization the checkpoint itself declares, or None when it cannot
-    be determined here. Used only to break a `--moe-runner-backend auto` tie on
-    SM110/SM120; a failure to read the config must leave the resolution exactly
-    as it was before, so this never raises out."""
+def _model_config_or_none(view: Any) -> Any:
+    """The ModelConfig behind this resolution view, or None when it cannot be
+    read here. Every post-process read of the checkpoint-derived config goes
+    through this so a failure leaves the resolution exactly as it was (entry
+    230's fail-safe contract; upstream #45520 reads model_config_of raw)."""
     try:
-        return model_config_of(view).quantization
+        return model_config_of(view)
     except Exception as e:  # pragma: no cover - defensive, config may be unreadable
         logger.debug(
-            "Could not derive quantization from the checkpoint config: %s: %s",
+            "Could not derive the model config for arg resolution: %s: %s",
             type(e).__name__,
             e,
         )
         return None
+
+
+def _checkpoint_quantization_or_none(view: Any) -> Optional[str]:
+    """The quantization the checkpoint itself declares, or None when it cannot
+    be determined here. Used only to break a `--moe-runner-backend auto` tie on
+    SM110/SM120; a failure to read the config must leave the resolution exactly
+    as it was before, so this never raises out. (Kept from the entry-230 fork
+    patch after #45520 took over the tie-breaking itself -- see the reconcile
+    note commit.)"""
+    model_config = _model_config_or_none(view)
+    return model_config.quantization if model_config is not None else None
 
 
 @register_post_process
@@ -1501,36 +1513,60 @@ def _moe_runner_backend_quant_constraints(view: Any) -> dict:
     if moe_runner_backend == "auto" and (
         get_platform().is_sm120 or get_platform().is_sm110
     ):
-        # Consumer Blackwell (SM110/SM120/SM121): the trtllm-gen NVFP4 MoE
-        # kernels are SM100-only, and ModelOptNvFp4FusedMoEMethod.create_moe_runner
-        # resolves `auto` to FLASHINFER_CUTLASS per layer on these parts
-        # (modelopt_quant.py). The published global has to say the same thing:
-        # StandardDispatcher picks the expert-id space from the global
-        # (--moe-runner-backend) and #44480's rescue can only turn local-id
-        # mapping ON, never off, so leaving `auto` published would hand the
-        # cutlass runner (which computes start_expert from the GLOBAL id:
-        # num_experts_per_node * ep_rank) rank-local ids -- rank 0 looks right
-        # and every other rank silently routes nothing under EP > 1.
+        # trtllm-gen MoE kernels are SM100-only. Consumer Blackwell
+        # (SM110/SM120/SM121): ModelOptNvFp4FusedMoEMethod.create_moe_runner
+        # resolves `auto` per layer on these parts (modelopt_quant.py), and the
+        # published global has to say the same thing or StandardDispatcher picks
+        # the expert-id space from `auto` while the layer builds a GLOBAL-ids
+        # runner -- rank 0 looks right and every other rank silently routes
+        # nothing under EP > 1 (entry 230's misroute; #45520's g1_scale_c
+        # warmup crash is the same divergence seen from weight-prep).
         #
         # `view.quantization` is the CLI/declared value; a flagless checkpoint
-        # carries the answer in its config instead (ModelConfig derives
-        # self.quantization from quant_method when the CLI omitted it,
-        # configs/model_config.py), so fall back to that. "modelopt_mixed" is
-        # only ever produced when at least one NVFP4/W4A16_NVFP4 layer exists
-        # (_parse_modelopt_quant_config: MIXED_PRECISION without FP4 layers is
-        # "w4afp8"), so publishing cutlass always matches some layer; a pure
-        # FP8 checkpoint resolves to "fp8"/"modelopt_fp8" and stays out.
-        # Known gap (pre-existing, unchanged here): an explicit
-        # --quantization modelopt on these GPUs still needs the runner named,
-        # because "modelopt" is not refined into fp4/mixed at this point.
-        quantization = view.quantization or _checkpoint_quantization_or_none(view)
-        if quantization in ("modelopt_fp4", "modelopt_mixed"):
+        # carries the answer in ModelConfig's derivation instead. NOTE(fork):
+        # every model-config read goes through the fail-safe helper -- an
+        # unreadable config must leave the resolution exactly as it was (the
+        # entry-230 fail-safe contract, pinned by
+        # test_moe_runner_quant_constraint_pass's RuntimeError case); upstream
+        # #45520 reads model_config_of(view) directly.
+        quantization = view.quantization
+        model_config = None
+        # getattr default: production ServerArgs always carries this flag
+        # (serving_hook); the fallback keeps CPU-resolver stubs working.
+        if quantization is None and not getattr(
+            view, "_quantization_explicitly_unset", False
+        ):
+            # --quantization is usually unset, so use what the checkpoint declares.
+            model_config = _model_config_or_none(view)
+            if model_config is not None:
+                quantization = model_config.quantization
+        if quantization == "modelopt_mixed":
+            if model_config is None:
+                model_config = _model_config_or_none(view)
+            expert_algos = (
+                get_mixed_precision_moe_quant_algos(model_config.hf_config)
+                if getattr(model_config, "hf_config", None) is not None
+                else set()
+            )
+            if "W4A16_NVFP4" in expert_algos:
+                moe_runner_backend = "marlin"
+            elif "NVFP4" in expert_algos:
+                moe_runner_backend = "flashinfer_cutlass"
+            elif not expert_algos:
+                # Unreadable/absent expert list. "modelopt_mixed" is only ever
+                # derived when at least one NVFP4 or W4A16_NVFP4 layer exists
+                # (_parse_modelopt_quant_config: MIXED_PRECISION without FP4
+                # layers is "w4afp8"), so publishing flashinfer_cutlass still
+                # matches some layer -- entry 230's reasoning, kept as the
+                # fail-safe answer. Upstream leaves `auto` here, which is the
+                # silent-misroute shape entry 230 exists to close.
+                moe_runner_backend = "flashinfer_cutlass"
+        elif quantization == "modelopt_fp4":
             moe_runner_backend = "flashinfer_cutlass"
+        if moe_runner_backend != "auto":
             logger.info(
-                "Use flashinfer_cutlass as MoE runner backend on SM110/SM120 for "
-                "%s (trtllm-gen MoE kernels are SM100-only)%s",
-                quantization,
-                "" if view.quantization else " (from the checkpoint config)",
+                f"Use {moe_runner_backend} as MoE runner backend on SM110/SM120 "
+                f"for {quantization} (trtllm-gen MoE kernels are SM100-only)"
             )
     if moe_runner_backend != view.moe_runner_backend:
         return {"moe_runner_backend": moe_runner_backend}
