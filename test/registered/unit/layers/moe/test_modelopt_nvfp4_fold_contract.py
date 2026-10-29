@@ -12,7 +12,11 @@ matches). For that combination:
   1. FusedMoE._fuses_routed_scaling_factor_in_topk (fused_moe_triton/layer.py)
      answers True: ModelOpt NVFP4 folds routed_scaling_factor into the top-k
      weights on EVERY non-Marlin runner -- the predicate list #44901's shared-
-     slot fix keys off. Marlin answers False (it scales in its epilogue).
+     slot fix keys off. Marlin answers False (it scales in its epilogue), and
+     since #44993 the predicate takes the layer-resolved runner explicitly
+     (quant_method, runner_backend) instead of digging _moe_runner_backend out
+     of the method itself; the exclusion covers both Marlin arms, is_marlin()
+     and is_lora_marlin().
   2. The block passes that verdict as apply_routed_scaling_factor_on_output, so
      topk.is_routed_scaling_factor_fused_in_topk (#44901) also answers True.
   3. Consequently topk.fused_shared_expert_weight (#44901, consumed by
@@ -47,16 +51,25 @@ register_cpu_ci(est_time=5, suite="base-a-test-cpu")
 
 
 def _nvfp4_stub(backend: MoeRunnerBackend) -> ModelOptNvFp4FusedMoEMethod:
-    """A ModelOptNvFp4FusedMoEMethod that only knows its resolved runner.
+    """A ModelOptNvFp4FusedMoEMethod whose only knowledge is its resolved runner.
 
-    Built with object.__new__: the layer predicate reads exactly two things
-    off the quant method -- the (absent) class-level
-    fuse_routed_scaling_factor_in_topk flag and _moe_runner_backend -- so no
-    config, weights, or device are involved.
+    Built with object.__new__: after #44993 the layer predicate reads the
+    (absent) class-level fuse_routed_scaling_factor_in_topk flag off the
+    method and the runner off its explicit second argument, which
+    FusedMoE.__init__ supplies from quant_method.get_moe_runner_backend(layer)
+    -- so _moe_runner_backend feeds the verdict through that getter, exactly
+    as it does at layer.py's call site. No config, weights, or device.
     """
     method = object.__new__(ModelOptNvFp4FusedMoEMethod)
     method._moe_runner_backend = backend
     return method
+
+
+def _layer_fold_verdict(backend: MoeRunnerBackend) -> bool:
+    # Same call shape as FusedMoE.__init__: the method resolves its runner,
+    # the predicate receives it explicitly.
+    method = _nvfp4_stub(backend)
+    return _fuses_routed_scaling_factor_in_topk(method, method.get_moe_runner_backend(None))
 
 
 class TestFoldPredicateNvfp4Cutlass(CustomTestCase):
@@ -69,16 +82,15 @@ class TestFoldPredicateNvfp4Cutlass(CustomTestCase):
 
     def test_flashinfer_cutlass_nvfp4_folds_in_topk(self):
         # OUR ARM: fold == True, so the epilogue must not re-apply the factor.
-        self.assertTrue(
-            _fuses_routed_scaling_factor_in_topk(
-                _nvfp4_stub(MoeRunnerBackend.FLASHINFER_CUTLASS)
-            )
-        )
+        self.assertTrue(_layer_fold_verdict(MoeRunnerBackend.FLASHINFER_CUTLASS))
 
     def test_marlin_nvfp4_does_not_fold_in_topk(self):
-        self.assertFalse(
-            _fuses_routed_scaling_factor_in_topk(_nvfp4_stub(MoeRunnerBackend.MARLIN))
-        )
+        self.assertFalse(_layer_fold_verdict(MoeRunnerBackend.MARLIN))
+
+    def test_lora_marlin_nvfp4_does_not_fold_in_topk(self):
+        # #44993 widened the Marlin exclusion to the LoRA Marlin vendor:
+        # same epilogue-scales contract, so no fold here either.
+        self.assertFalse(_layer_fold_verdict(MoeRunnerBackend.LORA_MARLIN))
 
     def test_config_predicate_confirms_the_folded_verdict(self):
         # The block forwards the layer verdict as apply_routed_scaling_factor_on_output.
