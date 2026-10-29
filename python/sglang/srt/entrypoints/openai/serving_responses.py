@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import logging
 import time
@@ -433,8 +434,8 @@ class OpenAIServingResponses(OpenAIServingChat):
             processed_messages: Optional[MessageProcessingResult] = None
 
             if self.use_harmony:
-                messages, request_prompts, engine_prompts = (
-                    self._make_request_with_harmony(request, prev_response)
+                messages, request_prompts, engine_prompts = await self._preprocess(
+                    self._make_request_with_harmony, request, prev_response
                 )
                 require_reasoning = self._is_thinking_enabled_for_request(request)
             else:
@@ -769,10 +770,13 @@ class OpenAIServingResponses(OpenAIServingChat):
             raise _MediaInputValidationError(media_error)
 
         is_multimodal = self.tokenizer_manager.model_config.is_multimodal
-        processed_messages = self._process_messages(
-            chat_request,
-            is_multimodal,
-            output_constrained=request.has_json_schema_constraint(),
+        processed_messages = await self._preprocess(
+            functools.partial(
+                self._process_messages,
+                chat_request,
+                is_multimodal,
+                output_constrained=request.has_json_schema_constraint(),
+            )
         )
         # ``_process_messages`` merges server defaults into the temporary Chat
         # request before rendering. Response parsing happens later from the
@@ -3136,5 +3140,3 @@ class OpenAIServingResponses(OpenAIServingChat):
 
             # Slightly reduce priority for subsequent tool calls
             priority = orig_priority - 1
-
-# TODO(merge5): re-plant entry 110,201 semantics (batch B4); fork hunks saved /tmp/opencode/merge5-dossier/replant/python__sglang__srt__entrypoints__openai__serving_responses.py.fork-hunks.patch

@@ -2561,4 +2561,3 @@ class Scheduler(SchedulerWarmupMixin, SchedulerPostTrainingMixin, SchedulerDisag
         logger.info(f"[WAKE] handle_resume_memory_occupation on rank={self.gpu_id}")
         return OutputBatch(output=self.worker.resume_memory_occupation())
 
-# TODO(merge5): fold upstream changes dropped here (entries 133,137 own this file; batch B4)

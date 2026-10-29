@@ -660,6 +660,14 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
                 f"Capture cuda graph failed: {e}\n{CUDA_GRAPH_CAPTURE_FAILED_MSG}"
             )
 
+    def _init_model_hooks(self):
+        self.validate_model_support()
+        self._replay_prepare_hook = (
+            getattr(self.model_runner.model, "prepare_cuda_graph_replay", None)
+            if getattr(self.model_runner.model, "needs_replay_prepare", False)
+            else None
+        )
+
     def _next_token_logits_buffer_capacity_rows(self, max_num_tokens: int) -> int:
         """Rows reserved for the largest shared logits output."""
         return max_num_tokens
@@ -2257,4 +2265,3 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
 
         return spec_info
 
-# TODO(merge5): re-plant entry 61 semantics (batch B4); fork hunks in /tmp/opencode/merge5-dossier/replant/python__sglang__srt__model_executor__runner__decode_cuda_graph_runner.py.fork-hunks.patch

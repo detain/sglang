@@ -82,6 +82,14 @@ class TestFp4GemmAutotuneGate(CustomTestCase):
         fp4_backend.is_flashinfer_b12x.return_value = False
         with (
             patch.object(autotune, "get_exec", return_value=_exec_config()),
+            # The gate grew an upstream-in-range kv-sharding arm reading the
+            # parallel namespace; this suite pins the unsharded case (the
+            # sharding SKIP is exercised by the gate's own sharding logic).
+            patch.object(
+                autotune,
+                "get_parallel",
+                return_value=SimpleNamespace(enable_kv_cache_sharding=False),
+            ),
             patch(
                 "sglang.srt.layers.quantization.fp4_utils.get_fp4_gemm_runner_backend",
                 return_value=fp4_backend,
@@ -97,6 +105,15 @@ class TestFp4GemmAutotuneGate(CustomTestCase):
             patch(
                 "sglang.srt.layers.quantization.fp8_utils.flashinfer_per_tensor_fp8_supported",
                 return_value=per_tensor_fp8,
+            ),
+            # Same class of post-suite arm: the block-FP8-as-MXFP8 probe walks
+            # model.modules() and None models (the modelopt cases) are legal
+            # inputs for THIS suite; the probe is a different gate and has its
+            # own coverage. Pin it off.
+            patch.object(
+                autotune,
+                "_serves_block_fp8_as_mxfp8_on_flashinfer",
+                return_value=False,
             ),
         ):
             return autotune.should_run_flashinfer_autotune(

@@ -753,4 +753,3 @@ class Qwen3CoderDetector(BaseFormatDetector):
     def get_structural_tag_name(self) -> str:
         return "qwen_3_coder"
 
-# TODO(merge5): fold upstream changes dropped here (entries 20,21,89,108,109,157,158,159,160 own this file; batch B4)

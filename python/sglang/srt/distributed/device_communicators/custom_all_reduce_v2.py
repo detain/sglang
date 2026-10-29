@@ -595,5 +595,3 @@ def can_use_custom_all_reduce_v2(
         cls_name="CustomAllReduceV2",
     )
     return full_nvlink is True
-
-# TODO(merge5): re-plant entry 75 semantics (batch B4); fork hunks saved /tmp/opencode/merge5-dossier/replant/python__sglang__srt__distributed__device_communicators__custom_all_reduce_v2.py.fork-hunks.patch

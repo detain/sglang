@@ -181,6 +181,9 @@ class TestGraphRoutingContext(CustomTestCase):
         runner.dllm_uses_input_embeds = False
         runner.in_graph_metadata_prep_done = None
         runner.is_dllm = False
+        # Fork drift (stack entry 61): replay() consults the model's optional
+        # replay-prepare hook; __new__-built stubs bypass _init_model_hooks.
+        runner._replay_prepare_hook = None
         static = _batch(4, 4)
         runner.attn_backend = captured_backend = _attention_backend()
         runner.capture_prepare = lambda *args, **kwargs: (

@@ -1931,6 +1931,3 @@ class PrefillAdder:
         self.running_batch.filter_batch(keep_indices=keep_indices)
         self.preempt_list.extend(preemptible_reqs)
         return True
-
-
-# TODO(merge5): re-plant entry 177,217,266,268,269,270 semantics (batch B4); fork hunks saved /tmp/opencode/merge5-dossier/replant/python__sglang__srt__managers__schedule_policy.py.fork-hunks.patch

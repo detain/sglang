@@ -780,7 +780,7 @@ class TestGenerateReqInputNormalization(CustomTestCase):
         manager.validate_total_tokens = False
         manager.is_generation = True
         manager.model_config = SimpleNamespace(
-            vocab_size=vocab_size, joint_head_config=None
+            vocab_size=vocab_size, joint_head_config=None, pointer_head=None
         )
         req = GenerateReqInput(
             text="Hello",

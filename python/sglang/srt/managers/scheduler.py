@@ -6552,6 +6552,3 @@ def _make_abort_req(
             num_output_tokens=len(req.output_ids),
         ),
     )
-
-
-# TODO(merge5): re-plant entry 107,122,177,198,200,211,215,218,220,267,268,270 semantics (batch B4); fork hunks saved /tmp/opencode/merge5-dossier/replant/python__sglang__srt__managers__scheduler.py.fork-hunks.patch

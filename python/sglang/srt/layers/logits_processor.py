@@ -535,6 +535,7 @@ class LogitsProcessor(nn.Module):
             ),
             enabled=self.do_tensor_parallel_all_gather and not self.use_attn_tp_group,
             skip_entry_sync=True,
+            pcie_ipc=True,
         )
 
         chunking_group = None
@@ -1678,5 +1679,3 @@ def should_apply_lm_head_quant_method(lm_head, quant_method) -> bool:
         )
 
     return True
-
-# TODO(merge5): re-plant entry 162 semantics (batch B4); fork hunks saved /tmp/opencode/merge5-dossier/replant/python__sglang__srt__layers__logits_processor.py.fork-hunks.patch

@@ -695,6 +695,7 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
         # --- aiter chip info pre-warming (AMD) -------------------------
         maybe_pre_warm_aiter_chip_info()
 
+        self.validate_model_support()
         # --- capture --------------------------------------------------
         self.device_module.synchronize()
         get_parallel().tp_group.barrier()
@@ -2400,5 +2401,3 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
                     **kwargs,
                 )
             return self._finalize_execute_output(output)
-
-# TODO(merge5): re-plant entry 300 semantics (batch B4); fork hunks saved /tmp/opencode/merge5-dossier/replant/python__sglang__srt__model_executor__runner__prefill_cuda_graph_runner.py.fork-hunks.patch

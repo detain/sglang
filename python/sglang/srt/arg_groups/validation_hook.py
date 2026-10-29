@@ -788,7 +788,6 @@ def check_two_batch_overlap(server_args: Any):
         )
 
 
-# TODO(merge5): re-plant entry 44,51 semantics (batch B4); fork hunks in /tmp/opencode/merge5-dossier/replant/python__sglang__srt__arg_groups__validation_hook.py.fork-hunks.patch
 
 
 def validate_replayssm_spec_algorithm(server_args: Any):
@@ -814,3 +813,4 @@ def validate_replayssm_spec_algorithm(server_args: Any):
             "linear-chain draft (EAGLE with --speculative-eagle-topk 1, "
             "DFLASH, or DSPARK) or drop --enable-linear-replayssm-spec."
         )
+

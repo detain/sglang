@@ -967,5 +967,3 @@ def required_pplx_dispatch_tokens_per_rank(server_args: Any) -> int:
         required = max(required, cfg.cuda_graph_max_bs_decode)
     return required
 
-
-# TODO(merge5): re-plant entry 247 semantics (batch B4); fork hunks in /tmp/opencode/merge5-dossier/replant/python__sglang__srt__arg_groups__moe_hook.py.fork-hunks.patch

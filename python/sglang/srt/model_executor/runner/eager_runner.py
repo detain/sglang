@@ -388,6 +388,3 @@ class EagerRunner(BaseRunner):
                 forward_batch,
                 **kwargs,
             )
-
-
-# TODO(merge5): fold upstream changes dropped here (entries 61,176 own this file; batch B4)

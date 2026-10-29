@@ -2697,6 +2697,3 @@ def _gather_block_fp8_linear(layer: torch.nn.Module, group) -> torch.nn.Module:
     replica.quant_method = layer.quant_method
     layer.quant_method.process_weights_after_loading(replica)
     return replica
-
-
-# TODO(merge5): re-plant entry 300,187(#43527) semantics (batch B4); fork hunks saved /tmp/opencode/merge5-dossier/replant/python__sglang__srt__model_executor__model_runner.py.fork-hunks.patch
