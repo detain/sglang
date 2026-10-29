@@ -17,6 +17,7 @@ from sglang.srt.layers.attention.qsa.kernel import (
 )
 from sglang.srt.mem_cache.qsa_kv_pool import (
     QSACompressedBlockSharding,
+    QSA_RING_GROUPS,
     assert_qsa_indices_in_bounds,
 )
 
@@ -367,20 +368,27 @@ class QSAIndexerMetadata(msgspec.Struct, frozen=True):
         )
 
 
+# ``QSA_RING_GROUPS`` (the two-group ring floor) is defined with the pool that
+# allocates the ring buffers and re-exported here; see
+# ``sglang.srt.mem_cache.qsa_kv_pool``.
+
+
 def pending_ring_slot(
     requests: torch.Tensor,
     positions: torch.Tensor,
     *,
     compress_ratio: int,
-    num_groups: int = 1,
+    num_groups: int = QSA_RING_GROUPS,
 ) -> torch.Tensor:
     """Slot of ``positions`` in each request's pending index-K ring.
 
     The ring holds ``num_groups`` groups of ``compress_ratio`` slots, so a request
     owns ``compress_ratio * num_groups`` slots and position ``p`` lands in group
-    ``(p // compress_ratio) % num_groups`` at offset ``p % compress_ratio``. At
+    ``(p // compress_ratio) % num_groups`` at offset ``p % compress_ratio`` -- the
+    residue decomposition of ``p % (compress_ratio * num_groups)``. At
     ``num_groups == 1`` the group term vanishes and this is the historical
-    ``req * ratio + p % ratio``.
+    ``req * ratio + p % ratio``; the default is the two-group floor
+    (``QSA_RING_GROUPS``).
     """
     return (
         requests * (compress_ratio * num_groups)
@@ -397,9 +405,10 @@ def build_pending_ring_slots(
     logical_positions: torch.Tensor,
     compress_ratio: int,
     is_extend: bool,
-    num_groups: int = 1,
+    num_groups: int = QSA_RING_GROUPS,
 ) -> torch.Tensor:
-    """Pending-ring slot per token, for a ring holding ``num_groups`` groups.
+    """Pending-ring slot per token, for a ring holding ``num_groups`` groups
+    (default: the two-group floor ``QSA_RING_GROUPS``).
 
     On extend, tokens before the pending tail dump into rows [0, ratio). Request
     slot 0 is never allocated, so the whole first ``ratio * num_groups`` range is
@@ -425,13 +434,14 @@ def build_group_ring_slots(
     group_end_positions: torch.Tensor,
     sequence_ids: torch.Tensor,
     compress_ratio: int,
-    num_groups: int = 1,
+    num_groups: int = QSA_RING_GROUPS,
 ) -> torch.Tensor:
     """Ring slots of a planned group's members, oldest first.
 
     The group index comes from ``group_end_positions``, not from each member's own
     position, so a group stays in one ring group even when its end is not
-    ``ratio``-aligned (the graph producer feeds ``lengths - 1``).
+    ``ratio``-aligned (the graph producer feeds ``lengths - 1``). At the default
+    two-group ring a member's slot is its ``position % (2 * ratio)``.
     """
     requests = req_pool_indices.long()[sequence_ids]
     offsets = torch.arange(
@@ -657,6 +667,7 @@ def localize_compressed_page_table(
 __all__ = [
     "QSAIndexerMetadata",
     "build_qsa_row_ranges",
+    "QSA_RING_GROUPS",
     "pending_ring_slot",
     "build_pending_ring_slots",
     "build_group_ring_slots",

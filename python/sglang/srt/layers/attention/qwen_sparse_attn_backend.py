@@ -34,6 +34,7 @@ from sglang.srt.layers.attention.qsa.kernel import (
 )
 from sglang.srt.layers.attention.qsa.metadata import (
     QSAIndexerMetadata,
+    QSA_RING_GROUPS,
     build_group_ring_slots,
     build_pending_ring_slots,
     build_qsa_row_ranges,
@@ -674,7 +675,11 @@ class QwenSparseAttnBackend(AttentionBackend):
     @property
     def _pending_ring_groups(self) -> int:
         """Groups the pending index-K ring holds; the pool fixes this at construction."""
-        return getattr(getattr(self, "token_to_kv_pool", None), "qsa_num_groups", 1)
+        return getattr(
+            getattr(self, "token_to_kv_pool", None),
+            "qsa_num_groups",
+            QSA_RING_GROUPS,
+        )
 
     @staticmethod
     def _select_attention_kv_heads(
@@ -761,9 +766,14 @@ class QwenSparseAttnBackend(AttentionBackend):
                 "Qwen QSA target verification supports only speculative_eagle_topk=1"
             )
         draft_tokens = int(getattr(spec_info, "draft_token_num", 0) or 0)
-        # An unaligned window touches ceil((draft + ratio - 1) / ratio) groups
-        # (see QSATokenToKVPool.pending_ring_num_groups); the ring must hold them.
-        # Without a pool yet, keep the historical one-group bound.
+        # The pending ring holds QSA_RING_GROUPS groups by default (a wider
+        # verify window must not overwrite a pending group's members; a
+        # rejected row's key then only sits in the slot of its own position,
+        # which that position rewrites before any group reads it -- so nothing
+        # needs to restore the ring after acceptance). See
+        # QSATokenToKVPool.pending_ring_num_groups; the ring must hold every
+        # group the window can touch. Without a pool yet, keep the historical
+        # one-group bound.
         groups = getattr(
             getattr(self, "token_to_kv_pool", None), "qsa_num_groups", None
         )
@@ -1919,7 +1929,7 @@ class QwenSparseAttnBackend(AttentionBackend):
                 logical_positions=current_positions,
                 compress_ratio=ratio,
                 is_extend=False,
-                num_groups=getattr(pool, "qsa_num_groups", 1),
+                num_groups=getattr(pool, "qsa_num_groups", QSA_RING_GROUPS),
             )
         )
         metadata.graph_ring_group_locs.copy_(
@@ -1928,7 +1938,7 @@ class QwenSparseAttnBackend(AttentionBackend):
                 group_end_positions=current_positions,
                 sequence_ids=metadata.token_to_batch_idx.long(),
                 compress_ratio=ratio,
-                num_groups=getattr(pool, "qsa_num_groups", 1),
+                num_groups=getattr(pool, "qsa_num_groups", QSA_RING_GROUPS),
             ).to(torch.int32)
         )
 

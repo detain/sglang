@@ -369,9 +369,15 @@ def _prewarm_gdn_circular_fold(ctx: _Ctx) -> None:
 # QSA cuda-graph metadata (the largest share of the prod late loads)
 # ---------------------------------------------------------------------------
 def _qsa_geometry(pool: Any) -> Tuple[int, int, int, int, int, int]:
+    from sglang.srt.layers.attention.qsa.metadata import QSA_RING_GROUPS
+
     ratio = int(pool.qsa_compress_ratio)
     compressed_page = int(pool.qsa_compressed_page_size)
-    num_groups = int(getattr(pool, "qsa_num_groups", 1) or 1)
+    # Fallback must match the launchers' QSA_RING_GROUPS default, or the
+    # prewarm warms a ring specialization serving never launches.
+    num_groups = int(
+        getattr(pool, "qsa_num_groups", QSA_RING_GROUPS) or QSA_RING_GROUPS
+    )
     sharding = getattr(pool, "qsa_compressed_sharding", None)
     world_size = int(getattr(sharding, "world_size", 1) or 1)
     rank = int(getattr(sharding, "rank", 0) or 0)

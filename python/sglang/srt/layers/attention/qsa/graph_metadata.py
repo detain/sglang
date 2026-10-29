@@ -17,6 +17,8 @@ import torch
 import triton
 import triton.language as tl
 
+from sglang.srt.layers.attention.qsa.metadata import QSA_RING_GROUPS
+
 
 @triton.jit
 def _qsa_graph_layout_kernel(
@@ -261,7 +263,7 @@ def launch_graph_metadata(
         req_to_token.stride(0),
         max_pages,
         RATIO=indexer.compress_ratio,
-        NUM_GROUPS=getattr(pool, "qsa_num_groups", 1),
+        NUM_GROUPS=getattr(pool, "qsa_num_groups", QSA_RING_GROUPS),
         FULL_PAGE=pool.qsa_compressed_page_size * indexer.compress_ratio,
         COMPRESSED_PAGE=pool.qsa_compressed_page_size,
         WORLD_SIZE=(
@@ -357,7 +359,7 @@ def prepare_draft_graph_metadata(metadata, req_to_token, pool):
         req_to_token.stride(0),
         metadata[0].indexer_metadata.graph_compressed_page_table.shape[1],
         pool.qsa_compress_ratio,
-        getattr(pool, "qsa_num_groups", 1),
+        getattr(pool, "qsa_num_groups", QSA_RING_GROUPS),
         pool.qsa_compressed_page_size * pool.qsa_compress_ratio,
         pool.qsa_compressed_page_size,
         (compressed_sharding.world_size if compressed_sharding is not None else 1),

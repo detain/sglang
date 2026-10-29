@@ -41,6 +41,16 @@ def _index_k_bytes(*, kv_heads: int, head_dim: int, dtype: torch.dtype) -> int:
     return kv_heads * head_dim * dtype.itemsize
 
 
+# The pending index-key ring holds two groups per request: slot
+# ``position % (QSA_RING_GROUPS * ratio)``. A verify window of up to ``ratio + 1``
+# rows then never shares a slot with a member of the group still pending before
+# it, within a forward or across forwards whose later rows were rejected: a
+# rejected row's key only sits in the slot of its own position, which that
+# position rewrites before any group reads it. Re-exported by
+# ``qsa.metadata`` as the ring-addressing contract.
+QSA_RING_GROUPS = 2
+
+
 # ``--qsa-indexer-dtype`` choices. The pending key ring stays bf16 regardless.
 QSA_INDEXER_DTYPE_CHOICES = ("auto", "bfloat16", "fp8_e4m3")
 
@@ -330,7 +340,8 @@ class QSATokenToKVPool(HybridLinearKVPool):
     def pending_ring_num_groups(
         *, max_num_draft_tokens: int, compress_ratio: int
     ) -> int:
-        """Groups the pending ring must hold so one verify window fits.
+        """Groups the pending ring must hold: the two-group floor, widened for
+        a verify window that needs more.
 
         A forward writes every position of the window before any group is
         compressed, and a window that does not start on a group boundary also
@@ -341,10 +352,15 @@ class QSATokenToKVPool(HybridLinearKVPool):
         a member four positions earlier in the same forward: with a window at
         base % 4 != 0, 3 of 4 verify alignments compressed a group from
         overwritten keys.
+
+        ``QSA_RING_GROUPS`` is the floor even without speculation: a rejected
+        verify row's key then only sits in the slot of its own position, so
+        nothing else has to restore the ring after acceptance (PR #47051).
         """
-        if max_num_draft_tokens <= 0:
-            return 1
-        return max(1, -(-(max_num_draft_tokens + compress_ratio - 1) // compress_ratio))
+        return max(
+            QSA_RING_GROUPS,
+            -(-(max_num_draft_tokens + compress_ratio - 1) // compress_ratio),
+        )
 
     def __init__(
         self,
@@ -362,7 +378,7 @@ class QSATokenToKVPool(HybridLinearKVPool):
         qsa_compress_ratio: int,
         qsa_token_topk: int,
         num_request_slots: int,
-        qsa_num_groups: int = 1,
+        qsa_num_groups: int = QSA_RING_GROUPS,
         cache_sharding_runtime: QSACacheShardingRuntime | None = None,
         enable_memory_saver: bool = False,
         enable_kv_cache_copy: bool = False,
@@ -455,7 +471,11 @@ class QSATokenToKVPool(HybridLinearKVPool):
         self.qsa_owner_group = None
         # Pre-compression index-K state is a per-request ring, not a per-token cache:
         # only the groups a forward may still touch must survive it, addressed as
-        # ``req_pool_idx * ratio * num_groups + group * ratio + position % ratio``.
+        # ``req_pool_idx * ratio * num_groups + group * ratio + position % ratio``
+        # -- the residue decomposition of ``position % (ratio * num_groups)``.
+        # The ring holds ``QSA_RING_GROUPS`` groups even unconfigured, so a verify
+        # window never overwrites the members of the group still pending before
+        # it, also across forwards whose later rows were rejected.
         # Request slot 0 is never allocated, so rows [0, ratio) are the inert dump.
         if num_request_slots <= 0:
             raise ValueError(
@@ -464,9 +484,8 @@ class QSATokenToKVPool(HybridLinearKVPool):
         if qsa_num_groups < 1:
             raise ValueError(f"QSA pending ring needs groups, got {qsa_num_groups}")
         self.qsa_num_request_slots = int(num_request_slots)
-        # A verify window of ``num_draft_tokens`` must fit without the ring
-        # wrapping onto itself, so this is ceil(draft_tokens / ratio) -- see
-        # QSATokenToKVPool.pending_ring_num_groups.
+        # A verify window must fit without the ring wrapping onto itself, so the
+        # configurator derives this via pending_ring_num_groups (two-group floor).
         self.qsa_num_groups = int(qsa_num_groups)
         ring_slots = (
             self.qsa_num_request_slots * self.qsa_compress_ratio * self.qsa_num_groups

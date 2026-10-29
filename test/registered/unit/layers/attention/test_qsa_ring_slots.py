@@ -125,8 +125,16 @@ class TestBuildPendingRingSlots(unittest.TestCase):
             is_extend=is_extend,
         )
 
-    def test_defaults_to_single_group(self):
-        """Omitting ``num_groups`` keeps the historical layout."""
+    def test_defaults_to_the_two_group_ring(self):
+        """Omitting ``num_groups`` gives the ``QSA_RING_GROUPS`` floor.
+
+        PR #47051 made two groups the ring's layout default: a verify window of
+        up to ``ratio + 1`` rows never shares a slot with a member of the group
+        pending before it. The residue decomposition
+        ``position % (QSA_RING_GROUPS * ratio)`` is the pin.
+        """
+        from sglang.srt.layers.attention.qsa.metadata import QSA_RING_GROUPS
+
         positions = [0, 1, 2, 3]
         got = build_pending_ring_slots(
             token_to_batch_idx=torch.arange(4),
@@ -136,8 +144,20 @@ class TestBuildPendingRingSlots(unittest.TestCase):
             compress_ratio=RATIO,
             is_extend=False,
         )
-        want = _legacy_slots(torch.tensor([1, 1, 1, 1]), torch.tensor(positions), RATIO)
+        want = pending_ring_slot(
+            torch.tensor([1, 1, 1, 1]),
+            torch.tensor(positions),
+            compress_ratio=RATIO,
+            num_groups=QSA_RING_GROUPS,
+        )
         self.assertTrue(torch.equal(got, want))
+        self.assertTrue(
+            torch.equal(
+                want,
+                1 * (RATIO * QSA_RING_GROUPS)
+                + torch.tensor(positions) % (RATIO * QSA_RING_GROUPS),
+            )
+        )
 
     def test_extend_dump_stays_in_the_inert_region(self):
         """Non-pending extend tokens dump into rows ``[0, ratio)``.

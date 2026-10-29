@@ -105,17 +105,19 @@ def test_qsa_allocations_follow_parent_mooncake_scope(monkeypatch):
 
 
 def test_pending_ring_num_groups_covers_unaligned_windows():
-    """Every group a verify window can touch, and never zero.
+    """Every group a verify window can touch, and never below the floor.
 
     A window that does not start on a group boundary still needs its first
     group's earlier members, so it spans ceil((draft + ratio - 1) / ratio)
     groups: 4 drafts at ratio 4 need 2 (one group let a draft row overwrite a
-    member four positions earlier in the same forward). An absent draft-token
-    count, or a single-token decode window, needs one.
+    member four positions earlier in the same forward). The floor is
+    ``QSA_RING_GROUPS`` = 2 even for an absent draft-token count or a
+    single-token decode window (PR #47051): the two-group ring is the layout
+    that makes a rejected verify row's key self-restoring.
     """
     cases = [
-        (0, 1),
-        (1, 1),
+        (0, 2),
+        (1, 2),
         (2, 2),
         (4, 2),
         (5, 2),

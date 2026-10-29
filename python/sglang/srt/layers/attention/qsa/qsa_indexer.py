@@ -23,6 +23,7 @@ from sglang.srt.layers.attention.qsa.kernel import (
     qsa_prefill_all_visible_indices,
 )
 from sglang.srt.layers.attention.qsa.metadata import (
+    QSA_RING_GROUPS,
     build_group_ring_slots,
     build_pending_ring_slots,
     build_rope_position_matrix,
@@ -334,7 +335,9 @@ class QSAIndexer(MultiPlatformOp):
             logical_positions=logical_positions,
             compress_ratio=self.compress_ratio,
             is_extend=is_extend,
-            num_groups=getattr(metadata.token_to_kv_pool, "qsa_num_groups", 1),
+            num_groups=getattr(
+                metadata.token_to_kv_pool, "qsa_num_groups", QSA_RING_GROUPS
+            ),
         )
 
     def _snapshot_cross_prefix_members(
@@ -344,11 +347,11 @@ class QSAIndexer(MultiPlatformOp):
 
         An unaligned prefix (a mixed-chunk decode tail or a private chunk-cache
         tail) can leave a planned group's leading members in the pending ring
-        rather than this forward's packed rows. The ring holds only
-        ``compress_ratio`` entries per request and this forward's own tail
-        reuses those very slots (``position % ratio``), so the members must be
-        read before any store -- ``project_qk``'s fused path already writes the
-        ring. Returns ``None`` on batches with no straddling group.
+        rather than this forward's packed rows. A forward wider than the ring's two
+        groups (``QSA_RING_GROUPS``) lands its tail back on the pending group's
+        slots (``position % (QSA_RING_GROUPS * ratio)`` repeats), so the members
+        must be read before any store -- ``project_qk``'s fused path already
+        writes the ring. Returns ``None`` on batches with no straddling group.
         """
         if not metadata.has_cross_prefix_group:
             return None
@@ -372,7 +375,9 @@ class QSAIndexer(MultiPlatformOp):
             group_end_positions=group_end_positions,
             sequence_ids=sequence_ids,
             compress_ratio=self.compress_ratio,
-            num_groups=getattr(metadata.token_to_kv_pool, "qsa_num_groups", 1),
+            num_groups=getattr(
+                metadata.token_to_kv_pool, "qsa_num_groups", QSA_RING_GROUPS
+            ),
         )
 
     def update_key_state_and_compress(
