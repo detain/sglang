@@ -6124,6 +6124,110 @@ STACK, IN BUILD ORDER (bottom first)
       # startup seconds as a regression -- and do NOT re-pin boot-time
       # budgets off old warm-cache numbers until this boot has happened.
 
+  spec-mamba-2026-10-28 wave (branch port-spec-mamba-merged; FOUR picks on
+  the MANDATORY interlock order #45491 -> #45435 -> #45472 -> #45670; all
+  four applied CLEAN onto 8b170be3eb -- the conflicts below are the
+  WORKER's, resolved on the branch and picked through with -x; the order
+  is not reorderable because the tree is test-RED between #45472 and
+  #45670, exactly as upstream shipped it -- e.track_index -> track_position
+  rename transient):
+
+        261. b151717af7  PR #45491 (MERGED 2026-10-21 @ origin/main 573b5716f5)  spec post-verify KV moves retarget from the verify window -- spec_utils.py + a new GPU-gated test file
+      # https://github.com/sgl-project/sglang/pull/45491, cherry-pick -x of
+      # origin/main 573b5716f5 (+105/-10): take_post_verify_kv_move_targets
+      # from the verify window instead of recomputing past-window positions.
+      # Entry-194/195 DRIFT CHECK (worker): our spec_utils deltas sit
+      # OUTSIDE the hunk region -- byte-identical where the pick touches.
+      # New test_move_accept_tokens_targets.py: COLLECT ONLY here (2 tests,
+      # CUDA-gated) -- joins the spec dir, which gained exactly the +2
+      # skips of that gate class (335P/11S/180sub, entry 263's pin).
+
+        262. 0fc279db0f  PR #45435 (MERGED 2026-10-20 @ origin/main 32c26788f3)  mamba prefill checkpoint tracking through mixed chunked prefill -- SUPERSEDES entry 119's production half; upstream form wins per the sync-by-port rule
+      # https://github.com/sgl-project/sglang/pull/45435, cherry-pick -x of
+      # origin/main 32c26788f3 (5 files, +409/-82). THE SUPERSESSION, in
+      # full: entry 119 (0fe374094b, adapted from the never-merged #39526
+      # head) rebuilt decode-tail mamba_track_indices from the reqs in
+      # _mamba_track_for_mixed; UPSTREAM instead pads the tails with -1 and,
+      # on extra_buffer_lazy, calls the new
+      # running_batch.mamba_lazy_undo_prealloc_at_boundary() BEFORE the
+      # merge -- a decode batch whose boundary step rode a mixed forward
+      # gives the freshly prealloc'd slot BACK (the mixed step writes no
+      # decode checkpoint and its result path never frees it: THIS IS THE
+      # 59MB-SLOT LEAK entry 119 CREATED, and the entry-119 context --
+      # lazy prealloc at boundary under extra_buffer -- is UNCHANGED). New
+      # ReqKvInfo.mamba_untracked_decode_batch_idx + the
+      # batch_result_processor gate keep the finish-path radix insert alive
+      # for exactly that batch. _mamba_track_for_mixed deleted as dead.
+      # Entry-222 RETARGET: our 7-case port of #39526-head expectations in
+      # test_schedule_batch_mixed_mamba_track.py -- the TWO cases pinning
+      # the superseded tail semantics now pin the merged form (tail index
+      # -1; lazy tail gives the boundary slot back, flips next_track_idx to
+      # the empty entry, records mamba_untracked_decode_batch_idx); the
+      # other FIVE unchanged. File 7P at tip (entry 263's pin).
+      # entry-119's SPLIT helper (mamba_track_indices_from_reqs) survives
+      # ONE more pick only -- #45472 rewrites it; see entry 263 for the
+      # freed_rows guard's fate.
+      # NEW TEST: test_mix_with_running_mamba_track.py 6P/2sub standalone.
+
+        263. 4e7a4c13ff  PR #45472 (MERGED 2026-10-21 @ origin/main 740d5f9f9e)  hybrid Mamba extend planning WITHOUT HOST-DEVICE SYNCS -- DEFAULT-ON behavior/perf change on our mixed-chunk hot path
+      # https://github.com/sgl-project/sglang/pull/45472, cherry-pick -x of
+      # origin/main 740d5f9f9e (15 files, +227/-165). WHAT: track slot ids
+      # gathered ON DEVICE (_gather_mamba_track_indices,
+      # mapping[req_pool_indices, positions]) from the renamed
+      # _MambaRadixCacheV2TrackEntry.track_position; prepare_for_extend
+      # track tensors via pinned non-blocking copies; ping-pong empty-state
+      # gets a HOST MIRROR (ReqKvInfo.mamba_ping_pong_empty) consumed by
+      # lazy_prealloc_at_boundary / lazy_spec_prepare / brp /
+      # pool_stats_observer / streaming_session; clear_slots/alloc go
+      # async_h2d + index_fill_; set_mamba_ping_pong_slot polymorphic; free
+      # path frees by the mirror; mm_schedule _get_multimodal_mask torch.isin
+      # -> searchsorted over the sorted placeholder set.
+      # ** DEFAULT-ON. NO KNOB. ** This rewrites the extend-planning path
+      # BOTH prod arms run every mixed round (entry 125 mixing is ON).
+      # OWED AT THE NEXT RESTART: TTFT + decode-throughput A/B vs the
+      # current warm numbers, AND watch the per-round admission interplay
+      # the entry-198 precedent established (this path feeds the same
+      # scheduler window #43484/#46643 later touch -- see entries 266/268).
+      # WORKER CONFLICT RESOLUTIONS (landed as recorded here): (a)
+      # schedule_batch.py -- entry-119's split helper COLLAPSED to
+      # upstream's single set_mamba_track_indices_from_reqs, with the
+      # freed_rows->-1 guard (b5f59fda03-era, shared with entry 169's
+      # coexistence note) CARRIED FORWARD VERBATIM -- upstream's own guard
+      # shape is identical; the is_pin_memory_available pinning delta is
+      # SUBSUMED (async_h2d applies the same predicate internally); zero
+      # callers of the removed split name remain. (b) mm_utils.py --
+      # upstream item.padding_values() (plural sentinel-set) does NOT exist
+      # in our tree (our set_pad_value computes a scalar); resolved as the
+      # UNION: upstream's SORTED invariant over OUR scalar pad_value source,
+      # single caller (embed_mm_inputs) closes the sortedness contract. (c)
+      # test_mamba_donated_alloc_ratio.py (entries 197/216) kv-stub gains
+      # mamba_ping_pong_empty=[False, True] mirroring its [0,-1] buffer --
+      # contract-mandated test adaptation, red-proof 2F->16P; file pin is
+      # now 16P/14sub EXACT. (d) unified_memory_pool.py
+      # replayssm_spec_write_pos=None applied at our __init__ drift line
+      # (direct read safe: MambaPool always defines it).
+      # GPU DEBT (this wave): mixed-chunk mamba checkpoint e2e at REAL
+      # page-64 (CPU batteries pin shapes, not device gather numerics) +
+      # track-state NUMERICS PARITY check vs pre-port on the owed restart.
+
+        264. afc7dca4ae  PR #45670 (MERGED 2026-10-21 @ origin/main 68623cae92)  test follow-up: the mixed-batch track test reads track_position through _gather_mamba_track_indices -- closes #45472's shipped-red window
+      # https://github.com/sgl-project/sglang/pull/45670, cherry-pick -x of
+      # origin/main 68623cae92 (+5/-1 in test_mix_with_running_mamba_track
+      # .py). Upstream's OWN transient: between #45472 and this commit the
+      # e.track_index reads dangle and the file is red -- reproduced
+      # faithfully, NOT reordered away (mandated pick order, worker warning;
+      # the intermediate red is HOW UPSTREAM SHIPPED IT). Tree green again
+      # at this tip.
+
+      # BATCH-1 BATTERY (main-tree tip afc7dca4ae, CVD=9, per-file): spec
+      # dir 335P/11S/180sub EXACT (the +2S = entry 261's gate class);
+      # mamba_donated 16P/14sub EXACT; track_state_dtype 8P/9sub EXACT;
+      # mixed_mamba_track 7P EXACT; test_move_accept_tokens_targets.py 2
+      # collected. MANAGERS DIR RE-PIN: 988P/2F/3S/904sub at 8b170be3eb ->
+      # 995P/2F/3S/908sub here (+6 new file +1 net edit, +2/+2 sub) -- the
+      # 2F remain the PRE-EXISTING order-dependent test_mm_process_config
+      # pair, reproduced at base in a throwaway worktree.
+
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
 ==============================================================================
