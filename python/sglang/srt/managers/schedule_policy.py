@@ -873,6 +873,14 @@ class PrefillAdder:
     def ceil_paged_tokens(self, tokens: int) -> int:
         return -(-tokens // self.page_size) * self.page_size
 
+    def _align_truncated_hybrid_chunk(self, prefix_len: int, chunk_len: int) -> int:
+        if not self.is_hybrid_ssm_cache or self.page_size == 1:
+            return chunk_len
+        # A Mamba checkpoint and its paged full-KV key must end at the same
+        # physical page boundary. Final, untruncated tails remain unrestricted.
+        end = (prefix_len + chunk_len) // self.page_size * self.page_size
+        return max(end - prefix_len, 0)
+
     def budget_state(self):
         no_token = not self.memory_budget.has_capacity()
         # Gate new mamba slots separately: rem_total_tokens' full_evictable can't
@@ -1212,6 +1220,10 @@ class PrefillAdder:
             return req
         truncated = cand_extend_input_len > _rem_tokens
         new_len = min(cand_extend_input_len, _rem_tokens)
+        if truncated:
+            new_len = self._align_truncated_hybrid_chunk(req.prefix_len, new_len)
+            if new_len <= 0:
+                return req
         request_slot_reserve = self._request_slot_reserve_for_req(
             req, extend_input_len=new_len
         )
@@ -1394,7 +1406,10 @@ class PrefillAdder:
                 return AddReqResult.OTHER
 
             # Chunked prefill
-            trunc_len = self._align_prefill_chunk(req.prefix_len, self.rem_chunk_tokens)
+            trunc_len = self._align_truncated_hybrid_chunk(
+                req.prefix_len, self.rem_chunk_tokens
+            )
+            trunc_len = self._align_prefill_chunk(req.prefix_len, trunc_len)
             if trunc_len <= 0:
                 return AddReqResult.OTHER
 
