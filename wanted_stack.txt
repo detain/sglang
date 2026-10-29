@@ -11,13 +11,11 @@
 # LANES are parallel worktree branches with disjoint file sets; integrate lanes 1->5 in order,
 # then the LATE serial block. As each entry lands, MOVE it to stack.txt and delete it here.
 #
-# STATUS 2026-10-28: ALL PRIMARY ENTRIES LANDED (LANES 1-5 + LATE + LT.2) — 42 entries in stack.txt.
-# Lanes 1-4 (entries 1-27): bccd8f5443 + integration fixup 988a599d41 + docs.
-# Lane 5 (entries 28-39): cherry-picked clean onto the lane-4 stack at c47e5627a0, 12/12, ZERO
-# conflicts (tip 01302d4af5; see stack.txt lane-5 verification block). Lane-2's L2.6 went to
-# REJECTED below. LATE (entry 40 = LT.1 #28690 continuous batching, 95628d440e, applied dh3-first
-# behind the H3 teacache fix entry 41, 775edafa05; see stack.txt LATE verification block).
-# REMAINING TO STACK: OPTIONAL tier only.
+# STATUS 2026-10-28: ALL PRIMARY ENTRIES (L1-L5, LT.1, LT.2) LANDED — 42 entries in stack.txt
+# (lanes 1-4 + fixup, lane 5, and LATE/LT entries 40-42; shas + per-tier verification blocks
+# recorded there; entry [42] acceptance review APPROVE — findings in stack.txt WATCH).
+# REMAINING TO STACK: OPTIONAL tier only, gated on GPU validation of the primaries (restart
+# owed). REJECTED/WATCH/CONFIG NOTES sections current.
 #
 # ORDERING RATIONALE: within a lane, entries are ordered by file overlap. LATE items touch
 # scheduler.py AND cache/teacache files (now carrying the landed lane-2 scheduler fixes and

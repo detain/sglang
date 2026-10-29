@@ -1,9 +1,7 @@
-# stack.txt — diffusion-stack-002-2026-10-28
-# updated: 2026-10-28 — LANES 1-5 + LATE + LT LANDED: entries 1-42 (lane 5 = entries 28-39, cherry-picked
-#   c47e5627a0..01302d4af5 with ZERO conflicts; 40-41 = LATE tier: PORT #28690 continuous batching v0
-#   + LOCAL H3 TeaCache fix, cherry-picked dh3-first — both touch runtime/cache/teacache.py;
-#   42 = LT tier final: PORT #33036 overlap declared-parallel conditioning stages, default-serial/inert).
-#   Remaining to stack: OPTIONAL tier only.
+# stack.txt — diffusion-stack-003-2026-10-28
+# updated: 2026-10-28 — PRIMARY COMPLETE (42 entries: lanes 1-5 + LATE 3 incl. 2 local ports +
+#   H3 fix). Entry [42] acceptance review APPROVE — findings logged in WATCH below.
+#   OPTIONAL tier (7) held pending first GPU validation window.
 #
 # branch : diffusion-stack  (fork remote: origin = https://github.com/detain/sglang.git)
 # base   : 3fff5a298a (fork main == upstream sgl-project/sglang main, synced 2026-10-28)
@@ -67,6 +65,24 @@
 #     state, not the parallel path — still owed for safety), plus a serial-vs-auto byte-identical
 #     output check on one I2I model (Flux2 Klein / Qwen Image Edit, low step count). Default `serial`
 #     keeps the entry inert for our served configs until then.
+#   * Entry [42] ACCEPTANCE REVIEW 2026-10-28 — reviewer verdict APPROVE. Five findings, all
+#     future-auto-mode latents (none affect the shipped serial-inert default):
+#     (a) LATENT begin_stage() bug: it reads a stale _stage_uses_by_index[state.stage_index] when a
+#         parallel-group PREDECESSOR stage declares component_uses. Unreachable in all 8 shipped
+#         add_parallel_stages declarations (the predecessor is always an InputValidation-family
+#         stage with empty uses). Fix-forward = a depth guard mirroring the begin_use/end_use
+#         bypass; REQUIRED BEFORE any new pipeline declares a group after a stage with uses.
+#     (b) set_forward_context is a module-global save/restore (forward_context.py:76-101) — safe
+#         ONLY because shipped group members set identical trivial contexts; a future member
+#         setting forward_batch/teacache_plan would race overlapping members. Flag on the #33036
+#         draft re-pull (R6).
+#     (c) auto-mode group members bypass the conditioning_cache_group contextvar + STAGE profiling
+#         spans — perf/telemetry asymmetry vs the serial path, correctness-neutral; a one-line
+#         docs note is worth adding upstream.
+#     (d) TEST GAP: the parallel-stage tests noop begin_stage + patch Req, so real-manager
+#         overlap is never exercised on CPU — rides the owed GPU E2E above.
+#     (e) The py_compile/ruff/pytest gate claims for 1be1b4f563 (entry body) rest on the porting
+#         agent's runs — the review session had no exec permission; cheap re-run in the GPU window.
 #
 # ─────────────────────────────────────────────────────────────────────────────
 # STACK ENTRIES (applied in order on top of base; new sha | source sha from commit trailer)
@@ -286,6 +302,7 @@
 #       19 net-new tests green; extended regression set 105P/1F ≡ control 105P/1F.
 #       Logs: /tmp/opencode/lt2-sweep-merged.txt, lt2-sweep-control.txt. See WATCH: draft re-pull,
 #       R3 conditioning-cache sign-off, joint GPU E2E (continuous x auto) all owed.
+#       REVIEW: entry 42 accepted 2026-10-28 (blob-diff proven exact 4-point weave; serial default inert; findings above are future-auto-mode latents)
 #
 # ── INTEGRATION VERIFICATION (diffusion-stack @ 988a599d41, 2026-10-28) ──
 #   * 27/27 cherry-picks: commit messages byte-identical to lane commits (plain cherry-pick, no -x);
