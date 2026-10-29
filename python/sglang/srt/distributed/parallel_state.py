@@ -555,6 +555,39 @@ class GroupCoordinator:
                 device=self.device,
             )
 
+        # Two GPUs without peer access: large all-reduces (prefill) staged
+        # through pinned host memory with the copy engines instead of NCCL's
+        # SHM transport (1.9 GB/s here). See host_staged_allreduce.py.
+        self.host_staged_comm = None
+        if (
+            os.environ.get("SGLANG_HOST_STAGED_ALLREDUCE") == "1"
+            and self.world_size == 2
+            and is_cuda_alike()
+        ):
+            from sglang.srt.distributed.device_communicators.host_staged_allreduce import (
+                HostStagedAllReduce,
+            )
+
+            self.host_staged_comm = HostStagedAllReduce(
+                self.cpu_group, self.rank_in_group, self.world_size, self.device
+            )
+
+        # Same two GPUs, decode-sized all-reduces: one kernel through host
+        # memory in NCCL's LL form, capturable in a CUDA graph.
+        self.ll_comm = None
+        if (
+            os.environ.get("SGLANG_LL_ALLREDUCE") == "1"
+            and self.world_size == 2
+            and is_cuda_alike()
+        ):
+            from sglang.srt.distributed.device_communicators.ll_allreduce import (
+                LLAllReduce,
+            )
+
+            self.ll_comm = LLAllReduce(
+                self.cpu_group, self.rank_in_group, self.world_size, self.device
+            )
+
         # Create communicator for other hardware backends
         from sglang.srt.distributed.device_communicators.hpu_communicator import (
             HpuCommunicator,
@@ -722,6 +755,19 @@ class GroupCoordinator:
             else:
                 torch.distributed.all_reduce(input_, group=self.device_group)
             return input_
+
+        # Fork ordering note: these two checks run AHEAD of ca/pcie_ipc (resolved
+        # later by _resolve_outplace_all_reduce_method, which stays ca -> pcie_ipc).
+        # Host-staged claims only eager >= 1 MiB messages outside capture (the
+        # prefill NCCL path); LL additionally claims captured bf16 <= 64 KiB --
+        # PCIe-IPC's size class -- so never arm both on one group.
+        if self.host_staged_comm is not None and self.host_staged_comm.should_use(
+            input_
+        ):
+            return self.host_staged_comm.all_reduce(input_)
+
+        if self.ll_comm is not None and self.ll_comm.should_use(input_):
+            return self.ll_comm.all_reduce(input_)
 
         if self.hpu_communicator is not None and not self.hpu_communicator.disabled:
             return self.hpu_communicator.all_reduce(input_)

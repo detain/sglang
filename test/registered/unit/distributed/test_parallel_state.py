@@ -139,6 +139,9 @@ def test_custom_allreduce_precedes_symmetric_memory_pynccl():
     )
     coordinator.world_size = 2
     coordinator.unique_name = "test"
+    # PR #39605 added these all_reduce() pre-checks; the stub must carry them.
+    coordinator.host_staged_comm = None
+    coordinator.ll_comm = None
     coordinator.hpu_communicator = None
     coordinator.xpu_communicator = None
     coordinator.npu_communicator = None
