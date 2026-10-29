@@ -25,7 +25,12 @@ def _resolve_file_backend_dir(flag, env, extra):
     fields = {"file_storage_path": flag} if flag else {}
     with (
         get_context().override_server_args(**fields),
-        get_parallel().override(tp_rank=0, tp_size=1, pp_rank=0, pp_size=1),
+        # The #41187 DCP merge-era widened HiCacheStorageConfig; the file
+        # backend resolution under test is DCP-neutral, so pin the new leaves
+        # to their full-page (single-shard) values.
+        get_parallel().override(
+            tp_rank=0, tp_size=1, pp_rank=0, pp_size=1, attn_dcp_rank=0, attn_dcp_size=1
+        ),
         envs.SGLANG_HICACHE_FILE_BACKEND_STORAGE_DIR.override(env),
     ):
         controller = object.__new__(HiCacheController)

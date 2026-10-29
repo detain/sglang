@@ -9,7 +9,7 @@ import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any, List, Optional, Sequence, Set
+from typing import TYPE_CHECKING, Any, Iterable, List, Optional, Sequence, Set
 
 import torch
 
@@ -22,6 +22,12 @@ logger = logging.getLogger(__name__)
 
 # Max pages per batched storage IO call.
 STORAGE_BATCH_SIZE = 128
+
+# Number of unreadable/corrupt pages to report at warning level before falling
+# back to debug logging. A storage dir written by an older build (pre sidecar /
+# slot-side-state layout changes) can contain thousands of incompatible pages;
+# one warning per page would drown the log, but silence would hide the problem.
+_BAD_PAGE_WARN_BUDGET = 8
 
 
 @dataclass
@@ -133,6 +139,13 @@ class PoolName(str, Enum):
         return self.value
 
 
+# Sidecar keys are ``<page hash>.<pool>``, so these are the markers
+# ``HiCacheFile._component_of`` can read back out of a key. KV has no marker.
+_POOL_COMPONENT_MARKERS = frozenset(
+    pool.value for pool in PoolName if pool is not PoolName.KV
+)
+
+
 class PoolHitPolicy(str, Enum):
     """Hit policy for batch_exists_v2 per-pool prefix matching.
 
@@ -168,6 +181,34 @@ class PoolTransfer:
     # BLOCK_GROUPS geometry: FULL pages per block and keys (pages) per group.
     block_pages: int = 0
     group_pages: int = 0
+
+
+def merge_source_transfers(
+    transfers: Iterable[PoolTransfer], pool: PoolName
+) -> Optional[PoolTransfer]:
+    """Every independent transfer of ``pool`` as one span, in transfer order.
+
+    A pool may be staged in several transfers; a sidecar deriving its indices
+    from that pool must cover all of them. A lone transfer is returned as is,
+    so a sidecar keeps aliasing its tensors. Returns None when ``pool`` has no
+    independent transfer.
+    """
+    sources = [t for t in transfers if t.indices_from_pool is None and t.name == pool]
+    if len(sources) <= 1:
+        return sources[0] if sources else None
+
+    def cat(parts):
+        parts = list(parts)
+        return None if any(part is None for part in parts) else torch.cat(parts)
+
+    keys = [t.keys for t in sources]
+    return PoolTransfer(
+        name=pool,
+        host_indices=cat(t.host_indices for t in sources),
+        device_indices=cat(t.device_indices for t in sources),
+        keys=None if any(k is None for k in keys) else [k for ks in keys for k in ks],
+        hit_policy=sources[0].hit_policy,
+    )
 
 
 @dataclass(frozen=True)
@@ -738,6 +779,27 @@ class HiCacheStorageFailureInjector(HiCacheStorage):
 
 
 class HiCacheFile(HiCacheStorage):
+    @staticmethod
+    def _build_config_suffix(storage_config: HiCacheStorageConfig) -> str:
+        """Per-model/rank suffix appended to every file key.
+
+        Shared with the ``fast_file`` backend so both keep one on-disk format.
+        """
+        model_name = storage_config.model_name
+        model_name = "-".join(model_name.split("/")) if model_name else ""
+        config_suffix = f"_{model_name}"
+        if not storage_config.is_mla_model:
+            config_suffix += f"_{storage_config.tp_rank}_{storage_config.tp_size}"
+        if storage_config.pp_size > 1:
+            config_suffix += f"_{storage_config.pp_size}_{storage_config.pp_rank}"
+        # Under NSA context parallel each CP rank holds a disjoint slice of every
+        # page, so give each rank its own file key to avoid a cross-rank write race.
+        if storage_config.attn_cp_size > 1:
+            config_suffix += (
+                f"_cp{storage_config.attn_cp_rank}_{storage_config.attn_cp_size}"
+            )
+        return config_suffix
+
     def _init_config_suffix(self, storage_config: HiCacheStorageConfig) -> None:
         """Derive the per-deployment key suffix from the storage config."""
         self._unified_suffixes = None
@@ -814,9 +876,16 @@ class HiCacheFile(HiCacheStorage):
     def __init__(
         self, storage_config: HiCacheStorageConfig, file_path: str = "/tmp/hicache"
     ):
+        # Parallel page reads (stack entry 254); default 1 = serial.
+        self.read_workers = max(1, envs.SGLANG_HICACHE_FILE_BACKEND_READ_WORKERS.get())
+        self._read_pool = None
+        self._read_pool_lock = threading.Lock()
         self.file_path = (
-            envs.SGLANG_HICACHE_FILE_BACKEND_STORAGE_DIR.get()
-            or (storage_config.extra_config or {}).get("file_storage_path")
+            # The --file-storage-path flag (extra_config) outranks the env var
+            # (stack entry 253): an explicit CLI path is a per-launch intent,
+            # the env a session default; a stale env must not silently win.
+            (storage_config.extra_config or {}).get("file_storage_path")
+            or envs.SGLANG_HICACHE_FILE_BACKEND_STORAGE_DIR.get()
             or file_path
         )
 
@@ -836,7 +905,10 @@ class HiCacheFile(HiCacheStorage):
             self.tp_config_suffix += dcp_suffix
 
         if not os.path.exists(self.file_path) and tp_rank == 0 and attn_cp_rank == 0:
-            os.makedirs(self.file_path)
+            # exist_ok closes the cross-process race with a sibling rank that
+            # won the same directory between the check and the mkdir
+            # (stack entry 252); a FileExistsError here killed rank init.
+            os.makedirs(self.file_path, exist_ok=True)
             logger.info(f"Created HiCacheFile storage directory at {self.file_path}")
 
         # Metadata cache positive lookup toggle & TTL
@@ -888,6 +960,52 @@ class HiCacheFile(HiCacheStorage):
                 self.metadata_cache.remove if self.metadata_cache is not None else None
             ),
         )
+
+        # Rate limit for unreadable-page warnings; see _BAD_PAGE_WARN_BUDGET.
+        self._bad_page_warnings = 0
+        # Same rate limit for the two fetch/write-miss reports below, plus a
+        # per-pool tally: a refused sidecar write is otherwise invisible to the
+        # operator (the backup path does not check sidecar results unless the
+        # backend dedupes writes), and the fetch-miss warning used to be
+        # indistinguishable from a KV page miss (stack entry 209's reporting).
+        self._miss_report_warnings = 0
+        self.fetch_miss_counts: dict[str, int] = {}
+        self.write_refusal_counts: dict[str, int] = {}
+
+    @staticmethod
+    def _component_of(storage_key: str) -> str:
+        """Pool an (unsuffixed) storage key belongs to.
+
+        KV pages carry no marker; sidecar keys are ``<page hash>.<pool>``, and a
+        page hash is hex, so the marker is the trailing dotted token.
+        """
+        _, _, marker = storage_key.rpartition(".")
+        if marker and marker != storage_key and marker in _POOL_COMPONENT_MARKERS:
+            return marker
+        return str(PoolName.KV)
+
+    def _report_miss(self, message: str) -> None:
+        # Rate-limited like _report_bad_page: a storage dir written by another
+        # build (or a per-rank shard that never held these sidecars) can miss
+        # thousands of keys, and one warning per key buries the signal.
+        if self._miss_report_warnings < _BAD_PAGE_WARN_BUDGET:
+            self._miss_report_warnings += 1
+            logger.warning(message)
+        else:
+            logger.debug(message)
+
+    def _report_bad_page(self, what: str, key: str) -> None:
+        # A page that exists but cannot be (de)serialized is a storage miss for
+        # the current build: report it as such (rate-limited) and let the batch
+        # truncate to the contiguous good prefix instead of unwinding into the
+        # daemon storage threads, which would disable the tier for the whole
+        # serve (see sgl-project/sglang#39830, stack entry 24).
+        message = f"HiCacheFile page {what} failed for {key}; treating as a miss."
+        if self._bad_page_warnings < _BAD_PAGE_WARN_BUDGET:
+            self._bad_page_warnings += 1
+            logger.warning(message)
+        else:
+            logger.debug(message)
 
     def _validate_unified_page_bytes(self, page_bytes: int) -> None:
         if self._unified_chunk_spans is not None:
@@ -967,19 +1085,24 @@ class HiCacheFile(HiCacheStorage):
         target_sizes: Optional[Any] = None,
     ) -> torch.Tensor | None:
         if self._unified_suffixes is None:
-            return self._get_file(self._get_suffixed_key(key), target_location)
+            return self._get_file(
+                self._get_suffixed_key(key), target_location, self._component_of(key)
+            )
         # Do not expose a partially restored page if any chunk is missing,
         # truncated, or evicted between the existence check and the read.
         scratch = torch.empty_like(
             target_location, memory_format=torch.contiguous_format
         )
+        component = self._component_of(key)
         for suffixed, chunk in self._page_chunks(key, scratch):
-            if self._get_file(suffixed, chunk) is None:
+            if self._get_file(suffixed, chunk, component) is None:
                 return None
         target_location.copy_(scratch)
         return target_location
 
-    def _get_file(self, suffixed: str, target_location: torch.Tensor):
+    def _get_file(
+        self, suffixed: str, target_location: torch.Tensor, component: str = ""
+    ):
         tensor_path = os.path.join(self.file_path, f"{suffixed}.bin")
         try:
             expected = target_location.numel() * target_location.element_size()
@@ -993,10 +1116,32 @@ class HiCacheFile(HiCacheStorage):
             if self.metadata_cache is not None:
                 self.metadata_cache.add(suffixed)
             return target_location
-        except OSError:
+        except FileNotFoundError:
             if self.metadata_cache is not None:
                 self.metadata_cache.remove(suffixed)
-            logger.warning(f"Failed to fetch {suffixed} from HiCacheFile storage.")
+            pool = component or self._component_of(suffixed)
+            self.fetch_miss_counts[pool] = self.fetch_miss_counts.get(pool, 0) + 1
+            self._report_miss(
+                f"Failed to fetch {suffixed} from HiCacheFile storage: no such "
+                f"{pool} page ({self.fetch_miss_counts[pool]} {pool} misses so far)."
+                + (
+                    ""
+                    if pool == str(PoolName.KV)
+                    else " A sidecar miss is an endpoint miss: the trailing "
+                    "window of the prefetched span is not restorable there, so "
+                    "the KV prefix read for it is forfeited too."
+                )
+            )
+            return None
+        except OSError:
+            # Short read or other read failures on a corrupt / truncated page
+            # (e.g. one written by a build with a different page layout).
+            # Degrade to a miss with the tensor-or-None contract: the caller
+            # truncates the batch prefix, and a background storage thread never
+            # sees the exception (stack entry 24).
+            if self.metadata_cache is not None:
+                self.metadata_cache.remove(suffixed)
+            self._report_bad_page("read", suffixed)
             return None
 
     def batch_get(
@@ -1005,12 +1150,38 @@ class HiCacheFile(HiCacheStorage):
         target_locations: List[torch.Tensor],
         target_sizes: Optional[Any] = None,
     ) -> List[torch.Tensor | None]:
-        return [
-            self.get(key, target_location)
-            for key, target_location in zip(
-                keys, target_locations or [None] * len(keys)
-            )
-        ]
+        return self._map_reads(
+            lambda kt: self.get(kt[0], kt[1]),
+            list(zip(keys, target_locations or [None] * len(keys))),
+        )
+
+    def _map_reads(self, fn, items: list) -> list:
+        """[fn(x) for x in items], on the read pool when read_workers > 1.
+
+        Returns only after every read has finished (they write into caller-owned
+        buffers), in input order, so callers see the same results as a serial
+        loop. A read that raises becomes a miss (None).
+        """
+        if self.read_workers <= 1 or len(items) <= 1:
+            return [fn(x) for x in items]
+        if self._read_pool is None:
+            with self._read_pool_lock:
+                if self._read_pool is None:
+                    from concurrent.futures import ThreadPoolExecutor
+
+                    self._read_pool = ThreadPoolExecutor(
+                        max_workers=self.read_workers,
+                        thread_name_prefix="hicache-file-read",
+                    )
+        futures = [self._read_pool.submit(fn, x) for x in items]
+        results = []
+        for future in futures:
+            try:
+                results.append(future.result())
+            except Exception as e:
+                logger.error(f"HiCacheFile parallel read failed: {e}")
+                results.append(None)
+        return results
 
     def set(
         self,
@@ -1020,15 +1191,20 @@ class HiCacheFile(HiCacheStorage):
         target_sizes: Optional[Any] = None,
     ) -> bool:
         if self._unified_suffixes is None:
-            return self._set_file(self._get_suffixed_key(key), value)
+            return self._set_file(
+                self._get_suffixed_key(key), value, self._component_of(key)
+            )
+        component = self._component_of(key)
         for suffixed, chunk in self._page_chunks(key, value):
-            if not self._set_file(suffixed, chunk):
+            if not self._set_file(suffixed, chunk, component):
                 return False
         # A small LRU cap may have evicted an earlier chunk while publishing
         # a later one. Partial pages must not be acknowledged as complete.
         return self.exists(key)
 
-    def _set_file(self, suffixed: str, value: torch.Tensor) -> bool:
+    def _set_file(
+        self, suffixed: str, value: torch.Tensor, component: str = ""
+    ) -> bool:
         tensor_path = os.path.join(self.file_path, f"{suffixed}.bin")
 
         # Fast path: same key already on disk. Refresh recency and skip rewrite.
@@ -1043,6 +1219,21 @@ class HiCacheFile(HiCacheStorage):
             value_bytes = value.numel() * value.element_size()
             # Ask the evictor to admit + reserve disk space (evicting if needed).
             if not self._evictor.reserve(suffixed, value_bytes, key=suffixed):
+                # The evictor says why (cap / watermark / ownership) once per
+                # refused key; keep a per-pool tally so a sidecar pool that is
+                # systematically refused -- e.g. ``.mamba`` files losing the
+                # free-space watermark while KV keeps landing -- is measurable
+                # instead of only inferable from later prefetch misses
+                # (stack entry 209's reporting).
+                pool = component or self._component_of(suffixed)
+                self.write_refusal_counts[pool] = (
+                    self.write_refusal_counts.get(pool, 0) + 1
+                )
+                self._report_miss(
+                    f"HiCacheFile refused to write {suffixed} (pool={pool}, "
+                    f"{self.write_refusal_counts[pool]} {pool} refusals so far); "
+                    "later prefetches cannot restore this page."
+                )
                 return False
             reserved = True
 
@@ -1208,12 +1399,24 @@ class HiCacheFile(HiCacheStorage):
         return key if pool_name == PoolName.KV else f"{key}.{pool_name}"
 
     def _read_page(self, pool_name: str, key: str, host_pool, page_offset: int) -> bool:
-        """Read one page from storage into host_pool at page_offset."""
+        """Read one page from storage into host_pool at page_offset.
+
+        A page whose payload cannot be deserialized (e.g. a sidecar or
+        slot-side-state file written by an older build with a shorter layout)
+        is reported as a per-page miss: ``set_from_flat_data_page`` explicitly
+        raises on incompatible layouts, and that exception must not unwind
+        through ``_batch_io_v2`` into the daemon storage threads
+        (sgl-project/sglang#39830, stack entry 24).
+        """
         storage_key = self._log_key(pool_name, key)
-        data_page = self.get(storage_key, host_pool.get_dummy_flat_data_page())
-        if data_page is None:
+        try:
+            data_page = self.get(storage_key, host_pool.get_dummy_flat_data_page())
+            if data_page is None:
+                return False
+            host_pool.set_from_flat_data_page(page_offset, data_page)
+        except (OSError, ValueError, RuntimeError):
+            self._report_bad_page("read", storage_key)
             return False
-        host_pool.set_from_flat_data_page(page_offset, data_page)
         return True
 
     def _write_page(
@@ -1221,8 +1424,24 @@ class HiCacheFile(HiCacheStorage):
     ) -> bool:
         """Write one page from host_pool at page_offset to storage as raw bytes."""
         storage_key = self._log_key(pool_name, key)
-        data_page = host_pool.get_data_page(page_offset, flat=True)
+        try:
+            data_page = host_pool.get_data_page(page_offset, flat=True)
+        except (OSError, ValueError, RuntimeError):
+            self._report_bad_page("write", storage_key)
+            return False
         return self.set(storage_key, data_page)
+
+    def _safe_page_op(self, op_fn, pool_name: str, key: str, host_pool, offset):
+        # Per-page last line of defense: a single bad page must come back as
+        # False (a miss) rather than raising out of the batch comprehension,
+        # which would skip every later page and kill the calling storage
+        # thread.  The consumers (count_pool_hits / page loops) truncate the
+        # batch to the leading run of True results.
+        try:
+            return op_fn(pool_name, key, host_pool, offset)
+        except (OSError, ValueError, RuntimeError):
+            self._report_bad_page(op_fn.__name__, key)
+            return False
 
     def _batch_io_v2(self, transfers: List[PoolTransfer], op_fn):
         results: dict[str, List[bool]] = {}
@@ -1244,11 +1463,51 @@ class HiCacheFile(HiCacheStorage):
                 results[transfer.name] = [False] * len(keys)
                 continue
 
-            results[transfer.name] = [
-                op_fn(transfer.name, key, host_pool, host_indices[i * page_size].item())
+            args = [
+                (transfer.name, key, host_pool, host_indices[i * page_size].item())
                 for i, key in enumerate(keys)
             ]
+            if op_fn == self._read_page and self.read_workers > 1 and len(args) > 1:
+                results[transfer.name] = self._read_pages_parallel(host_pool, args)
+            else:
+                results[transfer.name] = [self._safe_page_op(op_fn, *a) for a in args]
         return results
+
+    def _read_pages_parallel(self, host_pool, args: list) -> List[bool]:
+        """_read_page for many pages: file reads on the read pool, pool writes here.
+
+        Only the file read (into a private staging page) runs on the pool;
+        set_from_flat_data_page stays on the calling thread, in page order. Host
+        pools may take thread-local state there (e.g. a layout lease that the
+        caller already holds for the whole transfer); calling it from a pool
+        thread can deadlock. Chunked so staging memory stays at a few pages per
+        worker. Like the serial _read_page (stack entry 24), a failing file read
+        or a pool write on an incompatible layout degrades to a per-page miss
+        and never unwinds into the daemon storage threads.
+        """
+        chunk = 4 * self.read_workers
+        staging = [
+            host_pool.get_dummy_flat_data_page() for _ in range(min(chunk, len(args)))
+        ]
+        out: List[bool] = []
+        for start in range(0, len(args), chunk):
+            part = args[start : start + chunk]
+            pages = self._map_reads(
+                lambda ia: self.get(self._log_key(ia[1][0], ia[1][1]), staging[ia[0]]),
+                list(enumerate(part)),
+            )
+            for (name, key, _, page_offset), page in zip(part, pages):
+                if page is None:
+                    out.append(False)
+                    continue
+                try:
+                    host_pool.set_from_flat_data_page(page_offset, page)
+                except (OSError, ValueError, RuntimeError):
+                    self._report_bad_page("read", self._log_key(name, key))
+                    out.append(False)
+                    continue
+                out.append(True)
+        return out
 
     def batch_get_v2(
         self,
@@ -1278,5 +1537,3 @@ class HiCacheFile(HiCacheStorage):
         except Exception as e:
             logger.error(f"Failed to clear HiCacheFile storage: {e}")
             return False
-
-# TODO(merge5): re-plant entry 24,60,209,252,253,254 semantics (batch B3); fork hunks saved /tmp/opencode/merge5-dossier/replant/python__sglang__srt__mem_cache__hicache_storage.py.fork-hunks.patch

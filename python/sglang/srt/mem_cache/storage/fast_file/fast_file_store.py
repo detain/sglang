@@ -102,6 +102,16 @@ class HiCacheFastFile(HiCacheFile):
         # and storage-dir env var are shared.
         extra_config = storage_config.extra_config or {}
         self.config_suffix = self._build_config_suffix(storage_config)
+        # Keep the flat, pre-unified-layout key format (stack entry 249): the
+        # reference backend's #39727/#44849-era unified-suffix fields and the
+        # DCP-split tp suffix are neutralized here so the inherited key
+        # helpers (_get_suffixed_key, _get_component_keys, _file_exists) keep
+        # reading and writing the one on-disk format this backend shares with
+        # HiCacheFile via _build_config_suffix.
+        self.tp_config_suffix = self.config_suffix
+        self._unified_suffixes = None
+        self._unified_chunk_sizes = {}
+        self._unified_chunk_spans = None
         self.storage_root = (
             extra_config.get("storage_dir")
             or envs.SGLANG_HICACHE_FILE_BACKEND_STORAGE_DIR.get()

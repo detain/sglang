@@ -299,6 +299,12 @@ class PrefetchOperation(StorageOperation):
 
 
 class HiCacheController:
+    # Class-level default so __new__-built harness controllers that drive
+    # _generate_storage_config (key-scheme and storage-path units) reach the
+    # file-backend flag fold with an honest pre-attach value; real __init__
+    # instances shadow it before the first attach.
+    storage_backend_type: Optional[str] = None
+
     def __init__(
         self,
         token_to_kv_pool_allocator: BaseTokenToKVPoolAllocator,
