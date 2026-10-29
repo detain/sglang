@@ -285,10 +285,31 @@ class TestTritonGDNTrackSnapshot(CustomTestCase):
         self.assertIs(kwargs["track_state"], sentinel.track_state)
         self.assertIs(kwargs["track_chunk_idx"], sentinel.track_chunk_idx)
 
-    def test_extend_without_snapshot_support_passes_nothing(self):
+    def test_extend_without_a_snapshot_forwards_nothing(self):
+        """Forwarding is gated by the buffer's presence, not by the
+        declaration: ``supports_track_state_snapshot`` decides whether the
+        BACKEND allocates the fp32 buffer (pinned by the dispatch test
+        above), so an ordinary extend must never carry track kwargs.
+        """
         kernel = TritonGDNKernel()
-        kernel.supports_track_state_snapshot = False
-        kwargs = self._extend(kernel)
+        chunk = Mock(return_value=sentinel.output)
+        x = torch.zeros(1, 2, 1, 2)
+        with (
+            patch.object(gdn_triton, "chunk_gated_delta_rule", chunk),
+            patch.object(gdn_triton, "is_cpu", return_value=False),
+            patch.object(gdn_triton, "is_npu", return_value=False),
+        ):
+            kernel.extend(
+                x,
+                x,
+                x,
+                x[..., 0],
+                x[..., 0],
+                ssm_states=torch.zeros(4, 1, 2, 2),
+                cache_indices=torch.tensor([3]),
+                query_start_loc=torch.tensor([0, 2]),
+            )
+        kwargs = chunk.call_args.kwargs
         self.assertNotIn("track_state", kwargs)
         self.assertNotIn("track_chunk_idx", kwargs)
 
