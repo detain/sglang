@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import math
+from collections import defaultdict
 from dataclasses import replace
 from typing import TYPE_CHECKING, Callable, Optional, Sequence
 
@@ -12,6 +14,7 @@ from sglang.srt.mem_cache.base_prefix_cache import (
     IncLockRefResult,
     InsertParams,
     InsertResult,
+    MambaCowAllocError,
     MatchPrefixParams,
     MatchResult,
 )
@@ -61,8 +64,16 @@ if TYPE_CHECKING:
     )
 
 
+logger = logging.getLogger(__name__)
+
+
 class MambaComponent(TreeComponent):
     component_type = ComponentType.MAMBA
+    # Class-level defaults so a component built without __init__ (unit tests
+    # use __new__) can still take the refuse/skip paths without an
+    # AttributeError.
+    _ckpt_pos_rejects = 0
+    _skipped_checkpoint_count = 0
 
     def __init__(
         self, cache: UnifiedRadixCache, params: CacheInitParams, slot: TreeSlot
@@ -221,11 +232,29 @@ class MambaComponent(TreeComponent):
                 self.cache.dec_lock_ref(
                     result.best_match_node, lock_result.to_dec_params()
                 )
-                assert dst_index is not None, "Can not alloc mamba cache"
+                if dst_index is None:
+                    # Entry 198 (#37612): a pinned pool on the match path is an
+                    # admission condition, not a bug -- raise so prefill
+                    # re-queues the request instead of asserting the scheduler
+                    # down.
+                    raise MambaCowAllocError("Can not alloc mamba cache")
             req.kv.mamba_pool_idx = dst_index[0]
         req.kv.mamba_cow_src_index = src_index
         req.kv.mamba_needs_clear = False
         return result
+
+    def _mamba_value_misaligned(self, params: InsertParams) -> bool:
+        # Entry 196 (#39209): the value was produced at mamba_value_seqlen; a
+        # leaf truncated to a shorter component boundary (e.g. the SWA branch)
+        # is not that position, and stamping it would attach a later state to
+        # an earlier key (#38815).
+        return (
+            params.mamba_value is not None
+            and params.mamba_value_seqlen is not None
+            and params.key is not None
+            and len(params.key) + int(self.tree_core.is_eagle)
+            != params.mamba_value_seqlen
+        )
 
     def commit_insert_component_data(
         self,
@@ -236,6 +265,8 @@ class MambaComponent(TreeComponent):
         cache_actions: list[CacheAction | ComponentAction],
     ) -> None:
         assert params.mamba_value is not None
+        if self._mamba_value_misaligned(params):
+            return
         if is_new_leaf:
             node.component_data[self.component_type].value = params.mamba_value
             self.tree_core.lru_lists[self.component_type].insert_mru(node)
@@ -527,8 +558,13 @@ class MambaComponent(TreeComponent):
         if cd.lock_ref == 0:
             self.tree_core._update_evictable_leaf_sets(node)
 
-    def _alloc_mamba_slot(self, req: Optional[Req] = None) -> torch.Tensor:
-        """Allocate one mamba pool slot, evicting if necessary."""
+    def _try_alloc_mamba_slot(
+        self, req: Optional[Req] = None
+    ) -> Optional[torch.Tensor]:
+        """One mamba slot, evicting if needed; None when every slot is pinned
+        (stack entries 197/216: the donation caller SKIPS the boundary
+        checkpoint and retries at the next one; the match-path COW caller
+        raises MambaCowAllocError for admission to re-queue)."""
         storage, sub_pool = self._state()
         slot = storage.take_state_slots(sub_pool, 1)
         if slot is None:
@@ -553,8 +589,37 @@ class MambaComponent(TreeComponent):
                     lock.receipt.skipped_lock_components += (ct,)
             self.cache.evict_for_alloc(EvictParams(num_tokens=0, mamba_num=1))
             slot = storage.take_state_slots(sub_pool, 1)
-            assert slot is not None, "Can not alloc mamba cache"
         return slot
+
+    def _alloc_mamba_slot(self, req: Optional[Req] = None) -> torch.Tensor:
+        """Hard-allocation form for callers that cannot proceed without the
+        slot; None becomes the loud error."""
+        slot = self._try_alloc_mamba_slot(req)
+        assert slot is not None, "Can not alloc mamba cache"
+        return slot
+
+    def _record_skipped_checkpoint(self, req: Req) -> None:
+        """A pinned pool made this chunk boundary's checkpoint impossible. The
+        request keeps running; only prefix REUSE is lost, so this is a
+        capacity signal, not an error (stack entry 197, #37943)."""
+        self._skipped_checkpoint_count += 1
+        count = self._skipped_checkpoint_count
+        if count == 1 or count % 1000 == 0:
+            ct = self.component_type
+            allocator = self.cache.req_to_token_pool.mamba_allocator
+            logger.warning(
+                "Skipping Mamba checkpoint: no slot available after eviction "
+                "for request %s at seqlen %s (%d skipped so far). Pool: available=%d "
+                "evictable=%d protected=%d. Every slot is held by a running "
+                "request: raise --max-mamba-cache-size or "
+                "--mamba-full-memory-ratio to keep prefix reuse.",
+                req.rid,
+                req.kv.mamba_last_track_seqlen,
+                count,
+                allocator.available_size(),
+                self.tree_core.component_evictable_size_[ct],
+                self.tree_core.component_protected_size_[ct],
+            )
 
     def _state(self):
         """The storage whose state this component's values are, and the
@@ -649,14 +714,28 @@ class MambaComponent(TreeComponent):
                 insert_params.mamba_value = self._commit_int8_checkpoint(active_value)
             else:
                 insert_params.mamba_value = active_value
+            # The value was produced at this seqlen; the insert must not stamp
+            # it onto a shorter key (#39209, stack entry 196).
+            insert_params.mamba_value_seqlen = cache_len
             return cache_len
         else:
             if cache_len is None:
                 return 0
-            # Donate the mamba index to the radix cache instead of copying.
+            # Donate the mamba index to the radix cache instead of copying. All
+            # strategies but int8 no_buffer need a fresh slot before donating;
+            # a pinned pool skips this boundary's checkpoint and the next one
+            # retries (stack entry 197, #37943).
+            needs_new_slot = (
+                self.cache.enable_mamba_extra_buffer or not self.quantizes_checkpoints
+            )
+            new_slot = None
+            if needs_new_slot:
+                new_slot = self._try_alloc_mamba_slot(req)
+                if new_slot is None:
+                    self._record_skipped_checkpoint(req)
+                    return 0
             if self.quantizes_checkpoints:
                 if self.cache.enable_mamba_extra_buffer:
-                    new_slot = self._alloc_mamba_slot(req)
                     storage, sub_pool = self._state()
                     src_active = storage.donate_tracking_slot(sub_pool, req, new_slot)
                     mamba_value_donated = self._commit_int8_checkpoint(src_active)
@@ -666,18 +745,18 @@ class MambaComponent(TreeComponent):
                         req.kv.mamba_pool_idx.view(-1)
                     )
             elif self.cache.enable_mamba_extra_buffer:
-                new_slot = self._alloc_mamba_slot(req)
                 storage, sub_pool = self._state()
                 mamba_value_donated = storage.donate_tracking_slot(
                     sub_pool, req, new_slot
                 )
             else:
-                mamba_value_donated = self._alloc_mamba_slot(req)
+                mamba_value_donated = new_slot
                 storage, sub_pool = self._state()
                 storage.copy_state(
                     sub_pool, req.kv.mamba_pool_idx.unsqueeze(0), mamba_value_donated
                 )
             insert_params.mamba_value = mamba_value_donated
+            insert_params.mamba_value_seqlen = cache_len
             return cache_len
 
     def cleanup_after_caching_req(
@@ -689,7 +768,12 @@ class MambaComponent(TreeComponent):
     ) -> None:
         if is_finished:
             mamba_value_inserted = (
-                insert_result is not None and not insert_result.mamba_exist
+                insert_result is not None
+                and not insert_result.mamba_exist
+                and not (
+                    insert_params is not None
+                    and self._mamba_value_misaligned(insert_params)
+                )
             )
 
             if self.quantizes_checkpoints:
@@ -719,7 +803,9 @@ class MambaComponent(TreeComponent):
                 storage.release_state(sub_pool, req)
         else:
             if insert_params.mamba_value is not None and (
-                insert_result is None or insert_result.mamba_exist
+                insert_result is None
+                or insert_result.mamba_exist
+                or self._mamba_value_misaligned(insert_params)
             ):
                 self._free_mamba_value(insert_params.mamba_value)
             req.kv.mamba_last_track_seqlen = None
@@ -793,6 +879,12 @@ class MambaComponent(TreeComponent):
         *,
         req: Optional[Req] = None,
     ) -> PrepareLoadBackResult:
+        if not self._host_ckpt_position_ok(node_id):
+            # #39830 fencing: the host slot paired with this node's KV was
+            # recorded at a different token position; it was already poisoned
+            # (detached + freed) there, so refuse the whole load-back and let
+            # the caller re-prefill rather than serve fluent wrong output.
+            return PrepareLoadBackResult(rejected=True)
         if (
             req is None
             or req.kv.holds_mamba
@@ -804,6 +896,16 @@ class MambaComponent(TreeComponent):
         dst = self._alloc_request_state_slot(req)
         assert dst is not None, "Cannot alloc mamba for load_back"
         return PrepareLoadBackResult(allocated_mamba_slot=dst)
+
+    def alloc_prefetch_staging(self, num_tokens: int) -> Optional[torch.Tensor]:
+        host_indices = self._mamba_pool_host.alloc(num_tokens)
+        if host_indices is None:
+            # Reclaim only the shortfall (stack entry 90).
+            shortfall = num_tokens - self._mamba_pool_host.available_size()
+            if shortfall > 0:
+                self.cache.evict_host(shortfall, ComponentType.MAMBA)
+            host_indices = self._mamba_pool_host.alloc(num_tokens)
+        return host_indices
 
     def _alloc_request_state_slot(self, req: Req) -> Optional[torch.Tensor]:
         storage, sub_pool = self._state()
@@ -823,6 +925,95 @@ class MambaComponent(TreeComponent):
             storage, sub_pool = self._state()
             storage.free_state_slots(sub_pool, prep.allocated_mamba_slot)
             req.kv.mamba_pool_idx = None
+
+    # ---- #39830 restore-position fencing (stack entry 30) ----
+
+    def _token_depth(self, node: UnifiedTreeNode) -> Optional[int]:
+        """Tokens covered by the prefix ending at `node` (root chain walk)."""
+        depth = 0
+        cur: Optional[UnifiedTreeNode] = node
+        while cur is not None:
+            if cur.key is not None:
+                depth += len(cur.key)
+            cur = cur.parent
+        return depth
+
+    def _record_host_ckpt_pos(
+        self, node: UnifiedTreeNode, host_indices: Optional[torch.Tensor]
+    ) -> None:
+        """Stamp where a checkpoint was taken onto the host slots holding it."""
+        pool = self._mamba_pool_host
+        if pool is None or getattr(pool, "ckpt_pos_buffer", None) is None:
+            return
+        depth = self._token_depth(node)
+        if depth is not None:
+            pool.record_ckpt_pos(host_indices, depth)
+
+    def _host_ckpt_position_ok(self, node_id: NodeId) -> bool:
+        """Does the node's host mamba checkpoint carry this node's token position?
+
+        A KV page is paired with one mamba checkpoint per cached node; if the
+        slot behind `host_value` was re-recorded under another owner, restoring
+        it yields byte-perfect KV read through a stale state -- fluent wrong
+        output (issue #39830). Unknown records (legacy slots, pools without the
+        buffer, the Rust tree core that never runs these hooks) pass without
+        accusation; a confirmed mismatch poisons the copy and refuses the load.
+        """
+        pool = self._mamba_pool_host
+        if pool is None or getattr(pool, "ckpt_pos_buffer", None) is None:
+            return True
+        try:
+            node = self.tree_core.node_by_id(node_id)
+        except NotImplementedError:
+            return True  # native tree core does not expose Python nodes
+        cd = node.component_data[self.component_type]
+        if cd.host_value is None:
+            return True
+        recorded = pool.get_ckpt_pos(cd.host_value)
+        if recorded is None:
+            return True
+        depth = self._token_depth(node)
+        if depth is None or depth == recorded:
+            return True
+        self._poison_stale_host_ckpt(node, recorded, depth)
+        return False
+
+    def _poison_stale_host_ckpt(
+        self, node: UnifiedTreeNode, recorded: int, depth: int
+    ) -> None:
+        cd = node.component_data[self.component_type]
+        self._ckpt_pos_rejects += 1
+        if self._ckpt_pos_rejects <= 5 or self._ckpt_pos_rejects % 50 == 0:
+            logger.error(
+                "HiCache restore refused (issue #39830 fencing): mamba host "
+                "slot(s) %s hold a checkpoint recorded at token position %d but "
+                "the owning tree node is at depth %d (%d refusals so far). "
+                "Detaching the host copy; this restore degrades to a cache miss.",
+                cd.host_value.tolist(),
+                recorded,
+                depth,
+                self._ckpt_pos_rejects,
+            )
+        # Refused, not believed: free the host copy through the regular host
+        # eviction primitive so the LRU/leaf-set invariants hold. No cascade is
+        # needed: the node keeps its other components (a node whose Full data
+        # vanished everywhere is tombstoned by the eviction path, not here).
+        device_frees: dict[ComponentType, list[torch.Tensor]] = defaultdict(list)
+        host_frees: dict[ComponentType, list[torch.Tensor]] = defaultdict(list)
+        # The merged eviction primitive records deferred actions through a
+        # cache_actions list; this immediate host-detach path emits none the
+        # caller does not already handle via _free_values below.
+        self.tree_core._evict_component_and_detach_lru(
+            node,
+            self,
+            device_frees,
+            host_frees,
+            [],
+            target=EvictLayer.HOST,
+            tracker=defaultdict(int),
+        )
+        self.tree_core._update_evictable_leaf_sets(node)
+        self.cache._free_values(device_frees, host_frees)
 
     def prepare_buffer_load_back(
         self, req: Req, staged: list[PoolTransfer]
@@ -849,13 +1040,6 @@ class MambaComponent(TreeComponent):
     ) -> PreparePrefetchResult:
         # One state slot per fetch, allocated once the hit is known.
         return PreparePrefetchResult(staging_tokens=1)
-
-    def alloc_prefetch_staging(self, num_tokens: int) -> Optional[torch.Tensor]:
-        host_indices = self._mamba_pool_host.alloc(num_tokens)
-        if host_indices is None:
-            self.cache.evict_host(num_tokens, ComponentType.MAMBA)
-            host_indices = self._mamba_pool_host.alloc(num_tokens)
-        return host_indices
 
     def build_hicache_transfers(
         self,
@@ -957,6 +1141,10 @@ class MambaComponent(TreeComponent):
                 cd = node.component_data[ct]
                 if cd.host_value is None:
                     cd.host_value = transfers[0].host_indices.clone()
+                    # Fence the pairing (#39830, stack entry 30): remember
+                    # where this checkpoint was taken, on the slots that hold
+                    # it.
+                    self._record_host_ckpt_pos(node, transfers[0].host_indices)
 
         elif phase == CacheTransferPhase.LOAD_BACK:
             if not transfers:
@@ -1000,6 +1188,11 @@ class MambaComponent(TreeComponent):
                 return
 
             target_node.component_data[ct].host_value = host_indices.clone()
+            # Bookkeeping for the restore fence (stack entry 30): the storage
+            # fetch attached these slots at this node's boundary. (L3 page
+            # bytes carry no position; a mis-keyed page is caught by the hash
+            # chain, not here.)
+            self._record_host_ckpt_pos(target_node, host_indices)
             if target_node.component_data[ct].value is None:
                 host_lru = self.tree_core.host_lru_lists[ct]
                 if not host_lru.in_list(target_node):
@@ -1145,5 +1338,3 @@ class _MambaBufferLoadBackContext(BufferLoadBackContext):
         if not insert_result.mamba_exist:
             return []
         return [(PoolName.MAMBA, self.node_copy.device_indices)]
-
-# TODO(merge5): re-plant entry 30,90,196,197,198,216 semantics (batch B3); fork hunks saved /tmp/opencode/merge5-dossier/replant/python__sglang__srt__mem_cache__unified_cache__components__mamba.py.fork-hunks.patch

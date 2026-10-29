@@ -91,10 +91,14 @@ def _make_component(pool, nodes, rust_node_by_id=False):
             raise NotImplementedError("node_by_id: not yet ported to the Rust core")
         return nodes[node_id]
 
-    def evict_and_detach(node, c, device_frees, host_frees, target, tracker):
-        # Mirrors UnifiedTreeCore._evict_component_and_detach_lru for HOST.
+    def evict_and_detach(
+        node, c, device_frees, host_frees, cache_actions, target, tracker
+    ):
+        # Mirrors UnifiedTreeCore._evict_component_and_detach_lru for HOST
+        # (post-#4697x signature: the deferred-action list is a positional).
         _, host_freed = c.evict_component(
             node,
+            cache_actions=cache_actions,
             target=target,
             device_frees=device_frees,
             host_frees=host_frees,
@@ -109,9 +113,7 @@ def _make_component(pool, nodes, rust_node_by_id=False):
         _evict_component_and_detach_lru=evict_and_detach,
         _update_evictable_leaf_sets=updated_leaf_sets.append,
     )
-    comp.cache = SimpleNamespace(
-        _free_values=lambda d, h: freed_values.append((d, h))
-    )
+    comp.cache = SimpleNamespace(_free_values=lambda d, h: freed_values.append((d, h)))
     return comp, lru, updated_leaf_sets, freed_values
 
 

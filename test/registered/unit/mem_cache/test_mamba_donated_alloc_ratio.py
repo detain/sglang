@@ -64,6 +64,16 @@ class _RatioCache:
     def __init__(self, pool_size: int):
         self.root_node = UnifiedTreeNode(self.tree_components)
         self.allocator = _BoundedMambaAllocator(pool_size)
+        # The merged donate path reaches the request pool through the storage
+        # (StaticKVStorage.requests), so the stub carries one: donate is
+        # reachable, and tests that must forbid it override the hook.
+        self.donated = []
+        self.req_to_token_pool = SimpleNamespace(
+            mamba_allocator=self.allocator,
+            donate_mamba_ping_pong_slot=lambda req, new_slot: (
+                self.donated.append((req, new_slot)) or new_slot
+            ),
+        )
         self.token_to_kv_pool_allocator = SimpleNamespace(
             state_slots=self.allocator, storage=None
         )
@@ -74,7 +84,7 @@ class _RatioCache:
 
     def kv_storage(self):
         # Static pools: the component's slot takes reach the bounded allocator.
-        return kv_storage_of(None, self.token_to_kv_pool_allocator)
+        return kv_storage_of(self.req_to_token_pool, self.token_to_kv_pool_allocator)
 
     def evict_for_alloc(self, params: EvictParams):
         self.alloc_evict_params.append(params)
@@ -175,6 +185,9 @@ class TestMambaRatioEnvGate(unittest.TestCase):
                 batch = SimpleNamespace(
                     reqs=[req],
                     req_to_token_pool=cache.req_to_token_pool,
+                    # Post-merge mamba_lazy_* builds the storage from both
+                    # pools (schedule_batch.py:3661).
+                    token_to_kv_pool_allocator=cache.token_to_kv_pool_allocator,
                     seq_lens_cpu=torch.tensor([256]),
                 )
                 if speculative:
