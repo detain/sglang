@@ -154,6 +154,12 @@ def local_restorable_mask(
     mask = [0] * (num_pages + 1)
     if num_pages == 0:
         return mask
+    if storage_hit_count <= 0:
+        # No verified hit on this rank (miss, skipped, failed, or terminated
+        # query): vote the all-zero mask even if an earlier partial state
+        # left a candidate set on the operation. A cut to zero must not
+        # vouch for an endpoint the folded hit does not cover.
+        return mask
     candidates = operation.restorable_prefix_pages
     if candidates is None:
         # The backend reported no candidate set (or no query ran), so only the
@@ -1452,12 +1458,22 @@ class HybridCacheController(BaseHiCacheController):
 
         if operation.assume_stored:
             # A prior hit on a suffix of this span proved it stored, and writes
-            # are prefix-covered, so re-querying only adds a round trip. Nothing
-            # is verified now, so no pool gets a verdict to learn from.
+            # are prefix-covered, so re-querying only adds a round trip. For a
+            # trailing pool this proves only the original endpoint, not every
+            # shorter checkpoint. Nothing is verified now, so no pool gets a
+            # verdict to learn from.
             kv_hit_pages = len(hash_value)
             operation.pool_storage_result.update_kv_hit_pages(kv_hit_pages)
+            if any(
+                transfer.hit_policy == PoolHitPolicy.TRAILING_PAGES
+                for transfer in operation.pool_transfers or []
+            ):
+                operation.restorable_prefix_pages = (
+                    [kv_hit_pages] if kv_hit_pages else []
+                )
+            else:
+                operation.restorable_prefix_pages = None
             operation.query_pool_hit_pages = {}
-            operation.restorable_prefix_pages = None
             return hash_value, kv_hit_pages * self.page_size
 
         extra_info = HiCacheStorageExtraInfo(

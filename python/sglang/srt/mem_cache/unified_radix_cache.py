@@ -3153,7 +3153,11 @@ class UnifiedRadixCache(BasePrefixCache):
                     max(alloc_len, aux_hit_tokens), "host_capacity"
                 )
                 return True
-            if not self._alloc_prefetch_aux_staging(info, aux_hit_tokens):
+            if not self._alloc_prefetch_aux_staging(info, alloc_len):
+                # Aux staging follows the endpoint the KV span actually got,
+                # not the query hit: sizing a capacity-shortened fetch to the
+                # full span over-claims (or fails) side-pool slots under host
+                # pressure, declining a prefetch a smaller endpoint would fit.
                 # Same outcome as a KV shortfall: nothing stays staged.
                 cc.append_host_mem_release(host_indices=host_indices)
                 self._finish_storage_prefetch(
