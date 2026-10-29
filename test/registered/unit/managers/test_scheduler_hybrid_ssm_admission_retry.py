@@ -1,9 +1,9 @@
-"""With a PrefillAdder stand-in that refuses every request with NO_TOKEN, a
-hybrid SSM model with a mamba-aware cache re-offers the waiting request each
-round; a model that is neither hybrid SSM nor hybrid SWA offers it once and
-keeps batch_is_full set. A retry whose prefix match finds no Mamba slot for the
-state copy is refused and stays queued instead of raising, and is admitted once
-capacity recovers."""
+"""With a PrefillAdder stand-in that refuses every request with NO_TOKEN, the
+waiting request is re-offered each round for every model shape (#46643 cleared
+the batch_is_full latch unconditionally, superseding the entry-198 hybrid-SSM
+gate). A retry whose prefix match finds no Mamba slot for the state copy is
+refused and stays queued instead of raising, and is admitted once capacity
+recovers."""
 
 import unittest
 from types import SimpleNamespace
@@ -152,10 +152,9 @@ class TestHybridSsmAdmissionRetry(CustomTestCase):
         calls, _ = self._rounds(_scheduler(is_hybrid_ssm=True), 3)
         self.assertEqual(calls, 3)
 
-    def test_non_hybrid_model_latches_after_one_refusal(self):
-        calls, latched = self._rounds(_scheduler(is_hybrid_ssm=False), 3)
-        self.assertEqual(calls, 1)
-        self.assertTrue(latched)
+    def test_non_hybrid_model_retries_admission_every_round(self):
+        calls, _ = self._rounds(_scheduler(is_hybrid_ssm=False), 3)
+        self.assertEqual(calls, 3)
 
 
 class _ScriptedAdder(_RefusingAdder):

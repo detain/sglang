@@ -24,9 +24,9 @@ class TestEmptyBatchFullLatch(CustomTestCase):
         s = Scheduler.__new__(Scheduler)
         s.grammar_manager = SimpleNamespace(has_waiting_grammars=lambda: False)
         s.enable_priority_preemption = False
+        # #46643 clears the latch unconditionally, so the former #37612/#44351
+        # arms are gone; these stubs stay only because other gates read them.
         s.is_hybrid_swa = False
-        # The #37612 reset arm reads is_hybrid_ssm first; keep this stub on the
-        # non-hybrid path so the gate short-circuits before tree_cache.
         s.is_hybrid_ssm = False
         s.waiting_queue = [SimpleNamespace(rid="req-0")]
         s.chunked_req = None

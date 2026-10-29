@@ -1,7 +1,8 @@
 """Gating of the per-round batch_is_full reset in _get_new_batch_prefill_raw:
-cleared for hybrid SWA and for a hybrid SSM model with a mamba-aware cache,
-kept for a hybrid SSM model whose cache lacks mamba support and for a model
-that is neither hybrid SSM nor hybrid SWA (no preemption in any case)."""
+#46643 made the clear unconditional (a latched flag was otherwise only cleared
+when the running batch shrank, stalling the waiting queue), superseding the
+entry-198 hybrid-SSM arm, the hybrid-SWA/preemption arms and the is_empty arm.
+These cases pin that every former arm -- and a plain model -- now resets."""
 
 import unittest
 from types import SimpleNamespace
@@ -53,8 +54,8 @@ class TestHybridSsmAdmissionLatch(CustomTestCase):
     def test_hybrid_ssm_with_mamba_radix_cache_resets_latch(self):
         self.assertFalse(self._latch_after_round(_scheduler(is_hybrid_ssm=True)))
 
-    def test_hybrid_ssm_without_mamba_cache_keeps_latch(self):
-        self.assertTrue(
+    def test_hybrid_ssm_without_mamba_cache_resets_latch(self):
+        self.assertFalse(
             self._latch_after_round(
                 _scheduler(is_hybrid_ssm=True, supports_mamba=False)
             )
@@ -65,8 +66,8 @@ class TestHybridSsmAdmissionLatch(CustomTestCase):
             self._latch_after_round(_scheduler(is_hybrid_ssm=False, is_hybrid_swa=True))
         )
 
-    def test_non_hybrid_model_keeps_latch(self):
-        self.assertTrue(self._latch_after_round(_scheduler(is_hybrid_ssm=False)))
+    def test_non_hybrid_model_resets_latch(self):
+        self.assertFalse(self._latch_after_round(_scheduler(is_hybrid_ssm=False)))
 
 
 if __name__ == "__main__":
