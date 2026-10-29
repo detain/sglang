@@ -1442,6 +1442,37 @@ def _model_config_or_none(view: Any) -> Any:
         return None
 
 
+# RECONCILE NOTE (port-moe-contracts, #45520 landing) -- entry-230 fork patch
+# (2caced5095: auto publishes the resolved backend; the once-per-(published,
+# built) dispatcher mismatch warning lives in token_dispatcher/standard.py)
+# versus upstream #45520's version of the same rule:
+#   * Crash #45520 targets (flagless ModelOpt NVFP4 checkpoint under `auto`
+#     falling to SM100-only trtllm-gen; g1_scale_c AttributeError at warmup):
+#     REDUNDANT for readable configs. #45520's checkpoint-resolved
+#     quantization + expert-algo dispatch publishes the value from the
+#     source of truth, which is strictly more precise than entry 230's
+#     blanket mixed->cutlass (it now answers marlin for W4A16 experts).
+#   * Silent misroute entry 230 ALSO fixed (published auto + built GLOBAL-ids
+#     runner -> rank-local ids on a global-id kernel): #45520 closes the
+#     readable-config half the same way, but where it deliberately leaves
+#     `auto` (modelopt_mixed whose expert list cannot be read, or any other
+#     hook-input it does not refine) the misroute shape reopens. The
+#     fail-safe reads + the algo-unknown publish kept in the block below are
+#     what close it; the standard.py mismatch warning stays as the loud
+#     backstop for any residual divergence. Net: the patch is NOT deleted --
+#     it survives as the fail-safe layer under #45520's primary.
+#   * 489c4ae446 (entry 247 b12x) interaction: `auto` never resolves to
+#     flashinfer_b12x_w4a16 (entry 247 deliberately did not extend auto, and
+#     #45520 does not either), so the W4A16->marlin refinement changes only
+#     what auto publishes for W4A16-mixed checkpoints; every b12x
+#     default-off proof still holds (test_auto_never_resolves_to_b12x green).
+#   * Still-not-refined gap (pre-existing, unchanged by both fixes): the
+#     bare "modelopt" name is not resolved to fp4/mixed at this point, so an
+#     explicit --quantization modelopt on SM120 still has to name the runner;
+#     closing THAT is the modelopt_mixed mapping gap -- #35617 territory,
+#     tracked upstream, not here.
+
+
 def _checkpoint_quantization_or_none(view: Any) -> Optional[str]:
     """The quantization the checkpoint itself declares, or None when it cannot
     be determined here. Used only to break a `--moe-runner-backend auto` tie on
