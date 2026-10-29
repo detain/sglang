@@ -552,6 +552,7 @@ pub struct InsertParamsBinding {
     pub cache_salt: Option<String>,
     pub session_id: Option<String>,
     pub mamba_value: Option<Py<PyAny>>,
+    pub mamba_value_seqlen: Option<usize>,
     pub prev_prefix_len: usize,
     pub swa_evicted_seqlen: usize,
     pub swa_branching_seqlen: Option<usize>,
@@ -563,7 +564,7 @@ pub struct InsertParamsBinding {
 #[pymethods]
 impl InsertParamsBinding {
     #[new]
-    #[pyo3(signature = (key, value, extra_key = None, cache_salt = None, session_id = None, prev_prefix_len = 0, swa_evicted_seqlen = 0, swa_branching_seqlen = None, inserted_len = 0, priority = 0, mamba_value = None, track_adopted_ranges = false, rotation_base = None))]
+    #[pyo3(signature = (key, value, extra_key = None, cache_salt = None, session_id = None, prev_prefix_len = 0, swa_evicted_seqlen = 0, swa_branching_seqlen = None, inserted_len = 0, priority = 0, mamba_value = None, mamba_value_seqlen = None, track_adopted_ranges = false, rotation_base = None))]
     fn new(
         py: Python<'_>,
         key: &Bound<'_, PyAny>,
@@ -577,6 +578,7 @@ impl InsertParamsBinding {
         inserted_len: usize,
         priority: i64,
         mamba_value: Option<Py<PyAny>>,
+        mamba_value_seqlen: Option<usize>,
         track_adopted_ranges: bool,
         rotation_base: Option<i64>,
     ) -> PyResult<Self> {
@@ -588,6 +590,7 @@ impl InsertParamsBinding {
             cache_salt,
             session_id,
             mamba_value,
+            mamba_value_seqlen,
             prev_prefix_len,
             swa_evicted_seqlen,
             swa_branching_seqlen,
@@ -1150,6 +1153,7 @@ macro_rules! tree_core_methods {
                     session_id: params.session_id.as_deref(),
                     value: value.0,
                     mamba_value,
+                    mamba_value_seqlen: params.mamba_value_seqlen,
                     prev_prefix_len: params.prev_prefix_len,
                     swa_evicted_seqlen: params.swa_evicted_seqlen,
                     swa_branching_seqlen: params.swa_branching_seqlen,
@@ -1188,6 +1192,7 @@ macro_rules! tree_core_methods {
                     session_id: params.session_id.as_deref(),
                     value: value.0,
                     mamba_value,
+                    mamba_value_seqlen: params.mamba_value_seqlen,
                     prev_prefix_len: params.prev_prefix_len,
                     swa_evicted_seqlen: params.swa_evicted_seqlen,
                     swa_branching_seqlen: params.swa_branching_seqlen,
@@ -2312,12 +2317,9 @@ macro_rules! tree_core_methods {
                 py.detach(|| self.core().inspect_contains_node(node_id))
             }
 
-            fn inspect_get_parent_node_id(
-                &self,
-                py: Python<'_>,
-                node_id: NodeId,
-            ) -> PyResult<Option<NodeId>> {
-                py.detach(|| self.core().inspect_get_parent_node_id(node_id))
+            /// The parent node's external handle, or None for the root.
+            fn parent_node_id(&self, py: Python<'_>, node_id: NodeId) -> PyResult<Option<NodeId>> {
+                py.detach(|| self.core().parent_node_id(node_id))
                     .map_err(node_access_error)
             }
 
@@ -3246,6 +3248,11 @@ macro_rules! tree_core_binding {
                 catch_native_panic(|| self.inner.is_root(py, node_id))
             }
 
+            /// The parent node's external handle, or None for the root.
+            fn parent_node_id(&self, py: Python<'_>, node_id: NodeId) -> PyResult<Option<NodeId>> {
+                catch_native_panic(|| self.inner.parent_node_id(py, node_id))
+            }
+
             /// The node's last page hash, or None when it was never hashed.
             fn get_last_hash_value(&self, py: Python<'_>, node_id: NodeId) -> PyResult<Option<String>> {
                 catch_native_panic(|| self.inner.get_last_hash_value(py, node_id))
@@ -3594,15 +3601,6 @@ macro_rules! tree_core_binding {
             #[cfg(feature = "inspection")]
             fn inspect_contains_node(&self, py: Python<'_>, node_id: NodeId) -> PyResult<bool> {
                 catch_native_panic(|| Ok(self.inner.inspect_contains_node(py, node_id)))
-            }
-
-            #[cfg(feature = "inspection")]
-            fn inspect_get_parent_node_id(
-                &self,
-                py: Python<'_>,
-                node_id: NodeId,
-            ) -> PyResult<Option<NodeId>> {
-                catch_native_panic(|| self.inner.inspect_get_parent_node_id(py, node_id))
             }
 
             #[cfg(feature = "inspection")]
@@ -4051,5 +4049,3 @@ fn mem_cache(m: &Bound<'_, PyModule>) -> PyResult<()> {
 fn mem_cache_inspection(m: &Bound<'_, PyModule>) -> PyResult<()> {
     register_mem_cache_module(m)
 }
-
-// TODO(merge5): re-plant entry 114,196,199 semantics (batch B3); fork hunks saved /tmp/opencode/merge5-dossier/replant/rust__sglang-radix-tree__src__python_bindings.rs.fork-hunks.patch

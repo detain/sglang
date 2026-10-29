@@ -2160,6 +2160,7 @@ fn insert_params<'k>(key: &'k Vec<i64>, value: &[i64]) -> InsertParams<'k, Vec<i
         namespace: Default::default(),
         value: Tensor::from_slice(value),
         mamba_value: None,
+        mamba_value_seqlen: None,
         prev_prefix_len: 0,
         swa_evicted_seqlen: 0,
         swa_branching_seqlen: None,
@@ -3832,6 +3833,7 @@ fn bigram_insert_events_carry_pair_token_payloads() {
         namespace: Default::default(),
         value: Tensor::from_slice(&[10i64, 11]),
         mamba_value: None,
+        mamba_value_seqlen: None,
         prev_prefix_len: 0,
         swa_evicted_seqlen: 0,
         swa_branching_seqlen: None,
@@ -9162,7 +9164,7 @@ fn inspection_rejects_stale_handles_without_panicking() {
         node_id: stale_root,
     };
 
-    assert_eq!(tc.inspect_get_parent_node_id(stale_root), Err(expected));
+    assert_eq!(tc.parent_node_id(stale_root), Err(expected));
     assert_eq!(tc.inspect_get_child_node_ids(stale_root), Err(expected));
     assert_eq!(tc.inspect_get_node_key_length(stale_root), Err(expected));
     assert_eq!(
@@ -9197,7 +9199,7 @@ fn inspection_rejects_stale_handles_without_panicking() {
     assert!(!tc.inspect_is_device_evictable_leaf(stale_root));
     assert!(!tc.inspect_is_host_evictable_leaf(stale_root));
 
-    assert_eq!(tc.inspect_get_parent_node_id(live_root), Ok(None));
+    assert_eq!(tc.parent_node_id(live_root), Ok(None));
     assert_eq!(tc.inspect_is_external_cache_stored(live_root), Ok(false));
 }
 
@@ -9254,6 +9256,7 @@ fn sequence_insert_params<'k>(
         namespace: Default::default(),
         value: Tensor::from_slice(&kv),
         mamba_value,
+        mamba_value_seqlen: None,
         prev_prefix_len,
         swa_evicted_seqlen: 0,
         swa_branching_seqlen: None,
@@ -9732,5 +9735,3 @@ fn overlap_context_reaches_swa_before_it_replaces_unlocked_full_ids() {
     assert!(step.actions.is_empty());
     tc.sanity_check(&[], &[]);
 }
-
-// TODO(merge5): re-plant entry 114,196,199,218 semantics (batch B3); fork hunks saved /tmp/opencode/merge5-dossier/replant/rust__sglang-radix-tree__src__tests__unified_tree_core.rs.fork-hunks.patch
