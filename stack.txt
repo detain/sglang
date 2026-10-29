@@ -5866,6 +5866,54 @@ STACK, IN BUILD ORDER (bottom first)
       # unit mock is gone): 1P/5sub; family battery and unit/mem_cache/
       # numbers ride in the header note.
 
+        254. d598eff7da  PR #44776 (open, head 5e26a3473e, ported)  optional parallel page READS in the file backend -- SGLANG_HICACHE_FILE_BACKEND_READ_WORKERS, DEFAULT OFF (EnvInt(1) = serial), order-preserving, raises-become-misses, and unioned with our entry-24 page-degrade catch
+
+      # https://github.com/sgl-project/sglang/pull/44776. WHAT
+      # (hicache_storage.py ~+77/-14 + environ.py +2 + docs row +5): with
+      # read_workers > 1, _map_reads runs the FILE READS of one
+      # batch_get/batch_get_v2 call on a lazily built thread pool
+      # ("hicache-file-read") and returns only after EVERY read finished,
+      # in INPUT ORDER -- so callers, prefetch acks and the cross-rank
+      # reduce see results identical to the serial loop. A read that
+      # raises becomes a miss (None -> False), never a failed batch.
+      # reads_workers <= 1 or len(items) <= 1 short-circuits to the old
+      # list-comprehension path -- DEFAULT OFF IS BYTE-IDENTICAL.
+      # ARCHITECTURE PIN, not incidental: only the file read (into a
+      # private staging page) runs on the pool; every host-pool write
+      # (set_from_flat_data_page) STAYS ON THE CALLING THREAD, in page
+      # order, because host pools may hold thread-local state there (the
+      # unified host pool's layout lease -- calling it from a pool thread
+      # can deadlock). Staging is chunked at 4 x read_workers so pool
+      # reads never hold one page-buffer per queued item.
+      # UNION WITH OUR ENTRY-24 PAGE-DEGRADE WORK -- THE DEVIATION FROM
+      # THE PR HEAD, and the reason this entry is marked ported: the PR
+      # left the calling-thread pool-write in _read_pages_parallel RAW
+      # (an incompatible-layout page would raise out of the daemon
+      # storage threads -- the exact failure class entry 24 made
+      # per-page-miss). Our port wraps that half in the SAME
+      # (OSError, ValueError, RuntimeError) catch + _report_bad_page the
+      # serial _read_page uses, so a bad-layout page is a per-page miss
+      # on the parallel path too (verified inline, workers=1 and 8); and
+      # _batch_io_v2's serial fallback KEEPS our _safe_page_op wrapper
+      # the PR had removed. Semantics of the PR preserved: same order,
+      # same miss-on-raise, same default.
+      # ENTRY-199 WRITE SEMANTICS UNCHANGED, stated plainly because the
+      # wanted-file flagged a conflict: batched write-through lives in
+      # the tree/scheduler layers and in the file backend's WRITE path --
+      # this entry touches READS only; writes stay serial. No overlap in
+      # the landed diff.
+      # GPU-WINDOW DEBT (both OWED before raising workers on prod):
+      # (i) parallel-read end-to-end against the REAL unified host pool
+      # -- the CPU test stands in a flat-page pool, not the
+      # layout-lease holder; (ii) re-test the upstream DEADLOCK CLAIM
+      # the docstring relies on (pool-write-from-pool-thread), so the
+      # calling-thread pin is re-verified on our pools, not taken on
+      # faith.
+      # BATTERY: new test/registered/hicache/
+      # test_hicache_file_parallel_reads.py 5P CPU-only
+      # (register_cpu_ci, base-a-test-cpu); tranche-wide numbers in the
+      # header note.
+
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
 ==============================================================================

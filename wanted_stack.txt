@@ -71,11 +71,8 @@
 # --- FAM-A2a  port-hicache-file (files: mem_cache file backend:
 #     hicache_storage.py, lru_file_evictor, storage-path plumbing; context
 #     entries 24/30/209/217/249 + the 10-28 per-replica dir split)
-# #44776  open (head 5e26a3473e) [Perf] optional parallel page reads
-#         (SGLANG_HICACHE_FILE_BACKEND_READ_WORKERS, default 1 = OFF;
-#         order-preserving within one batch_get, raises->miss). +70/-8
-#         hicache_storage.py; small conflict vs our entry-199 batched
-#         write-through work in the same file. State: IN-WT(port-hicache-file)
+#     ALL FIVE LANDED 2026-10-28 as entries 250-254 @ code tip d598eff7da;
+#     branch port-hicache-file kept for forensics.
 #
 # --- FAM-A5  port-admission (files: schedule_policy.py, scheduler.py,
 #     components/mamba.py admission half, BatchResultProcessor; context
