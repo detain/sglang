@@ -973,6 +973,23 @@ def eagle_prepare_for_decode(batch: ScheduleBatch):
     for r in batch.reqs:
         r.decode_batch_idx += 1
 
+    # Fail fast if the page>1 + topk>1 draft over-allocation
+    # (get_alloc_reserve_per_decode) outgrows the req_to_token row: the write below
+    # would OOB and free would leak KV. The row is widened to hold it in _init_pools
+    # (PR #26972); fail here with a clear error, not on a later cryptic CUDA assert.
+
+    if page_size > 1 and (get_spec().speculative_eagle_topk or 1) > 1:
+        max_alloc_len = max(nxt_kv_lens)
+        row_width = batch.req_to_token_pool.req_to_token.shape[1]
+        assert max_alloc_len <= row_width, (
+            f"spec v2 page>1 topk>1 draft over-allocation ({max_alloc_len}) exceeds "
+            f"req_to_token row width ({row_width}); page_size={page_size}. Widen the "
+            f"row to hold committed + get_alloc_reserve_per_decode (PR #26972)."
+        )
+
+    if num_needed_tokens == 0:
+        return
+
     cur_kv_lens_cpu = torch.tensor(cur_kv_lens, dtype=torch.int32, device="cpu")
     nxt_kv_lens_cpu = torch.tensor(nxt_kv_lens, dtype=torch.int32, device="cpu")
 
@@ -980,22 +997,8 @@ def eagle_prepare_for_decode(batch: ScheduleBatch):
     # kv_allocated_len (>= committed + alloc reserve, so it upper-bounds
     # every length attention can read next round) for the NPU backend's
     # D2H-free block-table gather sizing.
-    if batch.seq_lens_cpu is None:
+    if getattr(batch, "seq_lens_cpu", None) is None:
         batch.max_seq_len_host = int(cur_kv_lens_cpu.max())
-
-    # Fail fast if the page>1 + topk>1 draft over-allocation
-    # (get_alloc_reserve_per_decode) outgrows the req_to_token row: the write below
-    # would OOB and free would leak KV. The row is widened to hold it in _init_pools
-    # (PR #26972); fail here with a clear error, not on a later cryptic CUDA assert.
-
-    if page_size > 1 and (get_spec().speculative_eagle_topk or 1) > 1:
-        max_alloc_len = int(nxt_kv_lens_cpu.max())
-        row_width = batch.req_to_token_pool.req_to_token.shape[1]
-        assert max_alloc_len <= row_width, (
-            f"spec v2 page>1 topk>1 draft over-allocation ({max_alloc_len}) exceeds "
-            f"req_to_token row width ({row_width}); page_size={page_size}. Widen the "
-            f"row to hold committed + get_alloc_reserve_per_decode (PR #26972)."
-        )
 
     # non_blocking H2D: a blocking .to() syncs the schedule stream, which the WAR
     # barrier has chained to the prev forward -> host stalls a full forward.
@@ -1019,5 +1022,3 @@ def eagle_prepare_for_decode(batch: ScheduleBatch):
         num_needed_tokens=num_needed_tokens,
         batch=batch,
     )
-
-# TODO(merge5): re-plant entry 103 semantics (batch B4); fork hunks saved /tmp/opencode/merge5-dossier/replant/python__sglang__srt__speculative__eagle_utils.py.fork-hunks.patch

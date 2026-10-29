@@ -214,6 +214,13 @@ class TestPPReplaySSMVerifySourceRows(CustomTestCase):
         mamba_pool.replayssm_spec_fold = False
         mamba_pool.replayssm_is_kda = False
         mamba_pool.replayssm_cache_base = torch.empty(1)
+        # This case exercises the GDN ReplaySSM circular commit only; pin the
+        # PLE side-state pools off (a plain MagicMock auto-vivifies truthy
+        # short_conv_pool/ngram_pool attributes and drags the PLE commit's
+        # real scatter kernel into scope with mock tensors -- the entry-102
+        # pin upstream's rewrite of this file dropped).
+        req_pool.short_conv_pool = None
+        req_pool.ngram_pool = None
         req_pool.get_mamba_indices.return_value = torch.tensor(
             [5, 7], dtype=torch.int32
         )

@@ -37,10 +37,10 @@ def _req_pool(write_pos, is_flush):
         replayssm_cache_base=torch.zeros(len(write_pos), dtype=torch.int32),
         replayssm_is_flush=torch.tensor(is_flush, dtype=torch.int8),
         replayssm_is_kda=False,
+        get_speculative_mamba2_params_all_layers=lambda: spec_state,
     )
     return SimpleNamespace(
         mamba_pool=mamba_pool,
-        get_speculative_mamba2_params_all_layers=lambda: spec_state,
         get_mamba_indices=lambda idx: idx + 100,
     )
 
@@ -52,13 +52,11 @@ class TestReplaySSMExtendFold(CustomTestCase):
         pool = _req_pool([0, 3, 0, 5, 0], [0, 0, 0, 1, 1])
         rows = torch.tensor([1, 2, 3, 4])
         with patch(
-            "sglang.kernels.ops.attention.fla.gdn_replayssm_spec_decode."
+            "sglang.kernels.ops.attention.linear.gdn_replayssm_spec_decode."
             "commit_gdn_replayssm_circular"
         ) as commit:
             fold_gdn_replayssm_history_for_extend(pool, rows)
-        self.assertEqual(
-            pool.mamba_pool.replayssm_is_flush.tolist(), [0, 1, 0, 1, 1]
-        )
+        self.assertEqual(pool.mamba_pool.replayssm_is_flush.tolist(), [0, 1, 0, 1, 1])
         kwargs = commit.call_args.kwargs
         self.assertEqual(kwargs["replay_indices"].tolist(), [1, 2, 3, 4])
         self.assertEqual(kwargs["state_batch_indices"].tolist(), [101, 102, 103, 104])

@@ -474,5 +474,3 @@ class EagleDraftExtendInput(SpecInput):
             kv_lens_sum=host_kv_lens_sum,
         )
         return kv_indices, cum_kv_seq_len, qo_indptr, None
-
-# TODO(merge5): re-plant entry 194 semantics (batch B4); fork hunks saved /tmp/opencode/merge5-dossier/replant/python__sglang__srt__speculative__eagle_info.py.fork-hunks.patch

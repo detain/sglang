@@ -101,6 +101,7 @@ class TestReplaySSMVerifyCommitsPle(CustomTestCase):
             replayssm_cache_base=torch.zeros(NUM_SLOTS, dtype=torch.int32),
             replayssm_spec_write_pos=None,
             replayssm_is_flush=None,
+            get_speculative_mamba2_params_all_layers=lambda: spec_state,
         )
         spec_state = SimpleNamespace(
             replayssm_d=torch.zeros(1, 1, 8, 1),
@@ -116,13 +117,18 @@ class TestReplaySSMVerifyCommitsPle(CustomTestCase):
             mamba_pool=mamba_pool,
             short_conv_pool=short_conv_pool,
             ngram_pool=ngram_pool,
-            get_speculative_mamba2_params_all_layers=lambda: spec_state,
             get_mamba_indices=lambda req_pool_indices: slots,
         )
         attn_backend = MagicMock()
+        # #46980: the commit path reaches the state part through the KV
+        # pool's layer router, not the request pool.
+        layer_router = SimpleNamespace(part_view=lambda part: mamba_pool)
         target_worker = SimpleNamespace(
             model_runner=SimpleNamespace(
-                model_config=None, req_to_token_pool=req_pool, attn_backend=attn_backend
+                model_config=None,
+                req_to_token_pool=req_pool,
+                attn_backend=attn_backend,
+                token_to_kv_pool=SimpleNamespace(layer_router=layer_router),
             )
         )
         batch = MagicMock()
@@ -139,11 +145,11 @@ class TestReplaySSMVerifyCommitsPle(CustomTestCase):
                 return_value={"some": "config"},
             ),
             patch(
-                "sglang.kernels.ops.attention.fla.gdn_replayssm_spec_decode."
+                "sglang.kernels.ops.attention.linear.gdn_replayssm_spec_decode."
                 "commit_gdn_replayssm_spec"
             ),
             patch(
-                "sglang.kernels.ops.attention.fla.gdn_replayssm_spec_decode."
+                "sglang.kernels.ops.attention.linear.gdn_replayssm_spec_decode."
                 "commit_gdn_replayssm_circular"
             ),
             patch(
