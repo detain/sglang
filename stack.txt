@@ -1,6 +1,6 @@
 # stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
 #
-# STACK: qwennext-stack-295-2026-10-28
+# STACK: qwennext-stack-309-2026-10-29
 #   main+pr36787+pr37275+pr38144+pr38209+pr36644+pr39862+pr39809+pr39893+local_hicache_qsa_fixes
 #   +pr39614+pr39978+pr40002+pr39065+pr40501+pr40175+pr40362+pr39391+pr37061+pr39333+pr33778
 #   +pr38977+pr39977+pr40480+pr39880+pr40235+pr39807+cpu-triage+boot-fix+plan_updates_perf
@@ -21,7 +21,13 @@
 #   +qsaring-2026-10-28(pr47051*+pr46125*-oracle+pr45865*)
 #   +hicachectrl-2026-10-28(pr42912*+pr35875*+pr46954*+pr46707*+pr43110*
 #    +pr46451*+pr45795*+pr47040*)
-#   (entries 1-295; *=squash/ported, see commit messages. 10-10 added
+#   +moe-2026-10-29(pr44901*+pr44904*+probe+pr44912*+pr44913*+pr45289*
+#    +pr45520*+reconcile)
+#   +sext1-2026-10-29(S-EXT1)
+#   +riders2-2026-10-29(pr46127*+pr45923*)
+#   +srace-2026-10-29(S-RACE)
+#   +llguard-2026-10-29(LLGUARD+ENVREG)
+#   (entries 1-309; *=squash/ported, see commit messages. 10-10 added
 #   entries 157-161: parser batch A (Qwen3-Coder tool-call fixes + sampling
 #   upper bounds), on top of upstream merge #3 (see synced). 10-10b added
 #   entries 162-166: SM120 batch B (#42863 PCIe-IPC vocab gathers, #42566
@@ -259,7 +265,7 @@
 #   make --enable-mixed-chunk safe and fix the QSA verify ring collision.
 #   * = picked with local modifications, see the entries)
 # branch : qwennext-stack
-# tip    : 44134b30aa   (the stack.txt commits sit above it)
+# tip    : 3cdba955a4   (the stack.txt commits sit above it)
 # base   : upstream sgl-project/sglang main @ 7ad55e4386 ([HiCache] TMA-staged
 #          host<->device KV transfer kernel (sm_90+) (#40278), 2026-09-21)
 # synced : upstream main @ f209e67767 (#39643, 2026-09-28) MERGED IN as
@@ -339,6 +345,146 @@
 #          are 18 '+' (fork-divergent ports/adaptations) + 3 '-' whose
 #          patches match upstream byte-for-byte (#44288, #46049, #43216;
 #          #46049's equality additionally proved by patch-id, entry 278).
+#          MERGE #5 STILL OWED (refreshed at the 296-309 docs commit,
+#          2026-10-29, by a read-only fetch): origin/main is now
+#          ** 2a6c204570 = +1,120 commits since 12dc623102 ** (+685 since
+#          1dd0f361b8). git cherry at the 309 code tip: ** 440 '+' / 31 '-'
+#          ** (426/29 at the 295 HEAD) -- this pass's 14 commits are 12 '+'
+#          + 2 '-' (#44912 and #46127 landed PATCH-IDENTICAL to upstream,
+#          patch-id-proved; #44901/#44904/#44913/#45289/#45923 differ
+#          exactly by their documented fork unions). MERGE-#5 PREP, NOW ON
+#          THE RECORD IN THE ENTRIES: all FIVE merged moe picks + BOTH
+#          riders are present in origin/main and carry per-entry DEDUPE
+#          lines, so B5 treats them as PRE-RECONCILED and does not re-run
+#          the union analysis -- but **#45520 (entry 302) IS STILL OPEN
+#          UPSTREAM, re-verified against 2a6c204570**, so the merge does
+#          NOT bring it and the entry-230 fail-safe layer stays exactly as
+#          entry 303 describes; if #45520 merges during the merge window,
+#          RE-APPLY the fail-safe reads (upstream reads model_config raw
+#          and still leaves `auto` on unreadable expert lists).
+# updated: 2026-10-29 (entries 296-309): FIVE-WAVE INTEGRATION BATCH,
+#          13 picks + 1 integrator rider = 14 commits, ** ZERO CONFLICTS
+#          AT THE INTEGRATOR ** (every documented union held; nothing
+#          exceeded it). ** THE BATCH-8 RANGE RECONCILIATION IS THE
+#          HEADLINE LESSON OF THIS PASS AND IS RECORD IN FULL IN THE MOE
+#          WAVE HEADER: ** the dispatch's ten shas existed NOWHERE in the
+#          object DB or any reflog; the branch (port-moe-contracts, not
+#          "port-moe") held 7 commits at first look, with the reconcile
+#          note only as UNCOMMITTED worktree content and the SMOKE item
+#          absent entirely; I STOPPED, ASKED, landed the 7 per the
+#          operator's choice, and the worker's FINAL REPORT THEN ARRIVED
+#          with the true 8-commit queue at a THIRD set of shas (branch
+#          rewritten underneath mid-pass). Those 7 stale picks were
+#          DROPPED with git reset --hard (unpushed, nothing lost) and the
+#          FINAL 8 were re-picked clean, with file-set AND full content
+#          parity proven against the worker tip (78/78 files byte-identical
+#          -- the only extra file in my tree is my own rider). ORDER: the
+#          dispatch's "#44904 first" was WRONG BY DESIGN; mainline
+#          chronology is the only cherry-pickable order because #44904's
+#          preimage consumes #44901's helpers and #44913's preimage deletes
+#          #44912's (mid-pick NameErrors otherwise) -- the entries carry it.
+#          ** ONE REAL DEFECT SHIPPED IN THE DELIVERED MOE BATCH AND IS
+#          FIXED ON THE RECORD: entry 300 (#44913) breaks 2 cases of
+#          test_qwen4_exp_ple_staging.py (decode-graph replay now wraps
+#          model_context()/get_model(), and a __new__-built test stub never
+#          publishes that namespace). Bisected and REPRODUCED ON THE
+#          WORKER'S OWN TREE (aa671ba8cf) -- so it is a batch-internal
+#          regression, NOT an interaction with the landed waves, and their
+#          battery file list never covered it. Production semantics are
+#          CORRECT; repaired by TEST-ONLY RIDER de9f22a5a6 riding entry 300
+#          under protocol rule 2 (deliberately NO extra entry number so the
+#          mandated 296-309 cascade holds) -> 37P again. **
+#          FOUR HANDOFF CLAIMS CHECKED AND CORRECTED IN THE ENTRIES (each
+#          wrong-in-the-direction-of-danger, so they are corrected rather
+#          than relayed): (a) "entry-242's +2.6% FP4 number" -- ** NO +2.6%
+#          FIGURE EXISTS IN THE LEDGER **; the measured record is entry 243
+#          (+4.3%/+28.5%, best cell +10.6%, bs4-8 +2.2%), and BOTH predate
+#          #44901's compensation, which is the point the note was reaching
+#          for -- recorded so nobody re-reads them as post-fix; (b) the
+#          claim that #43216 leaves an operator's explicit NCCL_GRAPH_
+#          REGISTER SILENTLY WINNING was already disproved in pass 2
+#          (parallel_hook.py:445-449 WARNS -- see entry 284 + CAVEATS);
+#          (c) "fork parsers attach state through custom_params" (#45923's
+#          audit framing) -- ** grep: ZERO custom_params references in
+#          function_call/ **; the fork's exposure to the weakref change is
+#          EXACTLY upstream's three readers (custom_logit_processor.py:109/
+#          :186, locate_anything.py:350, all alive-window-safe), and the
+#          sibling-key consumers (reasoning-end-token-ids, thinking_budget)
+#          read other keys; the Python-3.12 detail IS real and was verified
+#          live: a weakref proxy HAS NO __wrapped__, so the fork test is
+#          re-pinned to ProxyTypes + class/rid + dead-ref; (d) the moe
+#          battery's "append 6S -> 9S" claim does not reproduce on the
+#          worker's own final content (6 nodes at BOTH ends, file
+#          byte-identical) -- recorded, while the paired padded 10S->11S
+#          claim DOES hold. ** BEHAVIOR CHANGES OWED AT THE RESTART: **
+#          (1) ENTRY 304 (S-EXT1) CHANGES WHAT THE NEXT EXTEND AUTOTUNE
+#          MEASURES -- it reuses #45543's seeded distinct-dummy wrapper on
+#          the entry-176 EXTEND path (the S-EXT1 queue item's "wrap vs
+#          decline" decision, CLOSED as wrap; buffer lifecycle checked
+#          first). ** NO CACHE-KEY CHANGE: extend records tuned on zeros
+#          stay valid and keep hitting; the land-before-restart rule rode
+#          THIS wave because entry 260's scheduled cold boot absorbs the
+#          retune for FREE -- if a warm-cache prod boot happens first, the
+#          forced-retune needle becomes REQUIRED (delete per-rank
+#          rank_tp*_pp*_dp*.json ONLY then; note
+#          SGLANG_FLASHINFER_AUTOTUNE_CACHE=0 does NOT refresh the
+#          canonical file). (2) ENTRY 309 (ENVREG) IS AN INTENTIONAL,
+#          STATED ACCEPTANCE SUPERSET -- true/yes/y now arm where only "1"
+#          did, and garbage now warns-and-defaults instead of raising int()
+#          through the coordinator __init__ (proved LIVE on the landed
+#          tree); nothing that armed before stops arming. (3) ENTRY 308
+#          (LLGUARD) CONVERTS entry 256's dispatch-site collision COMMENT
+#          into a code guard: on a PCIe-IPC-eligible TP group LL REFUSES
+#          (warning naming BOTH envs, ll_comm stays None, refuse on ALL
+#          RANKS OR NONE because LLAllReduce.__init__ rendezvouses -- the
+#          predicate is the GROUP-level pcie_ipc_eligible, deliberately NOT
+#          the rank-local comm object); ** a PCIe-IPC-OFF boot is
+#          BYTE-IDENTICAL to entry 256 **, and the new startup needle `[AR]
+#          group <name> host-memory transports: PCIe-IPC=<b> host-staged=
+#          <b> LL=<b>` is our first boot-verification line for the armed
+#          transports (want PCIe-IPC=true, LL=false). ENTRY 309 ALSO CLOSES
+#          ENTRY 256's flagged raw-os.environ fork-convention DEVIATION
+#          (the three comm envs are now in environ.py; _MIN_BYTES/_PIECE
+#          stay raw with the stated import-time reason). (4) ENTRIES
+#          296/297 + 301 + 303 ARE THE FP4-MoE OUTPUT-SCALE FAMILY: the
+#          latent ~1/g**2 double-scale on the flashinfer_cutlass route is
+#          CLOSED (predicate read in the landed code, not relayed), the
+#          [gate,up] scale order is now canonical with #44858's call-site
+#          shape barred from ever surviving (our base never had it), and
+#          entry 303 records why entry-230 is DOWNGRADED TO FAIL-SAFE RATHER
+#          THAN DELETED -- upstream #45520 fixes the CRASH ONLY and
+#          intentionally leaves `auto` where it cannot read the expert-algo
+#          list, exactly the misroute shape. PINNED BASELINES MOVED AGAIN
+#          (one re-pin table in CAVEATS): managers 1016 -> ** 1027P/2F/3S/
+#          935sub ** (+9/+2, the rider chain arithmetic confirmed to survive
+#          four extra waves); mem_cache 2101 -> ** 2105P/3047S/3991sub **
+#          (S-RACE +4P/+2sub EXACTLY additive); spec dir 336 -> ** 329P/
+#          11S/192sub ** (entry 300's upstream test RESHAPE, 0 failures --
+#          parametrize to subTests, the session's only pin REGRESSION in
+#          count with no loss in coverage); ** unit/distributed dir is a
+#          NEW PIN at 133P/1S/35sub (120 -> 132 -> 133, the worker's chain
+#          reproduced VERBATIM) **; the moe 43-file battery moved
+#          +20P/+6S/+6F/+53sub FULLY DECOMPOSED (the +6F are entry 297's
+#          new CUDA-gated fused_gate members on the pre-existing no-CUDA
+#          class). SURVIVED UNMOVED at the 309 tip: constrained
+#          142P/1S/69sub, track_state_dtype 8P/9sub, observability
+#          170P/36S/18sub, function_call 652P/1964sub, test_qsa 84P/140S,
+#          b12x 67P/46sub (the entry-247 preservation proof), dispatcher
+#          12P, smallm 28P/66sub, kernels_namespace 76P, server_args
+#          308P/128sub. All merged picks in this pass carry MERGE-#5 DEDUPE
+#          lines so B5 does not re-resolve them (5 of the 8 moe picks are
+#          pre-reconciled; #45520 is an OPEN PORT whose fail-safe layer
+#          MUST be re-applied if the merge brings upstream's form). GPU
+#          DEBT ADDED: fold-predicate e2e + remap-on-CUDA numerics +
+#          NUM_SHARED_TOPK_SLOT runtime wiring (296/297/299), end-to-end
+#          scale-ordering on the real checkpoint (301), the CPU smoke that
+#          would have proved auto-under-unreadable-config directly (302/
+#          303), and S-EXT1's tuned-tactic delta on hardware (304).
+#          WORKTREES: the four landed here are REMOVED with branches kept
+#          (all verified 0-dirty + patch-contained); ** wt-moe IS DELIBER-
+#          ATELY LEFT IN PLACE by operator decision, and it is now CLEAN at
+#          aa671ba8cf since the reconcile note was committed -- removable at
+#          leisure. ** Code tip 3cdba955a4, tree clean, NOTHING pushed.
 # updated: 2026-10-28/29 (entries 275-295): FOUR-WAVE INTEGRATION BATCH,
 #          21 picks, ZERO CONFLICTS AT THE INTEGRATOR (no pick needed a
 #          hand resolution -- every worker's documented union held and
@@ -7345,6 +7491,845 @@ STACK, IN BUILD ORDER (bottom first)
       # against the OLD library, not a regression -- always run pre/post
       # numbers from WORKTREES, never from mixed cwd/PYTHONPATH pairs.
 
+
+  moe-2026-10-29 wave (branch ** port-moe-contracts **, worktree wt-moe,
+  born 0df18e97a0). ** RANGE RECONCILIATION, TWICE -- the outcome the
+  integrator landed is the worker's FINAL 8-commit queue. ** First read
+  (~01:20): 7 commits, and all ten shas the dispatch carried were ABSENT
+  from the object DB; the reconcile note existed only as 31 UNCOMMITTED
+  lines in wt-moe/overrides.py and the SMOKE item existed nowhere; the
+  worker's on-disk battery logs stopped at c7. I asked, the operator chose
+  "land the 7", and 7 stale-sha picks landed. ** The worker's final report
+  then arrived with the true 8-commit queue, and the branch had been
+  REWRITTEN underneath (all seven shas new + aa671ba8cf appended). Those 7
+  picks were DROPPED (git reset --hard back to the pass-2 docs tip, never
+  pushed, nothing lost) and the FINAL 8 were re-picked in the worker's
+  order: 5f5bc5b947 / 1c385dc152 / d95a07fb92 / 2fffd3fb06 / 95e4b11e05 /
+  a370fb8d43 / a5a0303393 / 6410e42b40. ALL EIGHT CLEAN, ZERO conflicts at
+  the integrator; file-set parity with the worker tip PROVEN (identical
+  list). ORDER: the dispatch's "#44904 first" was WRONG BY DESIGN -- the
+  worker deviated to MAINLINE CHRONOLOGY and both the operator's correction
+  and the commit bodies confirm why: #44904's diff preimage CONSUMES
+  fused_shared_expert_weight / is_routed_scaling_factor_fused_in_topk that
+  #44901 introduces, and #44913's preimage DELETES helpers #44912
+  introduces -- the brief's order produces mid-pick NameErrors, so "the
+  only cherry-pickable order is the mainline one" (merges 16:54 / 16:56 /
+  16:57 / 16:59).
+  Report-item ledger: scales-oracle delta = ** folded into #45289 by its
+  amend ** (not lost); reconcile note = ** LANDED as entry 303 ** (the
+  comment-only commit the earlier look lacked); SMOKE = ** no standalone
+  commit exists in the final queue ** -- its evidence is the overrides
+  battery figure inside #45520 (112P/1S/181sub, integrator-verified at the
+  landed tip) plus entry 303's analysis.
+  ** INTEGRATOR-FOUND DEFECT IN THE DELIVERED BATCH (see entry 300): #44913
+  breaks 2 cases of test_qwen4_exp_ple_staging.py, REPRODUCED ON THE
+  WORKER'S OWN TREE (aa671ba8cf), and their battery list never covered that
+  file. Fixed by a test-only rider commit de9f22a5a6 riding entry 300 under
+  protocol rule 2 -- NO extra entry number, so the mandated cascade
+  (296-303 / 304 / 305-306 / 307 / 308-309) is preserved. **
+  All five merged picks carry MERGE-#5 DEDUPE lines so B5 does not
+  re-resolve them.
+
+        296. 5f5bc5b947  PR #44901 (MERGED 2026-10-19 @ origin/main 3a059de94c; adapted pick, patch-id differs -- 2 conflicts resolved by the worker)  moe: count routed_scaling_factor ONCE when top-k folds it -- ** closes a LATENT NVFP4 MoE OUTPUT-SCALE defect on our production FP4 route **
+      # https://github.com/sgl-project/sglang/pull/44901 (18 files,
+      # +559/-188). Landed FIRST: mainline chronology makes it the strict
+      # PRECONDITION of #44904 (whose preimage consumes the two helpers
+      # created here).
+      # ** THE LATENT DEFECT, PROVED ON OUR ROUTE -- the handoff's mandate,
+      # checked by the INTEGRATOR IN THE LANDED CODE rather than relayed:
+      # fused_moe_triton/layer.py:104-112 answers True for
+      # ModelOptNvFp4FusedMoEMethod on EVERY runner whose backend is NOT
+      # marlin (so FLASHINFER_CUTLASS -> True; there is NO NVFP4 class-level
+      # flag, the verdict comes from the RUNNER ARM -- which is what auto
+      # resolves to on SM110/SM120 AND what entry-230 publishes), and
+      # topk.py:2233-2240 fused_shared_expert_weight therefore returns
+      # ** 1.0 ** for the shared column instead of 1.0/routed_scaling_factor.
+      # Before this pick the shared column was written 1/g ANYWAY while
+      # top-k folded g into the routed rows: the ~1/g**2 double-scale class,
+      # i.e. the shared contribution arriving scaled twice relative to the
+      # routed sum (upstream's own routed-sum symptom 0.85-0.97). **
+      # MEASUREMENT-HONESTY CARRY: EVERY FP4-ARM NUMBER IN THE LEDGER
+      # PREDATES THIS COMPENSATION AND MUST NOT BE RE-READ AS POST-FIX. **
+      # CORRECTION TO THE HANDOFF ON RECORD: it cited "entry-242's +2.6%" --
+      # ** THERE IS NO +2.6% FIGURE IN THE LEDGER (grep: zero matches). **
+      # Entry 242 is the 9c.sh RUN-SCRIPT RECORD (no percentage); the
+      # measured FP8-vs-NVFP4 adjudication is ** ENTRY 243: +4.3% per-request
+      # (bs1 +4.3, bs2-3 +3.6, bs4-8 +2.2, best cell bs1/128-256k +10.6),
+      # +28.5% same-code KV, implied decode step -3.7%, pooled accept 2.729
+      # FP8 vs 2.695 FP4 (a context-mix Simpson artifact) ** -- all of it
+      # measured on the flashinfer_cutlass FP4 arm in the 10-20 window, i.e.
+      # PRE-#44901. Re-measuring the FP4 arm's OUTPUT QUALITY after this pick
+      # is owed with the rest of the GPU debt (the numbers above are PERF,
+      # but a removed double-scale can move accept/quality).
+      # CONFLICT RESOLUTIONS (2, worker-documented; both are NON-SMUGGLING
+      # decisions the integrator re-checked): (i) models/deepseek_v2.py --
+      # the hunk anchored on `class MergedMoEOutput(MoEOutput)` as CONTEXT,
+      # but that class is ** upstream #44657 CONTENT THIS FORK NEVER TOOK **
+      # (review-record skip family), so the region conflicted
+      # empty-vs-context; kept ONLY #44901's own addition --
+      # _scale_routed_and_add_shared (verified BYTE-IDENTICAL to the upstream
+      # post-image function text) plus all nine routed_scaling_factor_fused_
+      # in_topk sites -- and ** DID NOT SNEAK MergedMoEOutput IN ** (nothing
+      # in this tree references it; grep-verified). (ii)
+      # test_mega_moe_decode_capacity.py: modify/delete conflict (file created
+      # by #44657, absent here; #44901 touched 1 line inside it) -> ** KEPT
+      # DELETED **.
+      # FIDELITY: 7/12 python files BYTE-IDENTICAL to the upstream post-image
+      # (topk, hash_topk, waterfill, moe_ep_setup, glm4_moe, glm4_moe_lite,
+      # vl_routing); mega_moe / mega_moe_flydsl / bailing_moe_v3 / dots3
+      # landed inside files carrying nemotron-era (#44518) upstream drift we
+      # do NOT have, so their fold changes were diff-reviewed LINE BY LINE
+      # (old `should_fuse_routed_scaling_factor_in_topk or _use_aiter`
+      # predicates -> the new config-level predicate; residual old-form reads
+      # match upstream's own post-image, legitimately kept).
+      # WaterfillBalancer's routed_scaling_factor KWARG became shared_weight --
+      # ** ONE production construction site, moe_ep_setup.py:48-68, now
+      # passing shared_weight=fused_shared_expert_weight(...) (integrator
+      # re-grep: no routed_scaling_factor= form remains there, and the class
+      # has no other construction site) **.
+      # Battery (worker, CVD=9 vs their base): test_fused_shared_expert_scaling
+      # 6P -> 12P/25sub (upstream's +343-line fold matrix, GREEN);
+      # test_hash_topk 3P -> 4P; test_jit_grouped_topk 10S -> 12S
+      # (CUDA-gated adds); ALL pins held (dispatcher 12P, smallm 28P/66sub,
+      # b12x 67P/46sub, kernels_namespace 76P, model_overrides 111P/1S/179sub,
+      # modelopt suites exact); pre-existing no-CUDA classes unchanged
+      # (trtllm-gen 8F, fused_gate 46F, round-robin 37F, triton-fused-moe 96F,
+      # mem_pool_ep 1F, mega_moe_deepgemm 1F). GPU DEBT: the fold-predicate
+      # end-to-end on REAL NVFP4 weights.
+      # MERGE-#5 DEDUPE: merged pick, ALREADY RECONCILED against our tree --
+      # at the merge take upstream's copy only if the diff against this
+      # landed form is EMPTY; the two conflict resolutions above are the
+      # delta, and #44657 must not ride in with it.
+
+        297. 1c385dc152  PR #44904 (MERGED 2026-10-19 @ origin/main 48ea486928; adapted pick, patch-id differs -- 1 conflict)  moe: renormalize per-rank shared-slot routing over ROUTED experts only -- the wrong-output half of the pair, incl. the state_capturer WIDTH-PADDING fix
+      # https://github.com/sgl-project/sglang/pull/44904 (11 files,
+      # +486/-127). ** LANDED AS THE UNIT WITH ENTRY 296 and only AFTER it:
+      # its diff preimage literally contains #44901's helpers. ** THE WRONG-
+      # OUTPUT CLASS: the fused per-rank shared-slot paths asked the gate for
+      # top_k while num_fused_shared_experts markers ALSO went through, so
+      # renormalization divided over ONE ROUTED EXPERT TOO MANY (upstream's
+      # routed sum 0.85-0.97 on CUDA) -- which is the same failure direction
+      # the wanted_stack note flagged as "VERIFY WHETHER OUR ROUTE DOUBLE-
+      # SCALES TODAY": ANSWERED YES, by 296's predicate proof + this fix.
+      # ** CARRIES THE state_capturer/routed_experts.py WIDTH-PADDING FIX **
+      # (routed-width capture; the scattered-a2a suite picks it up as
+      # 3P -> 5P/2sub).
+      # CONFLICT RESOLUTION (1): kernels/ops/moe/test_moe_fused_gate.py
+      # carries PRE-#44690 docstring drift here (this fork never took #44518's
+      # nemotron rework of that file's header); took upstream's new one-line
+      # docstring, kept this fork's file otherwise -- the _reference_gate
+      # renorm-order fix, the renorm x apply_scale parametrization and the
+      # production-impl comparison changes ALL landed.
+      # FIDELITY: topk.py, hash_topk.py, state_capturer/routed_experts.py,
+      # test_fused_append_remap_per_rank_shared_slots.py and
+      # test_fused_shared_expert_scaling.py BYTE-IDENTICAL to upstream's
+      # post-image; _router_triton_kernel verified byte-identical as a
+      # FUNCTION BODY (the file's other regions carry our jit-loader drift
+      # and were untouched); fused_moe_triton_kernels.py hunks are
+      # DOCSTRING-ONLY.
+      # Battery (worker, vs entry 296): scaling 12P -> 13P/25sub,
+      # waterfill_eplb 4P -> 5P, scattered_a2a 3P -> 5P/2sub, hash_topk 4P
+      # held, append 6S -> 9S + padded 10S -> 11S (CUDA-gated), **
+      # moe_fused_gate 46F -> 52F = the file's PRE-EXISTING no-CUDA class
+      # plus 6 NEW parametrized members (collects clean; needs hardware) --
+      # integrator confirms the 46F at our own pre-wave base, so the +6 is
+      # new-CUDA-cases, NOT a regression. ** kernels_namespace 76P inventory
+      # guard. GPU DEBT: remap-on-CUDA numerics (torch.cat width change +
+      # padded-row remask), pinned at contract level by entry 298.
+      # MERGE-#5 DEDUPE: same rule as 296 -- one docstring conflict is the
+      # only delta.
+
+        298. d95a07fb92  STACK-OWNED (no upstream PR)  contract probe pinning the #44901 fold predicate on the flashinfer_cutlass NVFP4 route -- the CPU-side machine proof behind entry 296, STRUCTURALLY IMPOSSIBLE pre-pick
+      # test/registered/unit/layers/moe/test_modelopt_nvfp4_fold_contract.
+      # py (+122, register_cpu_ci base-a-test-cpu) ** 8P **. WHAT IT PINS:
+      # (i) FusedMoE._fuses_routed_scaling_factor_in_topk is True for NVFP4
+      # on EVERY non-Marlin runner and False on Marlin -- the predicate list
+      # #44901's shared-slot fix keys off, and since NO NVFP4 class-level
+      # fuse flag exists the verdict comes from the RUNNER ARM; (ii)
+      # topk.is_routed_scaling_factor_fused_in_topk agrees through
+      # apply_routed_scaling_factor_on_output; (iii) topk.
+      # fused_shared_expert_weight therefore writes the fused shared column
+      # ** 1.0, not 1/routed_scaling_factor ** exactly where #44904 moved the
+      # kernel/append fill to AFTER routed renormalization.
+      # RED-AS-NEWNESS PROOF (worker's, RE-VERIFIED BY THE INTEGRATOR AT OUR
+      # PRE-WAVE BASE): is_routed_scaling_factor_fused_in_topk and
+      # fused_shared_expert_weight ** DO NOT EXIST at 0df18e97a0 (git grep:
+      # zero hits) and DO exist now ** -- so the file's IMPORT alone fails
+      # pre-pick; it cannot pass without 296+297 landed. The same check
+      # confirms _fuses_routed_scaling_factor_in_topk DID exist pre-wave (3
+      # hits in layer.py) -- the probe pins that existing predicate's
+      # VERDICT, which is the honest framing.
+      # EXPLICITLY NOT COVERED (the worker's own words): the end-to-end
+      # double-scale numeric check -- generate against a single-scale
+      # reference on 4xSM120 with the real checkpoint, since the routed-sum
+      # 0.85-0.97 symptom and the shared-contribution 1.0x property are only
+      # OBSERVABLE on hardware. NEW PIN: this file is ABSENT at the pre-wave
+      # base battery and contributes 8P to this wave's totals.
+
+        299. 2fffd3fb06  PR #44912 (MERGED 2026-10-19 @ origin/main 964ab2b280; ** PATCH-IDENTICAL, zero conflicts **)  moe: split the TWO MEANINGS of num_fused_shared_experts -- count-of-fused-shared vs trailing ROUTER slots
+      # https://github.com/sgl-project/sglang/pull/44912 (15 files,
+      # +190/-125). Semantics: TopKConfig.num_fused_shared_experts (how many
+      # shared experts are FUSED) splits out ** num_shared_topk_slots **
+      # (the trailing columns the ROUTER writes -- ZERO when Waterfill
+      # appends the shared expert after routing), and TopK.__init__ now
+      # DERIVES top_k for the config as routed-per-token + slots instead of
+      # MUTATING the caller's numbers; new helpers waterfill_routes_
+      # shared_experts / shared_topk_slots in moe/utils.py; the
+      # enable_waterfill branch STOPS SILENTLY REDEFINING top_k (waterfill
+      # now forces STANDARD output format explicitly).
+      # WHY IT APPLIED CLEANLY HERE (the worker's claim, which is also the
+      # merge-#5 lesson): the fork never edited topk.py/hash_topk.py since
+      # merge #4, and entries 296+297's post-images EXACTLY RECONSTRUCT
+      # upstream's preimage at the touched lines -- order-earned cleanliness,
+      # not luck.
+      # ENTRY-247 INTERACTION PRESERVED WITH A MEASUREMENT: moe/utils.py's
+      # post-image differs from upstream ONLY by the 7 b12x enum/predicate
+      # lines already in the tree (** git diff vs 964ab2b280 = +7/-0 **), so
+      # the split landed upstream-identical and test_b12x_w4a16_route stayed
+      # ** 67P/46sub UNCHANGED **. test_manual NPU file (test_npu_topk.py) +
+      # hardware_backend/npu/moe/topk.py took the 1-line rename; NPU paths
+      # inert here.
+      # Battery (vs entry 297): waterfill_eplb 5P -> 6P/2sub (upstream's new
+      # slot case); everything else byte-stable (scaling 13P/25sub, hash 4P,
+      # append 9S, padded 11S, jit 12S, smallm 28P/66sub, dispatcher 12P,
+      # b12x 67P/46sub, kernels_namespace 76P, trtllm-gen 8F class).
+      # GPU DEBT: NUM_SHARED_TOPK_SLOT wiring at runtime (per-rank append
+      # widths on real dispatch).
+      # MERGE-#5 DEDUPE: PATCH-IDENTICAL -- the merge auto-resolves; nothing
+      # to re-derive.
+
+        300. 95e4b11e05  PR #44913 (MERGED 2026-10-19 @ origin/main 6b90e5716d; adapted pick, patch-id differs; ** worker commit LACKS the -x trailer -- provenance recorded HERE **)  moe: scope shared-expert configuration to each model -- frozen SharedExpertsConfig resolved once at the loader's single instantiation point; 62 files
+      # https://github.com/sgl-project/sglang/pull/44913 (62 files,
+      # +1100/-811 incl. 40 model files, the runners, runtime_context, the
+      # new configs/shared_experts.py and the .agents skill doc).
+      # PROVENANCE DEFECT NOTED AT THE INTEGRATOR: the staged commit carries
+      # NO "(cherry picked from commit ...)" line though its subject is the
+      # upstream one; upstream identified by message search as 6b90e5716d
+      # (merged 2026-10-19) and recorded here so the chain is not lost. Not
+      # patch-identical by design -- the difference IS the union below.
+      # PICK ADAPTATIONS (2 textual conflicts + 1 union fix): base_runner.py
+      # keeps BOTH methods -- upstream's model_context() AND this fork's
+      # validate_model_support() (entry-240 era) side by side, with the
+      # entry-175 prefill-autotune body staying inside the RENAMED _warmup();
+      # glm5_next.py adopts get_num_fused_shared_experts ONLY (upstream's
+      # get_moe_runner_backend import feeds paths the fork never took,
+      # F401-clean without it); test_draft_entry_hook_parity.py's
+      # NOTE(fork) arch-scope fix -- GATE_WITHOUT_COUNT names upstream-only
+      # archs ABSENT here (MiniCPMV4_7 postdates merge #4), so the lost-gate
+      # sweep is scoped to present classes and the missing-count assert is
+      # UNCHANGED.
+      # ** INTEGRATOR-FOUND DEFECT IN THIS PICK (the wave's one real bug
+      # find): after landing, test_qwen4_exp_ple_staging.py went 37P ->
+      # 2F (test_replay_stages_padded_inputs_after_load[False]/[True]).
+      # CHAIN: test -> decode_cuda_graph_runner.py:1651 execute ->
+      # base_runner.py:264 model_context -> runtime_context.py:1297 get_model
+      # -> :1051 ValueError "config namespace 'model' not published". #44913
+      # wrapped decode-graph REPLAY in the per-model shared-experts context,
+      # and the test builds its runner with __new__, so no model namespace is
+      # ever published. PRODUCTION IS CORRECT (a real runner holds a real
+      # model_runner inside the published context) -- this is the repo's
+      # ESTABLISHED FORK-STUB CLASS, the same adaptation entry 294 made to
+      # pp_sync_drain's _hcs_state. BISECT + ATTRIBUTION, machine-done:
+      # 37P at 0df18e97a0 (their base) AND at every pick through entry 299;
+      # ** 2F already ON THE WORKER'S OWN FINAL TREE (aa671ba8cf) -- so this
+      # is an uncaught regression INSIDE the delivered batch, NOT an
+      # interaction with the landed waves; their battery file list never
+      # included this file. ** FIXED BY A TEST-ONLY RIDER COMMIT
+      # ** de9f22a5a6 ** (protocol rule 2 -- a test-only follow-up riding
+      # its PR; one instance-level `runner.model_context = lambda:
+      # nullcontext()` + comment, matching how the same test already stubs
+      # validate_model_support/load_batch/_replay_attn_backend; ZERO
+      # production lines; the load/prepare/publish/replay ORDER assertions
+      # it exists to protect are untouched) -> 37P again, ruff/format/
+      # check_registered_tests clean. The rider deliberately got NO entry
+      # number so the mandated cascade stays intact. **
+      # FORK-GATE PRESERVATION (the queue's whole reason for gating this
+      # family; each item worker-verified on their final tree AND spot-
+      # checked by the integrator at the landed tip): (1) ** entry-231's
+      # mixed-precision fusion veto survives -- and it survives VIA THE
+      # CONFIG-LEVEL FUSION DISABLE, not via the dying flags: **
+      # ModelOptMixedPrecisionConfig.can_fuse_shared_expert
+      # (modelopt_quant.py:1564, Fp4 twin :863) UNTOUCHED, ** BOTH LINE
+      # NUMBERS RE-VERIFIED IDENTICAL ON OUR LANDED TIP **; the veto is
+      # consumed at BLOCK level (qwen2_moe.py -> the block's own num_fused
+      # decision), a path #44913 leaves byte-identical; the loader hunk keeps
+      # resolve_shared_experts_config(model_class, hf_config, **quant_config
+      # **) -- the parameter the veto families rely on; Qwen3_5* entry classes
+      # sit in upstream's GATE_WITHOUT_COUNT exemption so BLOCK-LEVEL fusion
+      # STAYS AUTHORITATIVE for the qwen family; fork tests survive alongside
+      # upstream's rewrite (TestModelOptMixedBody kept; test_modelopt_nvfp4.
+      # py untouched by the pick). (2) entry-244's degrade-not-raise small-M
+      # eligibility wrapper: flashinfer_cutlass.py/modelopt_quant.py are NOT
+      # in the 62 files and layer.num_fused_shared_experts reads keep
+      # resolving (FusedMoE still takes the kwarg from blocks; layer.py is in
+      # NO pick of this family) -- battery test_nvfp4_smallm_dispatch. (3)
+      # entry-244's SGLANG_NVFP4_MOE_SM120_MAX_EP predicate untouched. (4)
+      # entry-247 b12x: moe/utils.py ends as upstream-post PLUS the fork's 7
+      # b12x lines (zero deletions vs upstream), and overrides.py
+      # _moe_runner_fusion_disable's arg-time force-off now feeds get_exec().
+      # moe.disable_shared_experts_fusion (fields/exec_.py:930 -- ** THE EXEC
+      # FIELD SURVIVES; ONLY THE runtime_context FLAGS LEAVES DIE **), so
+      # resolve_shared_experts_config's `disabled` starts from the b12x
+      # intent. (5) entry-230 published-backend fixes untouched (overrides.
+      # py / token_dispatcher/standard.py not in the pick). (6) entries
+      # 206/225/239 dispatcher convention untouched.
+      # DEAD LEAVES, INTEGRATOR-QUANTIFIED (sharper than the worker's
+      # compressed "0 residual readers"): after this pick there are ** ZERO
+      # readers of the flags leaf ** (`flags.moe.disable_shared_experts_
+      # fusion` = 0 hits; the speculative twin = 0 name-hits outside the
+      # definitions) while all 25 surviving hits OF THAT NAME are the KEPT
+      # wiring -- overrides.py (9, incl. the b12x force-off), the model entry
+      # classes, fields/exec_.py, and the NEW configs/shared_experts.py:21,
+      # which is exactly the frozen-config resolution point this refactor
+      # introduced. Inventory guard: test_kernels_namespace 76P.
+      # MERGE-#5 DEDUPE: 62-file upstream refactor -- take upstream's form
+      # and RE-APPLY ONLY (a) the three pick adaptations, (b) the six
+      # preservation items, (c) the ple_staging rider. The union is recorded
+      # here so nobody re-derives it under merge pressure.
+
+        301. a370fb8d43  PR #45289 (MERGED 2026-10-20 @ origin/main 5b1dbc2c80; adapted pick, patch-id differs)  modelopt-nvfp4: keep MoE GLOBAL SCALES IN GATE/UP ORDER -- canonical [gate,up] + SwiGLU 1/g1_alphas_up correction + mismatch warning; ** REVERTS #44858's call-site workaround, which our base NEVER HAD **
+      # https://github.com/sgl-project/sglang/pull/45289 (3 files,
+      # +230/-34: fused_moe_triton/layer.py, modelopt_quant.py, and the
+      # ORACLE test_modelopt_nvfp4_moe_scales.py). ** THE RULE THIS ENTRY
+      # ENFORCES: #44858'S CALL-SITE SHAPE MUST NOT SURVIVE -- canonical
+      # [gate,up] order with the beta-side 1/g1_alphas_up correction is the
+      # ONLY acceptable form, and any auto-merge that keeps a pre-#45289
+      # call-site compensation is a REGRESSION, not a union. ** Machine
+      # proof (worker + integrator): _compute_gemm1_alphas is BYTE-IDENTICAL
+      # to the pre-#44858 AND post-#45289 state, and
+      # ** _compute_trtllm_gated_act_params EXISTS NOWHERE IN THE TREE **
+      # (git grep: zero hits). ** OUR BASE NEVER HAD #44858 AT ALL **, which
+      # is exactly why the entry-227 SKIP-NOTE ON #44858 IS STALE and is now
+      # FULLY SPENT: the 10-28 dated correction retired the note, this pick
+      # is the fix that note was waiting for.
+      # SCALES-ORACLE DELTA -- ** the report item the dispatch listed as a
+      # SEPARATE sha (47a1e0112a) IS FOLDED INTO THIS COMMIT by the worker's
+      # amend ** (which is also why every sha in this family differs from
+      # the first dispatch list). test_modelopt_nvfp4_moe_scales.py lands in
+      # upstream's FINAL form, byte-identical EXCEPT the _nvfp4_loader_layer
+      # stub carries the placement attrs this fork's SM120 small-M gate reads
+      # at process_weights time (num_local_experts / num_fused_shared_
+      # experts / moe_ep_rank / moe_ep_size / _num_global_routed behind the
+      # property -- entry-225 precedent for exactly this stub gap).
+      # ASSERTIONS UNTOUCHED. ** 17P/30sub -> 20P/44sub, and the RED PROOF
+      # IS REAL: reverting the beta line to the pre-#45289 1.0/g1_alphas
+      # fails test_trtllm_post_load_activation_parameters[situ]. **
+      # SEAM CARVE-OUT (deliberate, behavior-neutral):
+      # _align_fp4_moe_weights_for_flashinfer_trtllm added to the NVFP4
+      # method in upstream's #44666 shape ** because the ORACLE TEST MOCKS
+      # THAT NAME ** as its GPU-packing stub
+      # (mock.patch.object(layer.quant_method, ...)); a real boot is
+      # UNCHANGED -- it wraps the fork's identical inline call. ** IF #44666
+      # EVER PORTS, THIS WRAPPER IS THE SEAM -- and re-check entry 272's
+      # out= kwarg note at the same time (same #44666 dependency). **
+      # ENTRY-247 DEFECT-(3) TERRITORY NOW UPSTREAM-COVERED: the b12x
+      # w13_layout/up_first hazard that entry 247 hand-corrected is now
+      # governed by the upstream use_flashinfer_trtllm_weight_layout term,
+      # with our fork guard reading it through getattr(..., False) so the
+      # entry-247 CPU suite (built with __new__) does NOT regress -- 6 tests
+      # went RED (AttributeError) without that default; b12x still resolves
+      # False everywhere so w13_layout(up_first=False) -> **"w31" survives,
+      # defect-(3)'s derivation intact**, test_up_proj_order_is_not_flipped_
+      # for_b12x green, b12x suite back to 67P/46sub.
+      # backends/test_flashinfer_trtllm_gen_moe_backend.py: #45289's change
+      # there REVERTS #44858's test edits -- a LITERAL NO-OP for this tree
+      # (file verified byte-identical to the upstream post-image; it stays
+      # its pre-existing 8F no-CUDA class).
+      # GPU WINDOW DEBT: end-to-end scale-ordering numerics on the real NVFP4
+      # checkpoint (gate/up alpha mapping through a live TRT-LLM/CUTLASS
+      # forward); this wave pins CPU contract level only.
+      # MERGE-#5 DEDUPE: merged pick with TWO intentional additions over
+      # upstream -- the seam carve-out and the getattr guard. Take
+      # upstream's body and RE-ADD those two, plus the oracle stub attrs.
+
+        302. a5a0303393  PR #45520 (open, head 7032238d09f7dbb44496c8930a2e5016810f8641, ported; gh-verified OPEN + mergeable)  moe: pick a supported runner for auto-detected ModelOpt NVFP4 MoE on SM110/SM120 -- ** THE UPSTREAM HALF OF OUR ENTRY-230 FORK PATCH **
+      # https://github.com/sgl-project/sglang/pull/45520 (4 files,
+      # +139/-47: arg_groups/overrides.py, model_overrides/qwen3_moe.py,
+      # utils/common.py, test_model_overrides.py). Method: git apply -3
+      # CLEAN for utils/common.py (get_mixed_precision_moe_quant_algos hoist)
+      # and qwen3_moe.py (helper now imported from utils); ** overrides.py +
+      # its test HAND-MERGED because the upstream hunk's PREIMAGE IS THE RAW
+      # view.quantization=="modelopt_fp4" BLOCK AND THIS TREE CARRIES THE
+      # ENTRY-230 FORK PATCH AT THAT EXACT SPOT ** -- the single hardest
+      # seam in the family, landed without a residual conflict.
+      # WHAT UPSTREAM FIXES: with --quantization UNSET, the SM110/SM120 rule
+      # never saw the checkpoint's ModelOpt NVFP4, auto stayed auto, and the
+      # layer fell through to FLASHINFER_TRTLLM -> g1_scale_c AttributeError
+      # at warmup. Now the rule reads the CHECKPOINT-RESOLVED quantization
+      # and discriminates modelopt_mixed by expert format: ** W4A16_NVFP4
+      # experts -> marlin, NVFP4 experts -> flashinfer_cutlass **;
+      # modelopt_fp4 -> flashinfer_cutlass. Lives in the same
+      # _moe_runner_backend_quant_constraints hook the entries-230/244
+      # retargets moved.
+      # FORK UNION ON TOP OF #45520'S SHAPE (each pinned by tests): every
+      # model-config read goes through ** _model_config_or_none ** (fail-
+      # safe; UPSTREAM READS model_config_of(view) RAW) -- entry 230's
+      # "unreadable config must leave the resolution exactly as it was"
+      # contract, kept by its RuntimeError case; modelopt_mixed with an
+      # UNREADABLE expert list PUBLISHES flashinfer_cutlass rather than
+      # staying auto (leaving auto IS the silent-misroute shape);
+      # _quantization_explicitly_unset read via getattr(default False) so the
+      # CPU resolver stubs keep constructing (production always sets it);
+      # _checkpoint_quantization_or_none KEPT as a delegating shim -- ** the
+      # entry-230 patch is NOT DELETED, and entry 303 is the analysis of why
+      # it stays load-bearing. **
+      # THE GOLDEN CASE IS ORDER-INDEPENDENT: readable config + NVFP4 experts
+      # answers flashinfer_cutlass EITHER WAY, so the prod FP4 arm's
+      # resolution is unchanged by the union.
+      # ** THE SMOKE EVIDENCE THE QUEUE ASKED FOR LIVES HERE, NOT IN A
+      # STANDALONE COMMIT ** (no SMOKE sha exists in the final queue):
+      # upstream's test_sm1xx_modelopt_nvfp4_moe_auto_avoids_trtllm_gen
+      # spliced BYTE-FAITHFUL at its upstream anchor (marlin /
+      # flashinfer_cutlass / flashinfer_cutlass across both platforms, 2
+      # subtests) rides INSIDE the entry-230 fixture pass -- file 111P/1S/
+      # 179sub at base -> ** 112P/1S/181sub, and the integrator re-measured
+      # exactly that on the landed tip. ** Semantics unchanged for all 111
+      # pre-existing cases: the fork patch and upstream's rule COEXIST in one
+      # file without either going quiet.
+      # STILL-NOT-REFINED GAP (pre-existing; unchanged by BOTH fixes): the
+      # bare "modelopt" name is not resolved to fp4/mixed at arg resolution,
+      # so an explicit --quantization modelopt boot on SM120 STILL HAS TO
+      # NAME THE RUNNER -- closing that is the modelopt_mixed mapping gap,
+      # **#35617 territory, referenced not ported** (tracked in FAM-A7).
+      # MERGE-#5 DEDUPE: ** THIS IS AN OPEN PORT, NOT A MERGED PICK ** -- if
+      # #45520 merges before merge #5, the merge SUPERSEDES the pick and the
+      # fail-safe layer above MUST BE RE-APPLIED, because upstream still
+      # reads model_config raw and still leaves auto on unreadable inputs.
+
+        303. 6410e42b40  STACK-OWNED (reconcile note; ** COMMENT-ONLY, no behavior change **)  entry-230 fork patch vs #45520 -- the redundancy analysis, INCLUDING WHY A LATENT INSTANCE OF ENTRY-230'S OWN DIVERGENCE JUST DIED
+      # 31 lines of comment above _model_config_or_none in arg_groups/
+      # overrides.py. ** THIS IS THE ITEM THAT DID NOT EXIST AS A COMMIT at
+      # my first reconciliation (31 uncommitted lines in wt-moe only) -- the
+      # worker's final pass committed it, so the queue's reconcile-note
+      # mandate is FULLY SATISFIED and #45520's body pointer ("see the
+      # reconcile note commit") now resolves. ** Machine-checked comment-
+      # only: overrides battery ** 112P/1S/181sub UNCHANGED ** by this
+      # commit, trtllm-gen file still its pre-existing 8F no-CUDA class,
+      # dispatcher suite still 12P.
+      # THE VERDICT, AS LANDED: (i) for the CRASH #45520 targets (flagless
+      # ModelOpt NVFP4 under `auto` -> SM100-only trtllm-gen -> g1_scale_c
+      # AttributeError at warmup), upstream's checkpoint-resolved rule makes
+      # entry 230's published-value fix ** REDUNDANT whenever the config is
+      # READABLE, and REFINES it ** (W4A16 experts now answer marlin, not
+      # cutlass); (ii) for the ** SILENT EXPERT-ID MISROUTE ** entry 230 also
+      # fixed -- published `auto` vs a built GLOBAL-ids runner, so rank 0
+      # routes right and EP ranks >0 route NOTHING -- **#45520 CLOSES ONLY
+      # THE READABLE-CONFIG HALF AND INTENTIONALLY LEAVES `auto` WHEN IT
+      # CANNOT READ THE EXPERT-ALGO LIST: EXACTLY THE SHAPE THE MISROUTE
+      # LIVES IN. ** Hence entry 230's pieces are KEPT AND LOAD-BEARING
+      # there: the fail-safe config reads, the algo-unknown mixed->cutlass
+      # publish, and the once-per-pair mismatch warning in token_dispatcher/
+      # standard.py (untouched by this whole family). ** THE PATCH IS
+      # DOWNGRADED FROM PRIMARY TO FAIL-SAFE LAYER; NOTHING DELETED, per the
+      # port brief. ** (iii) THE SHARPEST FINDING, MINE TO RECORD: for
+      # W4A16-MIXED checkpoints entry 230 BLANKET-PUBLISHED
+      # flashinfer_cutlass for ALL mixed names, which ** diverged from the
+      # per-layer marlin build -- a latent instance of the very
+      # published-vs-built divergence entry 230 exists to prevent **;
+      # #45520's W4A16->marlin refinement REMOVES that divergence, so entry
+      # 230's own blind spot is now closed by upstream. b12x stays named-
+      # explicit-only: auto never resolves to flashinfer_b12x_w4a16 BEFORE
+      # or AFTER #45520, and test_auto_never_resolves_to_b12x remains green.
+      # (iv) the bare "modelopt" gap stays open -- #35617 territory,
+      # referenced, NOT ported.
+      # MERGE-#5 NOTE FOR B5: this comment block is the reconciliation
+      # record itself -- if the merge brings #45520 in upstream form, DO NOT
+      # let conflict resolution delete entry-230's fail-safe reads on the
+      # strength of "already fixed upstream"; item (ii) is why they stay.
+
+      # BATCH-8 BATTERY (integrator, main tree, CVD=9, prod venv, the
+      # WORKER'S OWN 43-file battery list -- /tmp/opencode/battery-moe.sh,
+      # copied to battery-moe-integrator.sh pointing at the main tree).
+      # ** METHOD IDENTITY WAS PROVED BEFORE ANY PICK LANDED: my base run
+      # reproduced the worker's battery-base.log EXACTLY on every
+      # measurable file (scaling 6P, hash 3P, waterfill 4P, scattered_a2a
+      # 3P, mega_moe 1F/13P/13sub, mem_pool_ep 1F/48P/4sub, b12x 67P/46sub,
+      # smallm 28P/66sub, dispatcher_runner_backend 12P, model_overrides
+      # 111P/1S/179sub, triton_fused_moe 96F/1P, round_robin 37F,
+      # fused_gate 46F, trtllm-gen 8F, fusion_gates 51P/11sub), plus four
+      # direct spot-runs: dispatcher 12P / smallm 28P/66sub /
+      # kernels_namespace 76P / ple_staging 37P. **
+      # NET MOVE ACROSS THE 8 PICKS: **+20P / +6S / +6F / +53sub**, fully
+      # decomposed -- scaling +7P/+25sub (296's +343-line fold matrix +6P,
+      # 297's +1P), scattered_a2a +3P/+2sub (297's width capture +2, 300's
+      # routed_experts hunk +1), waterfill +2P/+2sub (297 +1P, 299's slot
+      # case +1P/+2sub), hash_topk +1P (296), probe +8P (NEW, 298),
+      # routing_extra +1P/+3S (NEW file from 300), scales ORACLE
+      # 17P/30sub -> 20P/44sub = +3P/+14sub (301, the folded delta),
+      # draft_entry_hook_parity +1P (300's NOTE(fork) arch-scope fix),
+      # model_overrides 111P/1S/179sub -> 112P/1S/181sub = +1P/+2sub (302,
+      # ** re-measured by the integrator -- this IS the queue's SMOKE
+      # evidence **), draft_construction_isolation **-7P/+8sub** (300:
+      # upstream rewrote the file 188+/136- from parametrize to subTests,
+      # ZERO failures -- the sole mover of the spec-dir pin this session:
+      # 336P/11S/184sub -> 329P/11S/192sub, and it was NOT in the worker's
+      # notes, found here by the pin-survival sweep), fused_gate +6F
+      # (297's new CUDA-gated renorm x apply_scale members -- 46F class at
+      # MY base, independently reproduced), jit 10S->12S (296) + padded
+      # 10S->11S (297). PINS HELD UNMOVED: dispatcher 12P, smallm
+      # 28P/66sub, ** b12x 67P/46sub (the entry-247 preservation proof) **,
+      # kernels_namespace 76P (inventory guard), fusion_gates 51P/11sub,
+      # modelopt 9P/5sub, deferred 5P/4sub, loader 33P/22sub,
+      # backend_selection 3P, all fp8 suites exact, and the pre-existing
+      # no-CUDA classes unchanged (trtllm-gen 8F, round_robin 37F,
+      # triton_fused_moe 96F/1P, rocm 5S, mega_moe 1F/13P, mem_pool_ep
+      # 1F/48P).
+      # ** TWO WORKER-BATTERY CLAIMS THAT DO NOT REPRODUCE ON THEIR OWN
+      # FINAL CONTENT (content parity proved for all 78 files): ** (i)
+      # "append 6S -> 9S": test_fused_append_remap_per_rank_shared_slots.py
+      # is BYTE-IDENTICAL to their tip and collects ** 6 nodes at BOTH ends
+      # ** -- the claimed +3 CUDA-gated additions are not in the delivered
+      # file; the padded 10S->11S half of the same sentence DOES reproduce.
+      # (ii) a base-log line read "52 failed ... rc=0" for
+      # test_rocm_router_gate.py -- self-contradictory, and the shared
+      # $tmp=/tmp/opencode/bat-file.tmp path in the battery script is the
+      # mechanism; standalone re-proof gives ** 5S at base AND at the tip **.
+      # This is the operator's warning (5) (co-tenant flake/NOSUMMARY,
+      # "re-prove STANDALONE before believing") biting in practice: 9 of 43
+      # base rows came back NOSUMMARY from the same artifact and ALL NINE
+      # were re-measured individually here before use.
+      # THE "MoE SET 139P/22S/141sub" PIN: ** ITS FILE LIST IS NOT
+      # RECOVERABLE ON DISK ** (it was defined by the 10-28 autotune wave,
+      # whose logs name only other groups), so this wave's MoE battery is
+      # instead pinned as THE WORKER'S 43-FILE LIST WITH THESE AGGREGATES:
+      # ** base 553P/671S/189F/391sub (after the artifact corrections) ->
+      # tip 573P/682S/195F/444sub... see the +20/+6/+6/+53 decomposition
+      # above; a future reader should re-run battery-moe-integrator.sh, not
+      # the unrecoverable 139 figure. **
+
+  sext1-2026-10-29 wave (branch port-sext1, ONE stack-owned commit;
+  plain apply -- no -x, there is no upstream PR behind it):
+
+        304. 94933d140d  STACK-OWNED  S-EXT1: tune the FlashInfer EXTEND autotune pass on SEEDED DISTINCT dummy tokens -- the entry-176 path finally gets what #45543 did for decode (wanted_stack FAM-A1's open decision, CLOSED as "wrap", not decline)
+      # NO upstream PR: this is wanted_stack FAM-A1 item ** S-EXT1 **
+      # (the fork-debt question the entry-258/#45543 port deliberately left
+      # open: "wrap-or-decline is an open decision"). DECISION TAKEN:
+      # ** WRAP ** -- reuses the SAME seeded autotune_dummy_input_ids
+      # helper #45543 landed, no forked second implementation, so the two
+      # passes cannot drift.
+      # THE DEFECT: our entry-176 EXTEND pass (maybe_flashinfer_autotune_
+      # extend) allocated fresh ZERO-FILLED dummy buffers via
+      # _alloc_dummy_decode_buffers and ran its prefill-sized tuning
+      # forward on them -- every row embedded token 0, the MoE router sent
+      # ALL ROWS TO ONE EXPERT, and FlashInfer ranked the extend-bucket
+      # tactics on a routing pattern no real prefill produces. Since #44514
+      # those zero-tuned records PERSIST under the v2_default cache key and
+      # have been reused boot after boot.
+      # OPEN CHECK THE ITEM DEMANDED, DONE BEFORE CHOOSING: buffer
+      # lifecycle at the extend site -- the helper fills ids BEFORE the
+      # tuning context and ZEROES AFTER, exactly like the decode wrap, and
+      # the extend buffers are function-local and released in the finally,
+      # which the zeroed re-check preserves. Default-on semantics and the
+      # entry-176 size/shape logic are UNCHANGED -- a dummy-INPUT fix, not
+      # a scope expansion. ONE wrap point covers every extend-pass dummy
+      # forward: both base_runner call sites (~:295 target, ~:299 draft)
+      # route through the wrapped function.
+      # DELIBERATELY NOT WRAPPED: the MegaMoE prefill profile inside
+      # flashinfer_autotune_context (its topk_ids/topk_weights come from the
+      # DECODE-shaped dummy forward -- distinct since #45543 -- and its
+      # capacity profiles are input_ids-independent, so wrapping it would
+      # retune nothing); eager_runner/prefill_cuda_graph_runner EXTEND sites
+      # (runtime/capture paths taking REAL batch tokens, not autotune).
+      # ** NO CACHE-KEY CHANGE -- THE CONSEQUENCE, STATED PLAINLY: existing
+      # extend records tuned on zeros stay VALID and KEEP HITTING under the
+      # existing v2_default key; neither that path nor the #40420 sync
+      # digest hashes anything about dummy tokens. THIS IS WHY THE LAND-
+      # BEFORE-RESTART RULE RODE THIS WAVE: ** entry 260's scheduled COLD
+      # BOOT (#44514's cache-key bump, still unspent because the 10-28 batch
+      # is live-only-after-restart) ABSORBS THE RETUNE FOR FREE. If any
+      # warm-cache prod boot happens FIRST, a forced-retune needle becomes
+      # REQUIRED: delete the per-rank rank_tpX_ppY_dpZ.json files -- and
+      # note ** SGLANG_FLASHINFER_AUTOTUNE_CACHE=0 does NOT refresh the
+      # canonical file ** (the cache-disabled path writes a timestamped
+      # runs/ copy only) -- or add a one-time dummy_tokens= key part
+      # mirroring #44514's precedent, deliberately left out of this patch.
+      # Tests: +TestExtendAutotuneDummyInputIds (4 CPU tests mirroring the
+      # #45543 class: seeded distinct in-vocab ids and buffers released
+      # zeroed; ids EQUAL THE HELPER'S OWN OUTPUT -- the anti-divergence
+      # pin; equal across runs = rank determinism; zeroed after a FAILING
+      # forward). TEETH: production hunk reverted -> 3F/1P ("1 != 16384");
+      # restored -> 4P.
+
+
+      # BATCH-9 BATTERY (same tree, immediately after 0893f97970 landed):
+      # ** sync+gate 22P/1S/5sub (measured at the post-batch-8 tip) ->
+      # 26P/1S/5sub EXACT (+4 = the new TestExtendAutotuneDummyInputIds
+      # class); runner dir 89P/1S/47sub -> 93P/1S/47sub EXACT (+4, same
+      # class); qwen4_exp_ple_staging 37P -> 37P (HOLDS -- entry 300's
+      # breakage was already repaired by rider de9f22a5a6, without which
+      # this number would read 2F and the wave would look red) **. Both
+      # bases were measured at the immediately-preceding tip, as required.
+
+  riders2-2026-10-29 wave (branch port-riders2, two merged riders from
+  Section B; both cherry-pick -x, ZERO conflicts):
+
+        305. f589ad65a9  PR #46127 (MERGED 2026-10-23 @ origin/main a99eaf9a76; ** PATCH-IDENTICAL **)  scheduler: keep >2s prefill steps in the busy counter and EXCLUDE engine pauses -- our 1M-context loads were being under-reported
+      # https://github.com/sgl-project/sglang/pull/46127 (4 files,
+      # +177/-2: scheduler.py +28 and three test files). APPLIED AS MERGED,
+      # patch-id EQUALS upstream -- zero union work. WHY IT MATTERS HERE:
+      # our 1M-context prefills ROUTINELY exceed 2s, so with --enable-metrics
+      # AND the harness /v1/loads path the busy accounting DROPPED them --
+      # the load report UNDERCOUNTED exactly the workload prod runs, which
+      # means every busy-fraction/occupancy read taken from prod logs to
+      # date is biased low (the direction, not a re-measurement). TWO
+      # SEMANTICS LANDED: total_prefill_busy_us keeps steps longer than the
+      # 2s threshold IN the counter, AND engine PAUSE intervals are
+      # SUBTRACTED (pause-overlap no longer charges idle wall-clock to
+      # prefill work). Battery: managers dir +9P (this pick's three test
+      # files: prefill_result_polling, disagg_idle_step_counters +118,
+      # pause_generation +31). MERGE-#5 DEDUPE: patch-identical, the merge
+      # auto-resolves.
+
+        306. 0ad512183c  PR #45923 (MERGED 2026-10-26 @ origin/main 3a62cdfb3d; adapted pick -- the DIFFERENCE IS THE FORK TEST ONLY)  scheduler: make a Req's custom_params["__req__"] self-reference a ** weakref.proxy ** -- the entry-207 GC class, closed on the sampling side
+      # https://github.com/sgl-project/sglang/pull/45923 (2 files,
+      # +42/-6: schedule_batch.py 6 lines + test_req_custom_params_ref.py).
+      # THE DEFECT: the strong "__req__": self entry creates a reference
+      # CYCLE for every request that carries a custom logit processor, so
+      # the Req dies by CYCLING GC rather than refcount -- same family as
+      # entry 207 (the Qwen4 loader params_dict snapshot keeping tensors
+      # alive) and entry 248's memo-key lesson: nothing looks wrong, you
+      # just pay later and unpredictably.
+      # ** CONSUMER AUDIT -- THE MANDATE FOR THIS ENTRY; EXECUTED AND
+      # RE-VERIFIED BY THE INTEGRATOR AGAINST THE LANDED TREE, not taken on
+      # faith. ** Exactly THREE prod readers of "__req__" exist, all inside
+      # the alive-window (they read it during forward, while the Req is
+      # definitionally referenced by the batch):
+      #   python/sglang/srt/sampling/custom_logit_processor.py:109 (param_
+      #   dict.get("__req__")) and :186 (params.get("__req__")) -- the two
+      #   documented consumers;
+      #   python/sglang/srt/models/locate_anything.py:350 (params.get(
+      #   "__req__")), whose docstring at :278 states the contract: "the
+      #   __req__ entry supplies the generated-so-far token ids".
+      # NOTHING ELSE reads it (grep-verified across python/). ** FORK-SIDE
+      # AUDIENCE: NONE -- CORRECTING THE HANDOFF FRAMING, WHICH IMPLIED OUR
+      # PARSERS HAD WIDER EXPOSURE (they were cited as attaching state
+      # through custom_params; grep says otherwise). ** ZERO function_call/
+      # *.py file references custom_params AT ALL (count = 0 on the landed
+      # tree), so the entries-157-160/271 parser work neither attaches nor
+      # reads through it; the fork's OTHER custom_params consumers read or
+      # write SIBLING KEYS ONLY -- sampling_params.py:85/99/101/143
+      # (__sglang_reasoning_end_token_ids) and grammar_manager.py:125
+      # ("thinking_budget") -- plus sampler/sampling_batch_info which index
+      # the custom_params LIST. CONSEQUENCE: the fork's exposure to this
+      # change IS EXACTLY upstream's three readers, and the sibling-key
+      # plumbing cannot be affected because the pick swaps ONE dict VALUE,
+      # not the dict's shape. MSGPACK/SERIALIZATION RISK UNCHANGED: a
+      # strong Req was already non-serializable where a proxy is, and the
+      # pick adds NO new serialization surface (6 lines, same dict), so no
+      # wire-format behavior moves.
+      # ** PYTHON-3.12 DETAIL THAT FORCED A FORK-TEST RE-PIN (integrator
+      # verified in the prod venv): a weakref proxy HAS NO __wrapped__
+      # (hasattr(weakref.proxy(a),"__wrapped__") -> False), and
+      # isinstance(p, weakref.ProxyTypes) is the only type-level check that
+      # works -- functools-style unwrapping asserts are UNSAFE here. So the
+      # fork's test is re-pinned to type(entry) IN weakref.ProxyTypes +
+      # entry.__class__ IS Req + entry.rid == req.rid, and it ADDS the
+      # POSITIVE claim (assertIsNone(ref()) after dropping the request =
+      # refcount death, which is the whole point) while KEEPING upstream's
+      # behavioral asserts (the NEW_LINE token / -inf mask values). **
+      # MERGE-#5 DEDUPE: production half is upstream's; at the merge take
+      # upstream's test file and RE-ADD our ProxyTypes/class/rid +
+      # dead-ref-None assertions (this entry is the record of why).
+
+
+      # BATCH-10 BATTERY: ** managers dir 1016P/2F/3S/935sub (re-measured
+      # at the pre-wave tip -- batches 8 and 9 left managers UNTOUCHED, so
+      # the pass-2 pin survived to be tested against) -> f589ad65a9 #46127
+      # +9P -> 0ad512183c #45923 +2P -> ** 1027P/2F/3S/935sub EXACTLY the
+      # worker's chain at their ccea79c232 base, arithmetic confirmed to
+      # survive the four extra waves landed since **; subtests UNMOVED (the
+      # 11 new cases are plain tests), and the 2F remain the known
+      # order-dependent test_mm_process_config pair. Per-file: the three
+      # rider-named files (unit/disaggregation/test_prefill_result_polling
+      # + managers/test_disagg_idle_step_counters + managers/
+      # test_scheduler_pause_generation) ** 62P/119sub -> 71P/119sub = +9P,
+      # i.e. ALL of #46127's tests live in that set **; test_req_custom_
+      # params_ref.py 2P -> 4P = +2P (#45923's re-pinned fork test). ** THE
+      # HANDOFF'S "Battery A 128P/138sub" BASE COULD NOT BE RECONSTRUCTED:
+      # the three named files give 62P/119sub at every tip I measured, and
+      # neither the disaggregation dir (689P/12S/345sub) nor dir+pause
+      # (716P) matches 128/138; the set definition is unrecoverable, so the
+      # +9 delta is pinned on the NAMED-FILE definition above instead. **
+
+  srace-2026-10-29 wave (branch port-srace, ONE stack-owned test commit):
+
+        307. e313cf3eef  STACK-OWNED  S-RACE: pin the [0, cache_protected_len) tree-owned vs [cache_protected_len, owned_kv_len) release-window DISJOINTNESS forever -- the permanent tripwire underneath the #38355 MISDIAGNOSED verdict
+      # NO upstream PR -- this is wanted_stack's ** S-RACE ** item
+      # (queued in the 275-295 docs commit) EXECUTED BY THE RACE WORKER, so
+      # the S-item closes here. Converts the #38355 refutation research
+      # (Section R: MISDIAGNOSED -- the tree owns [0, cpl) and a request's
+      # release frees ONLY [cpl, owned_kv_len), disjoint BY CONTRACT) into a
+      # REGISTERED CPU TEST (register_cpu_ci, base-a-test-cpu) so the
+      # dangling-radix-insert class stays dead instead of being re-argued
+      # at the next merge. ONE file, +366 lines.
+      # THE THREE TIERs, as landed: ** T1** drives the REAL
+      # release_kv_cache with slot-recording fakes and asserts the free
+      # window NEVER intersects tree-adopted slots (2 cases; a RED here
+      # means a release path frees from 0 or a publish inserts without
+      # advancing cpl -- i.e. the exact class #38355 alleges); ** T2**
+      # replays checkpoint-then-retract on the REAL UnifiedRadixCache with
+      # CPU pools and ** RUNS ON BOTH TreeCore BACKENDS (rust -- the prod
+      # default -- AND python) ** asserting match_prefix never answers with
+      # a released page; ** T3** trips if the PR's edit target or the QSA
+      # variant auto-detect REAPPEAR (the staleness pin: GREEN means
+      # unportable-as-is is still true; RED means a refactor re-materialized
+      # MambaRadixCache-shaped hooks -- then RE-READ THE DIAGNOSIS, DO NOT
+      # AUTO-PORT). Failure messages carry the pointer to #38355 on purpose
+      # so a future red lands on the verdict, not on a port.
+      # ** TWO HANDOFF DETAILS CHECKED AGAINST THE LANDED FILE: ** (i) the
+      # draft-assert bug note the handoff expected is ** NOT PRESENT ** in
+      # the landed commit (grep for note/bug/draft/corrected finds only the
+      # T3 semantics note at :315) -- recorded as an unfulfilled detail
+      # rather than claimed; (ii) what the file DOES carry beyond the three
+      # tiers is the honest harness contract: publish_chunk asserts "publish
+      # must advance cpl" (the invariant the fake mirrors from
+      # checkpoint_into_tree's tail) and free_kv_row SKIPS EMPTY WINDOWS
+      # (start == end frees nothing), which is what makes T1's disjointness
+      # claim non-vacuous. T3's own note: ** RED does NOT mean the bug is
+      # back; it means the PR's PREMISES are back ** -- the pointer the
+      # Section-R verdict asked for. Registration:
+      # register_cpu_ci(est_time=10, suite="base-a-test-cpu") -- the file is
+      # in the CPU lane, so it runs in this box's batteries, not the GPU
+      # window.
+      # CPU-BATTERY NOTE: the draft's T2 was written as a GPU-window case;
+      # the landed file makes it CPU-runnable via the CPU pools, which is
+      # why the mem_cache dir grows by BOTH legs in this wave (see the wave
+      # battery) rather than just the two pure-CPU cases the 275-295 S-item
+      # anticipated.
+
+
+      # BATCH-11 BATTERY: mem_cache dir measured at the pre-wave tip FIRST
+      # = ** 2101P/3047S/3989sub (pass-2 pin, untouched by batches 8-10) **
+      # -> after e313cf3eef: ** 2105P/3047S/3991sub -- exactly the
+      # predicted +4P/+2sub ADDITIVE, and the new file standalone is
+      # 4P/2sub, so the worker's multiset-additivity claim is VERIFIED
+      # rather than assumed (no pre-existing case moved, skips unmoved) **.
+
+  llguard-2026-10-29 wave (branch port-llguard, TWO stack-owned commits;
+  operator-approved 2026-10-29; closes entry 256's flagged raw-env
+  deviation and entry 256's collision warning):
+
+        308. 3c259eaf0f  STACK-OWNED  LLGUARD: refuse the LL all-reduce when PCIe-IPC all-reduce is ARMED on the same TP group -- promotes entry 256's 5-line dispatch-site COMMENT into an enforced guard
+      # NO upstream PR; fork debt from entry 256 (#39605* port). THE
+      # COLLISION, AS ENTRY 256 DOCUMENTED IT: the LL path claims bf16
+      # <=64 KiB with ** NO CAPTURE GUARD ** while PCIe-IPC AUTOTUNES THE
+      # SAME <=64 KiB CAPTURED-BF16 SIZE CLASS on the same TP group, and
+      # BOTH prod run scripts export SGLANG_ENABLE_PCIE_IPC_ALLREDUCE=1
+      # (entry 245 change 14) -- so entry 256 shipped with an explicit DO-
+      # NOT-ARM-BOTH warning and left it to operator discipline. THIS
+      # ENTRY MAKES DISCIPLINE STRUCTURAL: illegal states unrepresentable
+      # at the construction site rather than a comment a future operator
+      # never reads.
+      # ** THE PREDICATE IS THE GROUP-LEVEL DECISION, DELIBERATELY NOT THE
+      # RANK-LOCAL COMM OBJECT: self.pcie_ipc_eligible -- the stored result
+      # of pcie_ipc_ar.eligible_group(), PCIe-IPC's OWN rank-consistent
+      # verdict (env AND world_size > 1 AND the "tp" group name AND
+      # non-deterministic), not merely the env and NOT the rank-local
+      # pcie_ipc_comm. ** WHY: a rank-local setup failure leaves ONE rank
+      # holding None while LLAllReduce.__init__ RENDEZVOUSES (barriers on
+      # the cpu_group) -- a per-rank refusal would DEADLOCK THE GROUP. So
+      # the guard refuses on ALL RANKS OR ON NONE, which is also why an
+      # unset env / a non-tp group at ws2 / deterministic inference (cases
+      # PCIe-IPC itself declines) all leave LL arming untouched.
+      # REFUSAL IS LOUD BUT HARMLESS: logger.warning naming BOTH envs + the
+      # size class, ll_comm STAYS None, the group keeps its current all-
+      # reduce path -- no crash; ** a PCIe-IPC-OFF BOOT IS BYTE-IDENTICAL
+      # TO ENTRY 256 ** (proved: warning-absent + LL-built cases). Host-
+      # staged needs NO guard (it claims only eager >=1 MiB OUTSIDE capture
+      # -- the class PCIe-IPC declines), and the commit says so in code.
+      # NEW STARTUP NEEDLE, one INFO line per armed group, boot-verifiable
+      # without reading envs: `[AR] group <name> host-memory transports:
+      # PCIe-IPC=<b> host-staged=<b> LL=<b>`.
+      # Tests: +12 cases in test/registered/unit/distributed/
+      # test_parallel_state.py (same register_cpu_ci file): refusal +
+      # warning names both envs + LLAllReduce NEVER CALLED (a); PCIe-off
+      # builds LL with entry-256's constructor args and NO warning (b);
+      # guard INERT when LL was never requested incl. adversarial
+      # PCIe-armed rows; the RAW == "1" ACCEPTANCE PINNED HERE so commit
+      # ENVREG had to change it CONSCIOUSLY (see entry 309); needle content
+      # (c) + quiet default boots; plus an inspect-pin that __init__ still
+      # CALLS both builders (the repo's test_the_deterministic_predicate_
+      # still_exists precedent -- mocks cannot catch DROPPED WIRING).
+      # TEETH: production hunk stashed -> ALL 12 new tests FAIL (first with
+      # AttributeError: no _build_ll_allreduce); restored -> green.
+
+        309. 3cdba955a4  STACK-OWNED  ENVREG: register the three comm envs in environ.py -- closes entry 256's flagged raw-os.environ DEVIATION, ** with an honest, deliberate ACCEPTANCE-SEMANTICS SUPERSET **
+      # NO upstream PR; fork debt from entry 256, which ported #39605
+      # keeping upstream's raw os.environ.get sites ("PR as-is, not
+      # normalized", flagged FOR THE OPERATOR in entry 256). The flagged
+      # consequence was REAL: an environ-only grep of the tree MISSED all
+      # three switches -- exactly the discoverability failure this commit
+      # closes. SGLANG_ENABLE_PCIE_IPC_ALLREDUCE was ALREADY registered,
+      # which is why entry 308's guard could read PCIe-IPC's state through
+      # envs via eligible_group.
+      # REGISTERED (APPEND-ONLY, next to the PCIe-IPC pair, per fork
+      # policy): SGLANG_LL_ALLREDUCE = EnvBool(False); SGLANG_LL_ALLREDUCE_
+      # MAX_BYTES = EnvInt(64 << 10) -- ** VALUE-VERIFIED against the raw
+      # fallback str(64 << 10) in ll_allreduce.py: identical 65536 **;
+      # SGLANG_HOST_STAGED_ALLREDUCE = EnvBool(False). Migrated sites: the
+      # two construction gates in parallel_state (host-staged inline, LL via
+      # _build_ll_allreduce) and LLAllReduce.__init__'s max-bytes read.
+      # ** THE HONEST DELTA, STATED BECAUSE IT IS NOT BYTE-IDENTICAL:
+      # ACCEPTANCE IS NOW A SUPERSET. ** The raw gates were `== "1"`;
+      # EnvBool.parse ALSO arms on "true"/"yes"/"y" case-insensitively and
+      # maps GARBAGE to default-off WITH A WARNING instead of raising int()
+      # inside __init__ (the MAX_BYTES move is strictly more forgiving: the
+      # raw int() raised on junk and TOOK THE COORDINATOR __init__ DOWN
+      # WITH IT; EnvInt.get warns and uses 65536). Every value the raw check
+      # accepted ("1") still arms -- nothing that worked before stops
+      # working; only an operator who wrote =true now gets the transport
+      # they clearly meant. Deliberate behavior change, accepted on the
+      # record. Under entry 308's guard it is collision-safe FOR EVERY
+      # SPELLING. entry 308's raw =="1" pin was REPLACED by the new
+      # acceptance table, NOT deleted silently.
+      # THE DISCOVERED NON-UNIFORMITY (why raw reads were LOAD-BEARING and
+      # what unification means): the two raw gates did NOT read at the same
+      # time -- the LL check ran IN-BAND PER CALL, the host-staged check at
+      # MODULE-IMPORT TIME -- so env mutation semantics differed between
+      # siblings sharing a docstring. Registration routes both through
+      # envs handles, and ** envs.get reads LIVE os.environ, so a
+      # setenv-driven boot still behaves the same -- the manual GPU tests
+      # are unaffected (the env names appear in their docstrings only) **;
+      # the unification is about DISCOVERABILITY and PARSE CONSISTENCY, not
+      # about per-call vs import-time liveness.
+      # OUT OF SCOPE, LEFT RAW ON PURPOSE (with the reason): entry 256's two
+      # secondary knobs SGLANG_HOST_STAGED_ALLREDUCE_MIN_BYTES and
+      # ..._PIECE in host_staged_allreduce.py -- ** _PIECE IS A MODULE-
+      # IMPORT-TIME READ, so registering it needs its own callable-default
+      # discussion **; named by neither the task nor the audit.
+      # Tests: +test_ll_env_acceptance_is_env_bool (8-value table through
+      # the REAL gate) and +test_comm_envs_are_registered_not_raw (defaults
+      # False/65536/False + SOURCE PINS that the sites read the handles --
+      # again the mocks-cannot-catch-dropped-wiring precedent).
+      # MERGE-#5 NOTE: entry 256's #39605 port stays an OPEN port; if the
+      # merge ever brings #39605 upstream, the raw sites return with it and
+      # THIS registration must be re-applied (the C10-style rider).
+
+      # BATCH-12 BATTERY: unit/distributed dir ** 120P/1S/35sub measured at
+      # the post-batch-8 tip AND surviving to the pre-wave tip -> 133P/1S/
+      # 35sub after both picks = the worker's chain (120 -> 132 LLGUARD's
+      # 12 cases -> 133 ENVREG's +1) REPRODUCED VERBATIM, 0F **; server_args
+      # file 308P/128sub UNCHANGED as required; and the ENVREG acceptance
+      # superset was PROVED LIVE on the landed tree, not taken on faith:
+      # SGLANG_LL_ALLREDUCE arms on '1'/'true'/'YES'/'y' and stays off for
+      # '0'/'junk'/'' , while SGLANG_LL_ALLREDUCE_MAX_BYTES='not-a-number'
+      # returns 65536 with a warning INSTEAD OF RAISING (the old raw int()
+      # path took the coordinator __init__ down); raw reads verified GONE at
+      # both migrated sites (0 hits in parallel_state.py and
+      # ll_allreduce.py) while _PIECE (:37) and _MIN_BYTES (:81) REMAIN raw
+      # exactly as the commit's out-of-scope note says. The LLGUARD needle
+      # string was confirmed present at parallel_state.py:658.
+      # WAVE-WIDE GATES: ruff v0.15.1 repo ruleset (--select=F401,F821,
+      # F823,UP037) + ruff format clean on ALL 95 changed .py files;
+      # check_registered_tests / check_no_bare_pytest_main /
+      # check_no_registered_tests_in_package all rc=0; ** 0 rust files in
+      # the diff, so cargo sglang-radix-tree 932P/0F carries untouched **.
+      # CROSS-WAVE PIN SURVIVAL re-measured at the FINAL 309 tip:
+      # constrained 142P/1S/69sub, track_state_dtype 8P/9sub, observability
+      # 170P/36S/18sub, function_call 652P/1964sub, test_qsa 84P/140S --
+      # ALL EXACT; spec dir 329P/11S/192sub (moved by 300, attributed
+      # above); managers 1027P/2F/3S/935sub; mem_cache 2105P/3047S/3991sub.
+
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
 ==============================================================================
@@ -7574,6 +8559,135 @@ WATCH LIST (re-evaluate before next sync)
 ==============================================================================
 CAVEATS
 ==============================================================================
+
+  * CPU-BATTERY BASELINES RE-PINNED 2026-10-29 ** AT THE 296-309 TIP **
+    (3cdba955a4). SECOND TABLE OF THE SAME 10-29 DAY: this SUPERSEDES the
+    "RE-PINNED ... at the 275-295 tip" bullet below for the files named
+    here (managers, mem_cache, spec dir) and ADDS unit/distributed as a
+    NEW PIN; every other 295-tip value was RE-MEASURED UNMOVED at 309 and
+    still stands -- the old numbers are kept so a stale log is recognised.
+      MOVED:
+        test/registered/unit/managers/   1016P/2F/3S/935sub ->
+          ** 1027P/2F/3S/935sub ** (entries 305 +9P, 306 +2P; subtests
+          UNMOVED; the 2F remain the KNOWN order-dependent
+          test_mm_process_config pair -- re-verified stable across four
+          runs at this tip; a rare 3F reading is the same class, same
+          1,039-node population)
+        test/registered/unit/mem_cache/  2101P/3047S/3989sub ->
+          ** 2105P/3047S/3991sub ** (entry 307, +4P/+2sub EXACTLY
+          ADDITIVE -- verified: the pre-wave base measured 2101/3047/3989,
+          the new file standalone is 4P/2sub, and nothing else moved, so
+          the worker's multiset-additivity claim holds)
+        test/registered/unit/spec/       336P/11S/184sub ->
+          ** 329P/11S/192sub ** -- ** READ THIS ONE CAREFULLY: IT IS A
+          RESHAPE, NOT A LOSS. ** Entry 300 (#44913) carries upstream's
+          rewrite of test_draft_construction_isolation.py (188+/136-),
+          which converts 14 parametrized passes into 7 passes + 8 subtests
+          with ** ZERO failures ** (14 -> 15 counted units). No pin in this
+          session regressed coverage; this is the only pin whose PASS
+          COUNT went down, and the reason is pytest counting. Attribution
+          is machine-done: the file's only change in range is 95e4b11e05.
+        test/registered/unit/distributed/  ** NEW PIN 133P/1S/35sub **
+          (entries 308/309; chain 120 -> 132 -> 133 reproduced VERBATIM
+          from the worker's measurements, 0F; base 120P/1S/35sub was
+          measured at MY post-batch-8 tip, which is exactly their stated
+          base 44134b30aa for this dir)
+        test/registered/unit/model_executor/runner/  89P/1S/47sub ->
+          ** 93P/1S/47sub ** (entry 304's 4 new CPU tests; base re-measured
+          at the immediately-preceding tip)
+        sync+gate (test_flashinfer_autotune_sync + _gate) 22P/1S/5sub ->
+          ** 26P/1S/5sub ** (entry 304, +4 EXACT)
+        qwen4_exp_ple_staging.py  ** 37P -- HOLDS, BUT ONLY BECAUSE OF
+          RIDER de9f22a5a6 **. Read 2F/35P anywhere between entry 300 and
+          that rider; a tree showing 2F there is missing the rider.
+      MOE BATTERY (the 139P/22S/141sub figure is NOT RECOVERABLE -- its
+        file list was defined by the 10-28 autotune wave and appears in no
+        surviving script; ** pin the REPRODUCIBLE DEFINITION INSTEAD: the
+        worker's 43-file list in /tmp/opencode/battery-moe.sh, run via
+        battery-moe-integrator.sh against the main tree **): base
+        ** 553P/671S/189F/391sub ** -> after the 8 moe picks ** 573P/682S/
+        195F/444sub = +20P/+6S/+6F/+53sub**, every unit mapped (see the
+        wave battery). Named pins inside it that a future reader will
+        quote: ** standard_dispatcher_runner_backend 12P UNCHANGED,
+        nvfp4_smallm_dispatch 28P/66sub UNCHANGED, kernels_namespace 76P
+        UNCHANGED (inventory guard), b12x 67P/46sub UNCHANGED (entry-247
+        preservation), scales ORACLE 17P/30sub -> 20P/44sub (entry 301),
+        model_overrides 111P/1S/179sub -> 112P/1S/181sub (entry 302 = the
+        queue's SMOKE evidence), fold_contract probe NEW 8P (entry 298),
+        fused_shared_expert_scaling 6P -> 13P/25sub, routed_experts_
+        scattered_a2a 3P -> 6P/2sub, waterfill_eplb 4P -> 6P/2sub,
+        hash_topk 3P -> 4P, draft_entry_hook_parity 1P -> 2P,
+        moe_fused_gate 46F -> 52F (+6 CUDA-gated members of the
+        PRE-EXISTING no-CUDA class, not a new failure class) **.
+      BATTERY-HARNESS ARTIFACT, WORTH KNOWING (the worker's own warning (5)
+        in action): their script shares one `tmp=/tmp/opencode/bat-file.tmp`
+        across ALL files and greps it with plain `grep`, so (i) 9 of 43 base
+        rows came back ** NOSUMMARY ** on binary pytest output and (ii) one
+        base row printed **"52 failed ... rc=0" for test_rocm_router_gate.py
+        -- a SELF-CONTRADICTORY line (rc=0 cannot carry 52 failures)**. Both
+        were re-proved STANDALONE before use (rocm is 5S at base AND tip;
+        the 9 NOSUMMARY files are 76P/12P/9P-5sub/3P-5sub/5P-4sub/33P-22sub/
+        8F/10S/10S respectively). ** Anyone reusing that script should give
+        each file its own tmp path or add LC_ALL=C tr -d '\0'. **
+      UNCHANGED AND STILL THE REFERENCE SET (re-measured at 309):
+        constrained ** 142P/1S/69sub **, track_state_dtype ** 8P/9sub **,
+        observability ** 170P/36S/18sub **, function_call ** 652P/1964sub **
+        (still the entry-271 pin), test_qsa ** 84P/140S **, server_args
+        ** 308P/128sub ** (entries 308/309 add NO server flags -- the comm
+        envs are environ.py registrations, not CLI), gdn dir ** 46S + the
+        same ONE pre-existing import-time collection error **, hicache
+        trailing_endpoint ** 17P ** (unmoved by this pass: no batch-8..12
+        pick touches unified_radix_cache.py), kernels_namespace ** 76P **,
+        cargo sglang-radix-tree 932P/0F CARRIES -- ** 0 rust files in the
+        entire 14-commit diff **. LINT: check_registered_tests /
+        check_no_bare_pytest_main / check_no_registered_tests_in_package ALL
+        rc=0 and ruff v0.15.1 repo ruleset + format clean on ** ALL 95
+        CHANGED .py FILES ** (a bare `ruff check` still reports the
+        pre-existing non-repo-gate findings -- not the gate, see the 295
+        table).
+
+  * S-EXT1 (entry 304) DOES NOT RETUNE ANYTHING UNTIL A COLD BOOT HAPPENS --
+    DO NOT MISTAKE A WARM HIT FOR EVIDENCE (2026-10-29). The patch changes
+    the EXTEND autotune's DUMMY INPUTS (zero-filled -> seeded distinct via
+    #45543's own helper) but deliberately ** does NOT change the cache key**,
+    so extend-bucket records tuned on all-zero dummies remain VALID and KEEP
+    HITTING under the existing v2_default key. THE SEQUENCING RULE, in boot
+    terms: entry 260's cache-key bump means the NEXT restart is already
+    scheduled-cold, and it absorbs the S-EXT1 retune for free -- that is why
+    this pick was landed BEFORE the restart, and why the boot you want is
+    the cold one. ** IF A WARM NEW-KEY BOOT ALREADY HAPPENED, the extend
+    records were rewritten by the cold retune but re-tuned on... nothing:
+    they were written by whichever code ran. In that case, to force the
+    retune, DELETE the per-rank rank_tp*_pp*_dp*.json files (and note
+    SGLANG_FLASHINFER_AUTOTUNE_CACHE=0 does NOT refresh the canonical file --
+    the cache-disabled path writes a timestamped runs/ copy only, so
+    "disable the cache" is NOT a way to force a re-tune). ** Verifying the
+    patch took effect is therefore NOT a cache-hits question; the honest
+    CPU-side pins are the 4 new tests in sync+gate (26P/1S/5sub), and the
+    hardware question -- did the MoE extend tactics change -- is GPU-window
+    debt.
+
+  * ENVREG (entry 309) IS AN ACCEPTANCE-SEMANTICS CHANGE, NOT A NO-OP
+    REFACTOR (2026-10-29, operator-approved). Three comm envs moved from raw
+    os.environ.get to environ.py registration, and EnvBool/EnvInt PARSE
+    DIFFERENTLY from the raw sites: ** `true`, `yes`, `y` (any case) NOW ARM
+    where only the exact string "1" did, and a GARBAGE value now
+    warns-and-falls-back-to-default where MAX_BYTES used to raise int() and
+    TOOK THE COORDINATOR __init__ DOWN WITH IT. ** Verified LIVE on the
+    landed tree (see the re-pin table). Two consequences to hold in mind:
+    (i) an operator who wrote =true and got nothing before now gets the
+    transport they clearly meant -- that is the intent, and it is a
+    BEHAVIOR CHANGE on the record, not byte-identical; (ii) the discovered
+    NON-UNIFORMITY explains why raw reads were load-bearing at all: the LL
+    gate checked IN-BAND PER CALL while the host-staged gate checked at
+    MODULE-IMPORT TIME, so sibling switches had different liveness rules;
+    registration unifies the parse while ** envs.get still reads live
+    os.environ, so setenv-driven boots behave the same and the manual GPU
+    tests are unaffected **. SGLANG_HOST_STAGED_ALLREDUCE_MIN_BYTES and
+    ..._PIECE were LEFT RAW ON PURPOSE (the latter is an import-time read;
+    registering it needs its own callable-default decision). MERGE NOTE:
+    entry 256's #39605 is an OPEN port -- if a merge ever pulls upstream's
+    raw version of these sites, THIS registration must be re-applied.
 
   * CPU-BATTERY BASELINES RE-PINNED 2026-10-29 at the 275-295 tip
     (44134b30aa). ONE CLEAN TABLE, MEASURED ON THE FINAL TREE (prod venv,
