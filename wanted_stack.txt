@@ -274,7 +274,7 @@
 #         slow exists() WEDGES THE TP2 PAIR). 16 files, +166/-20 URC +147/-8
 #         controller + parallel_state.py. #44343/#44339/#44348/#44344 are its
 #         stacked drafts: #44339/#44344 = buffer_only-only -> SKIP permanently;
-#         #44343/#44348 take as a set with 44342 or not at all. State: ** STILL-OPEN 2026-10-29 (B6 re-triage): gh OPEN, head 98bfcbd450 UNCHANGED, not in range; post-#46970x base now conflicts where it auto-merged pre-merge. **
+#         #44343/#44348 take as a set with 44342 or not at all. State: ** LANDED 2026-10-29 AS ENTRY 318 -- FOUR COMMITS, ONE ENTRY (29cb4fab8d / 45da19f105 / c50b262e23 / b7c656f69f, branch port-hicache-liveness, ** ZERO conflicts **; the conflict risk the B6 re-triage predicted was absorbed entirely by the worker's per-commit adaptation notes, which WERE the resolution spec: mask payload kept bit-identical, ticket-thread except-exit standing in for the absent #43344 shape, shm width 8 interim then 9, fork-stub memoizations). ** STILL OPEN UPSTREAM @ 98bfcbd450 (re-verified: 0 hits in origin/main) -- a TRUE OPEN PORT, so merge #6 must RE-APPLY the adaptations if upstream lands it. FAMILY FATE: #44339 SKIP-forever STANDS; #44344 -> SECTION R (DOA by entry 268); #44343/#44348 NOT-NOW behind the landed trunk; zero family lines pulled (exactly 4 trailers). NEW GAUGE sglang:hicache_storage_healthy = 1 steady. Full record: the entry, the B6 re-triage block below, and the CAVEATS liveness bullet. **
 # #44732  open (head 68c917c75d) DECISION: separate storage keys for
 #         incompatible host layouts (silently-wrong-KV class; +6/+6
 #         pool_host/{mha,mla}.py). COST: current warm /root/hicache_store +
@@ -329,11 +329,16 @@
 #         STILL OPEN AFTER THIS PICK: the bare "modelopt" name does not
 #         refine to fp4/mixed, so an explicit --quantization modelopt boot
 #         on SM120 must still name the runner -- **#35617 territory,
-#         referenced not ported, and it REMAINS A TODO below. ** MERGE-#5
-#         B5 NOTE: ** OPEN PORT, NOT A MERGED PICK ** -- if #45520 merges
-#         upstream before the fifth merge, the merge SUPERSEDES this pick
-#         and the fail-safe layer MUST BE RE-APPLIED (upstream still reads
-#         model_config raw). State: LANDED(302/303)
+#         referenced not ported, and it REMAINS A TODO below. ** MERGE-#6
+#         RULE, ARMED 2026-10-29: ** OPEN PORT, NOT A MERGED PICK, AND
+#         MERGE #5 DID NOT BRING IT ** -- re-verified LIVE at this pass:
+#         #45520 STILL OPEN @ 7032238d09, `git log origin/main --grep
+#         "(#45520)"` = 0 hits. So if it merges before MERGE #6 the merge
+#         SUPERSEDES this pick and the fail-safe layer MUST BE RE-APPLIED
+#         (upstream still reads model_config raw and still leaves `auto`
+#         on unreadable expert lists) -- CAVEATS carries the same rule as
+#         a merge-session rider so B-next sees it without re-deriving
+#         entry 303. State: LANDED(302/303)
 # #35617  open (head b870a0e713) modelopt_mixed MAPPING GAP -- now the ONLY
 #         survivor of the old FAM-A7 opener: #45520's landing makes the
 #         "unset --quantization" half moot, but the bare "modelopt" name
@@ -679,8 +684,17 @@
 #     and the tripwire the note asked for becomes S-RACE below.** State:
 #     TODO (docs/watch)
 #  C12 SM120 GEMM measurement queue (not ports): #42865 (register-backed
-#     Triton skinny MXFP8 GEMM), #45391 (b12x MXFP8 dense backend -- same
-#     b12x package decision as #32479), #34731 (APPROVED, 10-14 head
+#     Triton skinny MXFP8 GEMM), **#45391 -- LANDED 2026-10-29 AS
+#     ENTRY 316, AND ITS MEASUREMENT IS NOW THE DEBT, NOT THE PORT: the
+#     dense b12x route is INERT ON BOTH ARMS (shape-false), so nothing to
+#     A/B until a native-MXFP8/[x,32]-ue8m0 checkpoint is in the house;
+#     ** CORRECTION TO THE OLD COUPLING NOTE: it is NOT the same package
+#     decision as #32479 -- entry 316 needs ZERO new pip artifacts
+#     (backend="b12x" is flashinfer-internal; verified locally: prod venv
+#     has flashinfer-python 0.7.2 + nvidia-cutlass-dsl 4.8.0 and NO `b12x`
+#     package installed, exactly as the port assumes). Don't let one
+#     sitting be read as gating the other; see the #32479 record **),
+#     #34731 (APPROVED, 10-14 head
 #     7db8f397f4: SM120 blockwise-FP8 swapAB crossover m<=256 -- cleanest
 #     first-boot A/B for the FP8 arm), #44593 (CLOSED-unmerged, no successor:
 #     FP8 GEMV 4-rows/warp rule -- reference only; Qwen3.8-27B dense sizes,
@@ -725,32 +739,130 @@
 #           bullet; the rest of the C10 list stays a merge-#5 annotation
 #           set as recorded (nothing else was silently dropped -- the B2-B5
 #           marker censuses all closed to ZERO).
-#   #44342  ** STILL-OPEN ** (gh: OPEN, head 98bfcbd450 UNCHANGED; not in
-#           range). Its stacked-draft triage stands; port queue position
-#           unchanged (post-merge base: files it touches moved with #46970x,
-#           EXPECT CONFLICTS now where it auto-merged before).
+#   #44342  ** LANDED 2026-10-29 AS ENTRY 318 (4 commits, one entry) **
+#           (29cb4fab8d / 45da19f105 / c50b262e23 / b7c656f69f off branch
+#           port-hicache-liveness; ** ZERO conflicts **; gh re-check at
+#           landing: ** STILL OPEN upstream @ 98bfcbd450, mergeable
+#           UNKNOWN -- not in origin/main, so this is a genuine open-port,
+#           NOT an arrival-by-merge; if it merges later the merge takes
+#           upstream's form and entry 318's fork adaptations MUST be
+#           RE-APPLIED: the mask-payload/TRAILING_PAGES contract, the
+#           ticket-thread except-exit hook (no get_prefetch_submission on
+#           this tree), the width-9 shm row with the 5-tuple unpack, the
+#           entry-290/294/199 stub memoizations, and the NO-poll_miss-re-arm
+#           degrade routing. ** The pre-port conflict warning in this
+#           record WAS CORRECT -- the #46970x move reshaped these files, and
+#           the worker's per-commit adaptation notes were the resolution
+#           spec; nothing exceeded them. ** FAMILY EXCLUSION RECORDED IN
+#           THE ENTRY AND VERIFIED: exactly 4 cherry-pick trailers in the
+#           landed range; #44339 SKIP-forever STANDS (gh OPEN @ 5928643b4c,
+#           mergeable UNKNOWN); #44344 -> ** SECTION R, DOA-BY-HISTORY **
+#           (see the R entry; gh says OPEN + MERGEABLE @ f89c1b47cf, which
+#           changes nothing -- mergeable means it COULD merge, not that its
+#           content survives entry 268); #44343 (gh OPEN @ 4908f3a3dd) and
+#           #44348 (gh OPEN @ 984696932b) ** NOT-NOW, BEHIND TRUNK ** --
+#           their stacked-draft premise is now carried by the landed trunk;
+#           zero lines pulled from any of the four. NEW GAUGE
+#           sglang:hicache_storage_healthy = 1 steady (CAVEATS bullet).
+#           GPU DEBT: kill -STOP file-reader drill on TP4.
 #   #44732  ** STILL-OPEN, OPERATOR-SCHEDULED CONSEQUENCE RECORDED **: merge
 #           #5 completed WITHOUT the tagging work, so the "one purge if
 #           done with the merge" premise lapsed -- doing it later now costs
 #           the SAME single purge once (keys unchanged since); no second
 #           purge penalty, no benefit from haste. Stays on the quant/KV-
 #           route queue at the operator's next sitting.
-#   #32479  ** STILL-OPEN / STALE-BASE ** (gh: OPEN, CONFLICTING, head
-#           b877f961a7 unchanged). b12x package decision couples #45391.
-#   #45391  ** STILL-OPEN / STALE-BASE ** (gh: OPEN, CONFLICTING, head moved
-#           to fcd0805a03 from the recorded one). Measurement queue C12.
-#   #37106  ** STILL-OPEN / STALE ** (gh: OPEN, CONFLICTING; head 939ffe8240
-#           unchanged since the STALE note -- no author activity; rebase
-#           needed before any evaluate).
-#   #46153  ** STILL-OPEN / CONFLICTING ** (gh OPEN, head 46da368e4b
-#           unchanged; entry-230/302's fail-safe layer already covers the
-#           boot-safety half -- value of porting drops every upstream move).
-#   #41624  ** STILL-OPEN ** (gh OPEN, head e12b074f74 unchanged; LARGE-
-#           EVALUATE framing stands).
+#   #32479  ** STILL-OPEN / STALE-BASE, AND ** NOW GATED BEHIND THE
+#           PCIe-IPC MEASUREMENT ** (gh OPEN + CONFLICTING @ b877f961a7
+#           unchanged). Dated correction to the package premise carried in
+#           the C12/queue text: ** the "archived/unavailable b12x package"
+#           claim is DISPUTED -- b12x 1.5.1 is LIVE and UNYANKED upstream **
+#           (operator/researcher triage 2026-10-29; the integrator's local
+#           check adds only the INVENTORY fact that ** b12x is NOT
+#           INSTALLED in the prod venv **). WHAT STILL STANDS AND MATTERS:
+#           the ** frozen nvidia-cutlass-dsl==4.8.0 PIN RISK ** -- the prod
+#           venv carries exactly 4.8.0, so a package that pins or upgrades
+#           cutlass-dsl would collide with the flashinfer 0.7.2 pairing
+#           (entry-228 pairing discipline applies: pin, wheel and probe
+#           move together). ** SEQUENCE RULE: measure the ARMED PCIe-IPC
+#           all-reduce post-merge FIRST ** -- #32479 is an ALTERNATIVE
+#           TRANSPORT to the one we just armed, so spending the venv + DMA-
+#           ring + 36-row-cap decision before that measurement is
+#           unfounded. Note entry 316's dense b12x route needs NO package
+#           (different thing: flashinfer-internal backend="b12x") -- do not
+#           let one decision be read as gating the other.
+#   #45391  ** LANDED 2026-10-29 AS ENTRY 316 ** (81cb12f2b0 off branch
+#           port-b12xgemm; hand-port via git apply -3 of head fcd0805a03 --
+#           gh STILL OPEN + CONFLICTING, not in origin/main, so the merge
+#           does NOT bring it: ** if it merges before merge #6, the merge
+#           supersedes this port and the fp8_utils ADD/ADD UNION (keep
+#           pack_mxfp8_weight_scale_for_deepgemm alongside
+#           mxfp8_sf_swizzle_128x4) + the 3 whitespace-only format lines
+#           must be RE-CHECKED **). C12 measurement-queue status: the dense
+#           route is LANDED BUT ** INERT ON OUR ARMS AND STILL UNMEASURED **
+#           (shape-false predicate proved in the entry; all 10 battery rows
+#           unmoved). NO TESTS SHIPPED WITH THE PR -> coverage debt is the
+#           NEW S-item ** S-B12XDENSE ** below. Integrator-local facts: the
+#           prod venv HAS nvidia-cutlass-dsl 4.8.0 (>=4.6.0 requirement met)
+#           + flashinfer-python 0.7.2, and ** NO `b12x` pip package is
+#           installed ** -- confirming the port needs ZERO new pip
+#           artifacts (backend="b12x" is a flashinfer-internal name), which
+#           is NOT the same question as #32479's package decision.
+#   #37106  ** PARKED 2026-10-29 (operator sitting) -- MOTIVATION ERODED,
+#           NOT THE CODE ** (gh STILL OPEN + CONFLICTING @ 939ffe8240, no
+#           author activity). Its raison d'etre was the TP2 vocab-gather-on-
+#           NCCL structural limit (9b.sh LIMITS note); ** the armed
+#           PCIe-IPC all-reduce (entries 162-164 + 245 + the 307/308 guard)
+#           addresses that transport pressure on our shape, so the local-
+#           argmax route is no longer the only answer. REVIVE ONLY IF:
+#           (a) upstream revives it (author activity / mergeable flips to a
+#           real computation), OR (b) a boot/measurement shows VOCAB GATHER
+#           IS HOT on the armed transport (measure the gather, don't assume
+#           it). Also still true: PORT-WITH-WORK -- the capability hook is
+#           wired only for the DeepSeek NextN draft and needs a
+#           qwen4_exp_mtp equivalent; rebase vs #44116 territory in
+#           logits_processor.py.
+#   #46153 + #41624  ** STILL-OPEN, AND NOW EXPLICITLY GATED: THESE ARE A
+#           QAD BUNDLE, DO NOT OPEN EITHER WITHOUT AN OPERATOR QAD/FP4-LOCAL
+#           TRIAL SITTING ** (gh re-checked 2026-10-29: #46153 OPEN @
+#           46da368e4b CONFLICTING; #41624 OPEN @ e12b074f74). WHY BUNDLED:
+#           #46153 (CSF-compressed-scale NVFP4 expert loading, names
+#           Qwen3.8-Flash-Next-FP4-Local as un-loadable) and #41624
+#           (serve NVFP4-PACKED QAD checkpoints: weight_scale->inv rename,
+#           vision key spelling, MXFP8 dense N>=128 vs GDN in_proj_ba, and
+#           NVFP4-PACKED PLE n-gram tables through the PLE loader +
+#           offload gather) land on the SAME file -- qwen4_exp.py, OUR MOST-
+#           DIVERGED FILE (entries 205/207/231/239/244/266-era + B5's PLE
+#           router-API re-homes + the C10 #46543 breakable-bridge fold).
+#           #41624 is a MERGE-SIZED PATCH, not a patch (+281/-30 in that
+#           file alone). #46153's boot-safety half is ALREADY COVERED by
+#           entries 230/302's fail-safe layer, so its standalone value keeps
+#           FALLING with every upstream move. GATE: check both against the
+#           entry-207 load-path verdict and the KV-ROUTE DECISION RECORD
+#           (the FP4-KV HOLD does NOT gate FP4 WEIGHTS -- but a QAD trial is
+#           the same operator sitting, so decide them together, not twice).
 #   #42660  ** STILL-OPEN ** (gh OPEN, head 511bc4eed9 unchanged).
-#   #42525  ** STILL-OPEN ** (gh OPEN, head 7bb6a140d2 unchanged).
-#   #44462  ** STILL-OPEN ** (gh OPEN, head 46b69b8073 unchanged; "NEXT in
-#           the quant-selection queue" note stands, now post-merge base).
+#   #42525  ** STILL-OPEN, WATCH-CHEAP, AND ITS TARGET PATH MOVED ** (gh
+#           OPEN @ 7bb6a140d2 unchanged, mergeable UNKNOWN). Dated
+#           correction from entry 316's neighbourhood: the PR's +8/-1 hunk
+#           was recorded against ** fla/fused_sigmoid_gating_recurrent.py;
+#           that machinery now lives under attention/linear ** in our tree
+#           (the post-merge layout), so ANY future evaluation must re-derive
+#           the target file rather than trust the old path -- cheap to check,
+#           expensive to assume. Entry 281 (#36014) already landed the
+#           verify-side beta rounding in this area, so read the PR against
+#           entry 281's shape, not the September one.
+#   #44462  ** LANDED 2026-10-29 AS ENTRY 317 ** (cdd568bd6c off branch
+#           port-idxbytes; ADAPTED PORT -- its base f7ad4345b8 predates
+#           merge #5, gh STILL OPEN @ 46b69b8073, NOT in origin/main (0
+#           grep hits, re-verified). The "NEXT in the quant-selection
+#           queue" note is now SPENT for this item. SUBSUME-VS-LAND is
+#           recorded in the entry (isinstance branches eaten by #46970x's
+#           layer_router chain; the qsa index-bytes block was PR CONTEXT).
+#           ** TWO CARRY-FORWARDS: (i) the fraction's placement AFTER entry
+#           219's --hicache-mamba-size-gb override is OURS and must be
+#           re-applied if the PR ever merges; (ii) 106.9->100 GB is TEST-
+#           SCAFFOLD ARITHMETIC -- the PROD number is owed as a boot-dump
+#           auto-size read (entry-243 practice) in the restart watch. 
 #   #35617  ** STILL-OPEN ** (gh OPEN, head b870a0e713 unchanged; the entry-
 #           302 landing (#45520 port) narrowed its gap -- still the ONLY
 #           mapping-gap carrier for modelopt_mixed auto on SM110/120).
@@ -764,11 +876,40 @@
 #           competing design, do-not-take), #43471 (OPEN @ 00f22164e9,
 #           optional step).
 #   #39845-class (HiCache series watch: #39845/#39856/#39745/#39747/#39395/
-#           #40512/#40576)  ** STILL-OPEN-WATCH ** -- none in range; #39845
-#           live gh OPEN @ 4cfe4d054d. Watch-list status only, as recorded.
-#   #46191  ** STILL-OPEN-WATCH ** (gh OPEN @ e405d4e3e0; the landed-ring
-#           re-evaluation instruction stands; B2's ring-test KEEP audit
-#           (test_qsa_kv_pool) documents the current ring shape on tree).
+#           #40512/#40576)  ** STILL-OPEN-WATCH ** -- none in range. **
+#           DATED CORRECTION 2026-10-29: the dispatch recorded a
+#           "mergeable=true flip" for #39845; the LIVE gh check says
+#           ** OPEN @ 4cfe4d054d with mergeable = UNKNOWN ** (GitHub has not
+#           computed it -- which is NOT the same as "mergeable"), head
+#           UNCHANGED, so no activity is implied and the WATCH status is
+#           unchanged. Record the distinction: UNKNOWN means "no signal",
+#           not "good signal" -- same caution applies to #44342/#44343/
+#           #44348/#42525/#44339/#45391/#44462, all UNKNOWN on the same
+#           check. The two PRs on this list that DID read MERGEABLE are
+#           **#44344 (DOA anyway -- Section R) and #46191 (below) **; both
+#           are #46191's real flip and #44344's irrelevant one. Entry-209-
+#           class conflict cost per merge cycle keeps this on the watch
+#           list; do not let a merge auto-resolve the family.
+#   #46191  ** STILL-OPEN-WATCH, NOW ** WATCH-HIGH ** WITH A NAMED
+#           RE-DERIVE INSTRUCTION ** (gh: OPEN @ e405d4e3e0 and ** MERGEABLE
+#           -- the flip the dispatch recorded IS REAL, verified live
+#           2026-10-29 **). WHY HIGH: HiSparse host KV tier for the QSA
+#           backend is the most direct upstream answer to admission-over-1M
+#           FOR THIS ARCH, and it now has a compute-ready base to merge
+#           against. THE INSTRUCTION (this is the whole point of the entry):
+#           ** RE-DERIVE IT AGAINST QSA_RING_GROUPS == 2 -- the landed two-
+#           group pending-index-key ring (entries 285/286/287) with
+#           pending_ring_num_groups()'s TWO-GROUP FLOOR and the BOTH-GROUPS
+#           retraction carry. DO NOT read its sizing or its per-request
+#           host-share arithmetic from the one-group upstream layout: rows
+#           per request are ratio * qsa_num_groups here, the constant lives
+#           in mem_cache/qsa_kv_pool.py and is RE-EXPORTED by qsa/metadata
+#           (the entry-200 import-cycle dodge), and a one-group assumption
+#           is exactly what re-opens the #47051 corruption. B2's ring-test
+#           KEEP audit (test_qsa_kv_pool) documents the current shape ON
+#           TREE -- start the re-derivation from that file, not from the PR
+#           body. ** Still 12 files/+205 in our hottest divergent QSA zone,
+#           so it stays evaluate-before-port even at HIGH.
 # ----------------------------------------------------------------------------
 #
 # =============================================================================
@@ -826,6 +967,36 @@
 #         GREEN means the cache_protected_len ownership protocol holds, RED
 #         means a release path frees from 0 or a publish inserts without
 #         advancing cpl, which IS the dangling class. State: LANDED(307)
+#
+# S-B12XDENSE  (STACK-OWNED, fork test)  CONTRACT TEST FOR THE b12x MXFP8
+#         DENSE ROUTE (entry 316 / PR #45391) -- ** OWED WHEN ARMED, NOT
+#         NOW: the route is INERT on both prod arms (shape-false predicate,
+#         all 10 battery rows unmoved), so a test written today pins
+#         behavior nothing exercises; but THE PR SHIPPED ZERO TESTS, so the
+#         route is currently pinned by NOTHING but the battery's negatives. **
+#         IDIOM: ** entry-247's mock-wheel pattern ** -- fake flashinfer's
+#         supported_compute_capability / requirements surface, then assert:
+#         (1) the resolution table (auto -> flashinfer_b12x on a patched
+#         SM120 platform; explicit flashinfer_cutlass -> cutlass on BOTH
+#         trees; plain "cutlass"/"triton" falling through to auto;
+#         flashinfer_cutedsl -> RuntimeError on SM120); (2) the ** K%128
+#         per-layer Triton degradation warning + the wrapper REFUSAL **
+#         (CPU-mock-tested only today; today's claim rests on that);
+#         (3) the DSv4.1 model_overrides hook FIRING for its arch and being
+#         VETOED by any non-auto --fp8-gemm-backend pin; (4) the
+#         ** GATE-SPLIT ITSELF: assert what the gate reads
+#         (torch.version.cuda) AND record the toolkit it does NOT read (the
+#         nvcc/CUDA_HOME path) ** -- on this box the gate is True while the
+#         default symlink is 12.9, so the test is the only place that
+#         asymmetry can become an assertion instead of a CAVEAT; (5) the
+#         entry-240 route stays UNPRE-EMPTED (different enum member) and
+#         pack_mxfp8_weight_scale_for_deepgemm survives the add/add union;
+#         (6) if b12x is ever added to the autotune candidate list, assert
+#         entry-211's cubin prewarm does NOT claim to cover it (it is a
+#         cutlass-DSL kernel, never a Triton cubin).
+#         GATE: do this in the SAME sitting as arming the route (i.e. with a
+#         real [x,32]-ue8m0 checkpoint decision), not as standalone cleanup.
+#         State: TODO (when armed)
 #
 # =============================================================================
 # KV-ROUTE DECISION RECORD -- operator, 2026-10-29 (binding on merge #5 and
@@ -888,7 +1059,10 @@
 #     Retrying it later means a second purge event for the same benefit.
 #   * **#46141 is the DESIGN TEMPLATE** for the scale-sidecar shape (BUILD-B
 #     reads it whether or not the PR itself is ever taken).
-#   * **#44462 IS NEXT** in the quant-selection queue after the moe family
+#   * **#44462 LANDED 2026-10-29 AS ENTRY 317** (its "NEXT in the
+#     quant-selection queue" position is now SPENT -- indexer pools are in
+#     the host budgets; the prod-number caveat travels with the entry). It
+#     was, as recorded, the #43524-style scale-adjacent item;
 #     (entry 247's b12x status stays as recorded; C10's b12x E4M3-K/32 note
 #     travels with it).
 #   * ** MXFP4-KV ROUTE DECLINED absent an explicit operator push ** -- it
@@ -914,6 +1088,35 @@
 # SECTION R -- deliberately EXCLUDED (audit log; both-halves rule unless
 # noted). Do not re-add without new evidence.
 # =============================================================================
+#  #44344 (open, head f89c1b47cf, "[Fix] ... buffer_only storage path draft of
+#  #44342") -- ** DOA-BY-HISTORY, MOVED HERE 2026-10-29 from the FAM-A3b
+#  stacked-draft note. ** TWO INDEPENDENT GROUNDS, BOTH CITED:
+#    (i) ** SUBSUMPTION: its content is already owned by ENTRY 268
+#        (#46643, landed 3fce5478ee) -- that entry clears batch_is_full
+#        **UNCONDITIONALLY EVERY SCHEDULING ROUND** and REMOVED entry-198's
+#        per-round reset/is_empty arms AS STRICT SUBSETS. A draft that
+#        CONDITIONS that same reset on a storage mode cannot add anything to
+#        a tree where the clear is unconditional: the conditional arm is now
+#        the strict subset, i.e. exactly the shape entry 268 deleted. The
+#        subsumption is by BEHAVIOR, not by file overlap.
+#    (ii) ** SCOPE: buffer_only-only, ** and prod does NOT run buffer_only **
+#        (we run single-engine CACHE mode with file L3 -- the same premise
+#        that makes #44339's skip stand, and the reason the original queue
+#        note said "SKIP permanently" for both).
+#  TRAP ON RECORD, BECAUSE IT WILL BE MISREAD AT THE NEXT MERGE: live gh
+#  2026-10-29 says **#44344 is OPEN and MERGEABLE @ f89c1b47cf** (head
+#  unchanged -- no author activity). ** mergeable means the diff would apply
+#  CLEANLY, NOT that the content is wanted. ** A green mergeable flag plus a
+#  zero-conflict auto-resolve is precisely how a DOA-by-subsumption draft
+#  re-enters a stack; the verdict here is about CONTENT (ground (i)), which
+#  mergeability cannot touch. If it ever merges UPSTREAM, expect it to arrive
+#  silently with merge #6 and ** DO NOT re-litigate this from that fact ** --
+#  entry 268's unconditional clear is still the reason it is inert for us.
+#  REOPEN CONDITION (narrow, so the door is not welded shut): only if the
+#  unconditional clear is ever REVERSED (an upstream change reintroduces a
+#  conditional batch_is_full path) OR prod ever moves to buffer_only -- and
+#  even then, re-read entry 268's arm-removal note FIRST.
+#  State: EXCLUDED(DOA-by-entry-268 + buffer_only-not-run)
 #  #38355 (open, "chunked-prefill radix-insert race corrupting QSA KV
 #  pages", issue #38319) -- ** MISDIAGNOSED, DO NOT PORT (validated
 #  2026-10-29 per the C11 instruction; the fork patch is NOT the fix for
