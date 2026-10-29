@@ -63,6 +63,10 @@ class TestUnifiedPPSyncBatching(unittest.TestCase):
         cache._all_reduce = MagicMock()
         cache.writing_check = MagicMock()
         cache.loading_check = MagicMock()
+        # --hicache-async-ready-sync (PR #45795): memoized flag-off so
+        # check_hicache_events stays on the synchronous path without
+        # resolving the (unpublished in this stub) memory config bag.
+        cache._hcs_state = False
         cache.queued_backups = {}
         cache.cache_controller = SimpleNamespace(
             start_writing=MagicMock(),
