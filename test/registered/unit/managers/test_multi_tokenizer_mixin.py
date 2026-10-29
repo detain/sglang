@@ -571,4 +571,3 @@ class TestMultiTokenizerMixin(CustomTestCase):
 if __name__ == "__main__":
     unittest.main()
 
-# TODO(merge5): re-plant entry 275,276 semantics (batch B2); fork hunks saved /tmp/opencode/merge5-dossier/replant/test__registered__unit__managers__test_multi_tokenizer_mixin.py.fork-hunks.patch

@@ -277,7 +277,13 @@ def _breakable_prepare_ple_batch(
         prepare_rows(forward_batch, ple_batch=batch)
     if holder is not None:
         holder.batch = batch
-        return holder
+        # Upstream's tightened eager_on_graph contract (arrived in-range with
+        # the merge): a graph break communicates ONLY through caller-owned
+        # buffers -- the replay-time run() asserts a None return. The caller
+        # pre-allocates the holder and reads .batch (B2 re-plant: as merged
+        # this returned `holder` and every PLE break replay tripped the
+        # assertion).
+        return None
     return _BreakablePLEBatch(batch=batch)
 
 

@@ -13,7 +13,7 @@ register_cpu_ci(est_time=10, suite="base-a-test-cpu")
 
 class TestElasticCudaGraphSetup(unittest.TestCase):
     def test_recapture_repeats_warmup_after_rendezvous(self):
-        model_runner = SimpleNamespace(_kernel_warmed_up=True)
+        model_runner = SimpleNamespace(device="cpu", _kernel_warmed_up=True)
         eager_runner = Mock()
         decode_runner = Mock()
         replacement = Mock()
@@ -74,4 +74,3 @@ class TestElasticCudaGraphSetup(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 
-# TODO(merge5): re-plant entry 117 semantics (batch B2); fork hunks saved /tmp/opencode/merge5-dossier/replant/test__registered__unit__model_executor__test_elastic_cuda_graph_setup.py.fork-hunks.patch

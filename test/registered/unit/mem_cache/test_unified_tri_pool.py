@@ -1829,4 +1829,3 @@ class TestPreallocIsPricedOnTheSharedGrid(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 
-# TODO(merge5): re-plant entry 263 semantics (batch B2); fork hunks saved /tmp/opencode/merge5-dossier/replant/test__registered__unit__mem_cache__test_unified_tri_pool.py.fork-hunks.patch

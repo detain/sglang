@@ -7,6 +7,7 @@ requirements remain explicit.
 import unittest
 
 import numpy as np
+import torch
 import requests
 from transformers import AutoConfig, AutoTokenizer
 
@@ -53,6 +54,10 @@ class MambaCacheKLMixin:
         return logprobs - np.logaddexp.reduce(logprobs)
 
 
+@unittest.skipUnless(
+    torch.cuda.is_available(),
+    "Starts a real server with a device Mamba pool and decode CUDA graphs; needs a GPU",
+)
 class TestMambaLazyInplaceKL(MambaCacheKLMixin, DefaultServerBase):
     """Guard lazy Mamba checkpoint reuse when the optional track slot is exhausted.
 
@@ -154,6 +159,10 @@ class TestMambaLazyInplaceKL(MambaCacheKLMixin, DefaultServerBase):
         self.assertLess(kl, 1e-4, "Cache reuse changed the next-token distribution")
 
 
+@unittest.skipUnless(
+    torch.cuda.is_available(),
+    "Starts a real server with a device Mamba pool and decode CUDA graphs; needs a GPU",
+)
 class TestMambaSpecTruncationKL(MambaCacheKLMixin, DefaultServerBase):
     """NEXTN can advance the no_buffer state past max_new_tokens. Compare warm
     and cold distributions for identical token IDs to detect a misaligned key.
@@ -248,4 +257,3 @@ class TestMambaSpecTruncationKL(MambaCacheKLMixin, DefaultServerBase):
 if __name__ == "__main__":
     unittest.main()
 
-# TODO(merge5): re-plant entry 216,222 semantics (batch B2); fork hunks saved /tmp/opencode/merge5-dossier/replant/test__registered__radix_cache__test_mamba_cache_kl.py.fork-hunks.patch

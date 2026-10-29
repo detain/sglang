@@ -78,4 +78,3 @@ class TestReqCustomParamsRef(CustomTestCase):
 if __name__ == "__main__":
     unittest.main()
 
-# TODO(merge5): fold upstream changes dropped here (entries 306 own this file; batch B2)

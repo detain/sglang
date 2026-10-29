@@ -611,4 +611,3 @@ class TestPrefillCudaGraphRunnerHelpers(CustomTestCase):
 if __name__ == "__main__":
     unittest.main()
 
-# TODO(merge5): re-plant entry 170 semantics (batch B2); fork hunks saved /tmp/opencode/merge5-dossier/replant/test__registered__unit__model_executor__test_prefill_cuda_graph_runner_helpers.py.fork-hunks.patch

@@ -132,4 +132,3 @@ class TestFusionHookPairing(CustomTestCase):
 if __name__ == "__main__":
     unittest.main()
 
-# TODO(merge5): re-plant entry 300 semantics (batch B2); fork hunks in /tmp/opencode/merge5-dossier/replant/test__registered__unit__models__test_draft_entry_hook_parity.py.fork-hunks.patch

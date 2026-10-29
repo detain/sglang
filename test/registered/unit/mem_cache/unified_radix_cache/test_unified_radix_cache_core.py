@@ -2351,10 +2351,3 @@ class TestUnifiedRadixCacheDecoderSwaBoundedReplayHoldBack(
 if __name__ == "__main__":
     unittest.main()
 
-# TODO(merge5): re-plant entry 91/114/199/218/222/241 cases (batch B2) -- the
-# fork's test_unified_radix_cache_unittest.py was REMOVED by upstream's
-# #45232/#45236/#45334 split before its fork hunks could re-home. Full fork
-# source + fork-hunks patch: /tmp/opencode/merge5-dossier/replant/
-# test__registered__unit__mem_cache__test_unified_radix_cache_unittest.py.
-# * Includes entry-241's honest-skip gate at build_fixture (1300F -> 0F) --
-# re-derive per-file against this layout (CAVEATS pins the old 44P/2885S).

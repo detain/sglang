@@ -2484,4 +2484,3 @@ def test_qsa_sharding_rejects_out_of_bounds_writes(kind):
 if __name__ == "__main__":
     unittest.main()
 
-# TODO(merge5): re-plant entry 200 semantics (batch B2); fork hunks saved /tmp/opencode/merge5-dossier/replant/test__registered__unit__mem_cache__test_page_interleave_shard.py.fork-hunks.patch

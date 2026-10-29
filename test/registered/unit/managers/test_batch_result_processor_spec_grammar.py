@@ -376,4 +376,3 @@ class TestFinishedMambaSpecCheckpoint(CustomTestCase):
 if __name__ == "__main__":
     unittest.main()
 
-# TODO(merge5): re-plant entry 169 semantics (batch B2); fork hunks in /tmp/opencode/merge5-dossier/replant/test__registered__unit__managers__test_batch_result_processor_spec_grammar.py.fork-hunks.patch

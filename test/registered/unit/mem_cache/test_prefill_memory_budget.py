@@ -21,7 +21,7 @@ from sglang.srt.mem_cache.allocator.token import TokenToKVPoolAllocator
 from sglang.srt.mem_cache.common import evict_from_tree_cache
 from sglang.srt.mem_cache.kv.alloc.chain import ChainAllocator
 from sglang.srt.mem_cache.kv.alloc.interim import _FloatChainPolicy
-from sglang.srt.mem_cache.prefill_budget import ChainPrefillBudget
+from sglang.srt.mem_cache.prefill_budget import ChainPrefillBudget, PrefillBudget
 from sglang.srt.mem_cache.radix_cache import RadixCache
 from sglang.srt.runtime_context import get_parallel
 from sglang.srt.sampling.sampling_params import SamplingParams
@@ -277,6 +277,21 @@ class TestRunningDecodeReservation(CustomTestCase):
                     self.assertEqual(result, AddReqResult.NO_TOKEN)
 
 
+class TestContinuingChunkCap(CustomTestCase):
+    def _budget(self, free_tokens):
+        allocator = SimpleNamespace(page_size=16, available_size=lambda: free_tokens)
+        tree_cache = SimpleNamespace(
+            supports_mamba=lambda: False, evictable_size=lambda: 0
+        )
+        return PrefillBudget(allocator, tree_cache)
+
+    def test_chunk_leaves_the_page_alloc_extend_over_asks(self):
+        self.assertEqual(self._budget(64).available_chunk_tokens(1024), 48)
+
+    def test_chunk_is_deferred_without_free_kv(self):
+        self.assertIsNone(self._budget(16).available_chunk_tokens(1024))
+
+
 class TestFixedPrefillMemoryBudget(unittest.TestCase):
     def _allocator(self, cls=SWATokenToKVPoolAllocator):
         allocator = object.__new__(cls)
@@ -386,5 +401,3 @@ class TestFixedPrefillMemoryBudget(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-# TODO(merge5): re-plant entry 268 semantics (batch B2); fork hunks saved /tmp/opencode/merge5-dossier/replant/test__registered__unit__mem_cache__test_prefill_memory_budget.py.fork-hunks.patch

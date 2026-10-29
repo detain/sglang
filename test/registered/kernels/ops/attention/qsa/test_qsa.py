@@ -3929,4 +3929,3 @@ def test_qsa_large_fp8_prefill_float_reference(head_dim, heads):
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
 
-# TODO(merge5): fold upstream changes dropped here (entries 118,121,184,200,241 own this file; batch B2)

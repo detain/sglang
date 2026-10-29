@@ -2646,4 +2646,3 @@ def test_wan_text_kv_lives_for_one_loop_of_one_request():
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
 
-# TODO(merge5): re-plant entry 145,150 semantics (batch B2); fork hunks in /tmp/opencode/merge5-dossier/replant/test__registered__kernels__ops__diffusion__test_model_fast_paths.py.fork-hunks.patch

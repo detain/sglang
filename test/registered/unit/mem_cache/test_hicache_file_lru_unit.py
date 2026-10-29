@@ -1054,4 +1054,3 @@ class TestUncachedBatchExists(HiCacheFileLRUTestBase):
 if __name__ == "__main__":
     unittest.main(verbosity=2)
 
-# TODO(merge5): re-plant entry 24,250,251 semantics (batch B2); fork hunks in /tmp/opencode/merge5-dossier/replant/test__registered__unit__mem_cache__test_hicache_file_lru_unit.py.fork-hunks.patch

@@ -561,4 +561,3 @@ def test_defer_expansion_metadata(mode_name, ratio, budget, monkeypatch):
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
 
-# TODO(merge5): fold upstream changes dropped here (entries 184,200,241 own this file; batch B2)

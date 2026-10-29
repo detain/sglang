@@ -264,4 +264,3 @@ class TestDeepGemmUE8M0Requant(CustomTestCase):
 if __name__ == "__main__":
     unittest.main(verbosity=3)
 
-# TODO(merge5): re-plant entry 163 semantics (batch B2); fork hunks saved /tmp/opencode/merge5-dossier/replant/test__registered__unit__layers__quantization__test_deepgemm_ue8m0_requant.py.fork-hunks.patch

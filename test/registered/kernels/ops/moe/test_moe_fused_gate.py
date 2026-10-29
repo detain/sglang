@@ -566,4 +566,3 @@ def test_moe_fused_gate_accepts_non_fp32_bias(
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
 
-# TODO(merge5): re-plant entry 297 semantics (batch B2); fork hunks saved /tmp/opencode/merge5-dossier/replant/test__registered__kernels__ops__moe__test_moe_fused_gate.py.fork-hunks.patch
