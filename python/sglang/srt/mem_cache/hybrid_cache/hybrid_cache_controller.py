@@ -34,6 +34,7 @@ from sglang.srt.mem_cache.hicache_storage import (
     PoolTransfer,
     PoolTransferResult,
     count_pool_hits,
+    merge_source_transfers,
 )
 from sglang.srt.mem_cache.l2_transfer import L2Transfer
 from sglang.srt.mem_cache.pool_host import HostPoolGroup, PoolEntry
@@ -1932,14 +1933,8 @@ class HybridCacheController(BaseHiCacheController):
             if transfer.indices_from_pool is None:
                 continue
             if transfer.indices_from_pool != PoolName.KV:
-                source = next(
-                    (
-                        t
-                        for t in operation.pool_transfers
-                        if t.indices_from_pool is None
-                        and t.name == transfer.indices_from_pool
-                    ),
-                    None,
+                source = merge_source_transfers(
+                    operation.pool_transfers, transfer.indices_from_pool
                 )
                 if source is None:
                     raise AssertionError(
@@ -2046,28 +2041,16 @@ class HybridCacheController(BaseHiCacheController):
                     pool.device_indices = kv_device_indices
                 continue
 
-            sources = [
-                transfer
-                for transfer in extra_pools
-                if transfer.indices_from_pool is None
-                and transfer.name == pool.indices_from_pool
-            ]
-            if not sources:
+            source = merge_source_transfers(extra_pools, pool.indices_from_pool)
+            if source is None:
                 rollback_allocated()
                 return None
-            # Mamba load-back can restore one checkpoint to both a radix slot
-            # and an active request slot. Sidecars must follow both copies.
-            pool.host_indices = (
-                sources[0].host_indices
-                if len(sources) == 1
-                else torch.cat([source.host_indices for source in sources])
-            )
+            # merge_source_transfers() covers every destination of the source
+            # pool (a Mamba load-back restores one checkpoint to both a radix
+            # slot and an active request slot; sidecars must follow both).
+            pool.host_indices = source.host_indices
             if pool.device_indices is None:
-                pool.device_indices = (
-                    sources[0].device_indices
-                    if len(sources) == 1
-                    else torch.cat([source.device_indices for source in sources])
-                )
+                pool.device_indices = source.device_indices
         return extra_pools
 
     def _reduce_prefetch_ack(self, ack: PrefetchAck) -> None:
