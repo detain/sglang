@@ -4282,6 +4282,11 @@ class Scheduler(
             dllm_config=self.dllm_config,
             waiting_queue_len=len(self.waiting_queue),
             prefill_tile_block_m=prefill_tile_block_m,
+            prefill_chunk_alignment=getattr(
+                self.token_to_kv_pool_allocator.get_kvcache(),
+                "prefill_chunk_alignment",
+                1,
+            ),
         )
 
         if self.chunked_req is not None:
@@ -4292,7 +4297,9 @@ class Scheduler(
                 adder.rem_chunk_tokens or 0,
                 self.page_size,
             )
-            self.chunked_req = adder.add_chunked_req(self.chunked_req)
+            self.chunked_req = adder.add_chunked_req(
+                self.chunked_req, truncation_align_size=self.truncation_align_size
+            )
 
         if self.enable_lora:
             running_loras = {

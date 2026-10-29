@@ -157,6 +157,9 @@ class TestDcpLogicalCapacity(CustomTestCase):
                     token_to_kv_pool=runner.token_to_kv_pool,
                     req_to_token_pool=runner.req_to_token_pool,
                     unified_memory_pool=None,
+                    # #46970x: _init_pools returns the routed StateStorage;
+                    # these non-mamba stubs carry none.
+                    state=None,
                 )
                 cfg.kv_cache_dtype = torch.float32
                 cfg.device, cfg.gpu_id = "cpu", 0
@@ -195,20 +198,26 @@ class TestDcpLogicalCapacity(CustomTestCase):
             def __getattr__(self, name):
                 return None
 
-        state = SchedulerState(max_total_num_tokens=256, kv_shard_widening=4)
-        for method, consumer in (
-            (Scheduler.init_pool_stats_observer, "SchedulerPoolStatsObserver"),
-            (Scheduler.init_invariant_checker, "SchedulerInvariantChecker"),
-            (Scheduler.init_load_inquirer, "SchedulerLoadInquirer"),
-        ):
-            with (
-                self.subTest(consumer=consumer),
-                patch("sglang.srt.managers.scheduler." + consumer) as constructor,
-            ):
-                method(state)
-                self.assertEqual(
-                    constructor.call_args.kwargs["max_total_num_tokens"], 256
-                )
+        state = SchedulerState(
+            max_total_num_tokens=256,
+            tree_cache=NS(waiting_storage_span=lambda: None),
+        )
+        # Pool stats observe capacity through the storage seam (#46970x); the
+        # shape's token_capacity must be the logical count, NOT re-widened.
+        with patch("sglang.srt.managers.scheduler.kv_storage_of") as storage_of:
+            Scheduler.init_pool_stats_observer(state)
+        self.assertEqual(storage_of.call_args.kwargs["shape"].token_capacity, 256)
+        # The invariant checker no longer receives a capacity kwarg (it
+        # derives through storage/pool-stats); assert the removed seam does
+        # not resurrect a second widening.
+        with patch(
+            "sglang.srt.managers.scheduler.SchedulerInvariantChecker"
+        ) as checker:
+            Scheduler.init_invariant_checker(state)
+        self.assertNotIn("max_total_num_tokens", checker.call_args.kwargs)
+        with patch("sglang.srt.managers.scheduler.SchedulerLoadInquirer") as inquirer:
+            Scheduler.init_load_inquirer(state)
+        self.assertEqual(inquirer.call_args.kwargs["max_total_num_tokens"], 256)
 
     def test_logical_capacity(self):
         for dcp_size in (1, 2, 8):

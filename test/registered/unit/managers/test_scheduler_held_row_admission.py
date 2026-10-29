@@ -40,7 +40,7 @@ class _Adder:
         self.new_chunked_req = None
         self.rem_chunk_tokens = 0
 
-    def add_chunked_req(self, req):
+    def add_chunked_req(self, req, truncation_align_size=None):
         self.can_run_list.append(req)
         return None
 
@@ -78,7 +78,13 @@ class TestHeldRowAdmission(CustomTestCase):
         s.tree_cache = SimpleNamespace(
             buffer_pipeline=None, storage_prefetch_retries=None
         )
-        s.token_to_kv_pool_allocator = SimpleNamespace(state_slots=None)
+        s.token_to_kv_pool_allocator = SimpleNamespace(
+            # state_slots: the alloc_group_begin seam; get_kvcache: the
+            # entry-177 prefill_chunk_alignment read (fork fixture half that
+            # upstream's #46980 rewrite of this file dropped).
+            state_slots=None,
+            get_kvcache=lambda: SimpleNamespace(),
+        )
         s.new_token_ratio_tracker = SimpleNamespace(current=0.0)
         s.max_prefill_tokens = 1 << 20
         s.is_mixed_chunk = False
