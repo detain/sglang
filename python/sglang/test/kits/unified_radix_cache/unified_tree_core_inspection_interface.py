@@ -239,4 +239,3 @@ class UnifiedTreeCoreInspectionInterface(UnifiedTreeCoreInterface):
         """Build the ordered node list for a device-to-host backup."""
         ...
 
-# TODO(merge5): re-plant entry - semantics (batch B2); fork hunks saved /tmp/opencode/merge5-dossier/replant/python__sglang__test__kits__unified_radix_cache__unified_tree_core_inspection_interface.py.fork-hunks.patch

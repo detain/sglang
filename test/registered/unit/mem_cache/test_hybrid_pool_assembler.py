@@ -1,5 +1,6 @@
 """Unit tests for hybrid HiCache pool assembly."""
 
+import math
 import unittest
 from functools import partial
 from queue import Queue
@@ -27,15 +28,19 @@ from sglang.srt.mem_cache.hybrid_cache.hybrid_cache_controller import (
 )
 from sglang.srt.mem_cache.hybrid_cache.hybrid_pool_assembler import (
     StackBuildResult,
-    _check_declared_pools_present,
     _DsaStrategy,
     _MambaStrategy,
     _MambaSwaStrategy,
-    _require_single_row_dsv4_swa_pages,
     _SwaStrategy,
+    _check_declared_pools_present,
+    _log_mamba_host_coverage,
+    _mamba_host_bytes_per_slot,
+    _require_single_row_dsv4_swa_pages,
+    _resolve_hicache_mamba_split,
     build_full_draft_pools,
     build_host_pool_group,
     build_hybrid_swa_group,
+    build_pool_entry,
     build_unified_host_stack,
     validate_fused_hicache_draft,
 )
@@ -1710,7 +1715,219 @@ class TestMambaSwaStackMatchesOtherStacks(CustomTestCase):
                 self.assertEqual(hybrid_pool_assembler._state_host_layout(), expected)
 
 
+class _Pool:
+    def __init__(self, kv_bytes):
+        self._kv_bytes = kv_bytes
+
+    def get_kv_size_bytes(self):
+        return self._kv_bytes
+
+
+class _DevicePool(_Pool):
+    def __init__(self, kv_bytes, size):
+        super().__init__(kv_bytes)
+        self.size = size
+
+
+def _fake_mamba_pool(*, slots, layers, conv_shapes, temporal_shape, itemsize):
+    """A device MambaPool as MambaPoolHost.get_size_per_token reads it."""
+    dtype = SimpleNamespace(itemsize=itemsize)
+    cache = SimpleNamespace(
+        conv=[
+            SimpleNamespace(shape=(layers, slots) + shape, dtype=dtype)
+            for shape in conv_shapes
+        ],
+        temporal=SimpleNamespace(shape=(layers, slots) + temporal_shape, dtype=dtype),
+    )
+    per_slot = (
+        sum(math.prod(conv.shape[2:]) * conv.dtype.itemsize for conv in cache.conv)
+        + math.prod(cache.temporal.shape[2:]) * cache.temporal.dtype.itemsize
+    ) * layers
+    pool = _DevicePool(slots * per_slot, slots)
+    pool.mamba_cache = cache
+    cache.extra_checkpoint_buffers = ()
+    pool.get_device_pool_infos = lambda: (SimpleNamespace(buffer_info=cache),)
+    pool.num_mamba_layers = layers
+    return pool
+
+
+def _glm_mamba_pool(slots=160):
+    # GLM-5.3-Flash KDA checkpoint: 35 layers x (36,864 B conv + 524,288 B ssm).
+    return _fake_mamba_pool(
+        slots=slots,
+        layers=35,
+        conv_shapes=((4, 4608),),
+        temporal_shape=(16, 128, 128),
+        itemsize=2,
+    )
+
+
+class TestHicacheMambaSizeKnob(CustomTestCase):
+    """--hicache-mamba-size-gb resolved in the assembler against fake device pools."""
+
+    def _publish(self, **overrides):
+        from sglang.srt.runtime_context import publish, reset_context
+        from sglang.srt.server_args import ServerArgs
+
+        publish(ServerArgs(model_path="dummy", **overrides), role="scheduler")
+        self.addCleanup(reset_context)
+
+    def test_bytes_per_slot_mirrors_mamba_pool_host(self):
+        self.assertEqual(_mamba_host_bytes_per_slot(_glm_mamba_pool()), 19_640_320)
+
+    def test_bytes_per_slot_include_packed_draft_and_side_states(self):
+        def pool(layers):
+            return _fake_mamba_pool(
+                slots=8,
+                layers=layers,
+                conv_shapes=((2,),),
+                temporal_shape=(4,),
+                itemsize=2,
+            )
+
+        target, draft = pool(2), pool(1)
+        target.mamba_cache.extra_checkpoint_buffers = (torch.zeros(8, 3),)
+        draft.mamba_cache.extra_checkpoint_buffers = (
+            torch.zeros(8, 2, dtype=torch.int64),
+        )
+        self.assertEqual(_mamba_host_bytes_per_slot(target), 36)
+        self.assertEqual(_mamba_host_bytes_per_slot(target, (draft,)), 64)
+
+    def test_explicit_gigabytes_take_the_remainder_from_kv(self):
+        self._publish(hicache_size=32)
+        kv_pool = _DevicePool(7_920 * 1_114_112, 1_114_112)  # 7,920 B per token
+        params = SimpleNamespace(
+            chunked_prefill_size=4096, req_to_token_pool=SimpleNamespace(size=8)
+        )
+
+        kv_shares, mamba_gb, split = _resolve_hicache_mamba_split(
+            knob=14.0, kv_pools=(kv_pool,), mamba_pool=_glm_mamba_pool(), params=params
+        )
+
+        self.assertEqual(kv_shares, (18.0,))
+        self.assertEqual(mamba_gb, 14.0)
+        self.assertEqual(split.mode, "explicit")
+        self.assertEqual(split.slots, int(14e9 // 19_640_320))
+        self.assertGreaterEqual(split.coverage, 1.0)
+
+    def test_auto_keeps_kv_pools_proportional_among_themselves(self):
+        self._publish(hicache_size=32)
+        full_kv_pool = _DevicePool(3 * 10**9, 1_000_000)
+        swa_kv_pool = _DevicePool(1 * 10**9, 1_000_000)
+        params = SimpleNamespace(
+            chunked_prefill_size=4096, req_to_token_pool=SimpleNamespace(size=4)
+        )
+
+        kv_shares, mamba_gb, split = _resolve_hicache_mamba_split(
+            knob="auto",
+            kv_pools=(full_kv_pool, swa_kv_pool),
+            mamba_pool=_glm_mamba_pool(),
+            params=params,
+        )
+
+        self.assertEqual(split.mode, "auto")
+        self.assertAlmostEqual(kv_shares[0], 3 * kv_shares[1])
+        self.assertAlmostEqual(sum(kv_shares) + mamba_gb, 32.0)
+        self.assertGreaterEqual(split.coverage, 1.0)
+        self.assertGreaterEqual(split.slots, math.ceil(split.kv_tokens / 4096) + 4 * 4)
+
+
+class TestMambaHostCoverageLine(CustomTestCase):
+    """The boot line is informational: mocks skip it, real sizes log it."""
+
+    _LOGGER = "sglang.srt.mem_cache.hybrid_cache.hybrid_pool_assembler"
+
+    def _publish(self, **overrides):
+        from sglang.srt.runtime_context import publish, reset_context
+        from sglang.srt.server_args import ServerArgs
+
+        publish(ServerArgs(model_path="dummy", **overrides), role="scheduler")
+        self.addCleanup(reset_context)
+
+    def test_mock_params_and_pools_skip_the_line(self):
+        # Assembly under MagicMock params and a patched MambaPoolHost: no
+        # TypeError, no line.
+        with self.assertNoLogs(self._LOGGER, level="INFO"):
+            _log_mamba_host_coverage(
+                kv_host_pool=MagicMock(),
+                mamba_host_pool=MagicMock(),
+                params=MagicMock(),
+                split=None,
+            )
+
+    def test_real_sizes_log_the_production_line(self):
+        self._publish(hicache_size=32)
+        params = SimpleNamespace(
+            chunked_prefill_size=4096, req_to_token_pool=SimpleNamespace(size=8)
+        )
+        with self.assertLogs(self._LOGGER, level="WARNING") as logs:
+            _log_mamba_host_coverage(
+                kv_host_pool=SimpleNamespace(size=2_680_896),
+                mamba_host_pool=SimpleNamespace(size=565),
+                params=params,
+                split=None,
+            )
+        # The GLM-5.3-Flash TP4 boot line at the default split.
+        self.assertEqual(len(logs.records), 1)
+        self.assertIn(
+            "HiCache host split (proportional): host mamba slots 565 cover "
+            "2183168 tokens at one checkpoint per 4096-token chunk; KV host "
+            "tier 2680896 tokens (coverage 82%)",
+            logs.output[0],
+        )
+        self.assertIn("--hicache-mamba-size-gb", logs.output[0])
+
+
+class TestBuildPoolEntryCallSites(CustomTestCase):
+    """`build_pool_entry` is keyword-only; a stale kwarg name only fails at runtime.
+
+    The QSA indexer and QSA draft sidecars need a GPU to reach, so guard their
+    call sites statically instead.
+    """
+
+    def test_every_call_site_uses_signature_keywords(self):
+        import ast
+        import inspect
+
+        allowed = set(inspect.signature(build_pool_entry).parameters)
+        source = inspect.getsource(hybrid_pool_assembler)
+        tree = ast.parse(source)
+        offenders = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if not (isinstance(func, ast.Name) and func.id == "build_pool_entry"):
+                continue
+            self.assertEqual(node.args, [], "build_pool_entry is keyword-only")
+            for kw in node.keywords:
+                if kw.arg is not None and kw.arg not in allowed:
+                    offenders.append((node.lineno, kw.arg))
+        self.assertEqual(offenders, [], f"unknown kwargs; expected one of {allowed}")
+
+
+class TestMambaHostShare(CustomTestCase):
+    def test_host_capacity_excludes_speculative_scratch(self):
+        """Spec verify scratch is device-only; counting it inflated the Mamba host share."""
+        pool = MambaPool(
+            size=8,
+            spec_state_size=8,
+            cache_params=InklingConvCacheParams(
+                shape=InklingConvStateShape(conv=[(2, 2)], temporal=(2, 2, 2)),
+                layers=[0],
+                dtype=InklingStateDType(conv=torch.float32, temporal=torch.float32),
+            ),
+            mamba_layer_ids=[0],
+            speculative_num_draft_tokens=4,
+            device="cpu",
+        )
+
+        self.assertEqual(
+            pool.host_capacity_bytes,
+            pool.mamba_cache.conv[0].nbytes + pool.mamba_cache.temporal.nbytes,
+        )
+        self.assertLess(pool.host_capacity_bytes, pool.get_kv_size_bytes())
+
+
 if __name__ == "__main__":
     unittest.main()
-
-# TODO(merge5): re-plant entry 73,219 semantics (batch B2); fork hunks saved /tmp/opencode/merge5-dossier/replant/test__registered__unit__mem_cache__test_hybrid_pool_assembler.py.fork-hunks.patch

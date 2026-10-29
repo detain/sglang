@@ -263,4 +263,3 @@ class UnifiedTreeCoreInspector(UnifiedTreeCore, UnifiedTreeCoreInspectionInterfa
             self.node_by_id(node_id), write_back
         ).node_ids
 
-# TODO(merge5): re-plant entry - semantics (batch B2); fork hunks saved /tmp/opencode/merge5-dossier/replant/python__sglang__test__kits__unified_radix_cache__unified_tree_core_inspector.py.fork-hunks.patch

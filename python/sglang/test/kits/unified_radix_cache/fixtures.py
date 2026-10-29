@@ -5,6 +5,9 @@ from array import array
 from typing import Optional
 from unittest import mock
 
+import pytest
+import torch
+
 from sglang.kernels.ops.attention.fla.chunk_delta_h import CHUNK_SIZE as FLA_CHUNK_SIZE
 from sglang.srt.configs.mamba_utils import Mamba2CacheParams, Mamba2StateShape
 from sglang.srt.environ import envs
@@ -143,6 +146,13 @@ def build_fixture(
         else mamba_cache_chunk_size
     )
     set_global_server_args_for_scheduler(server_args)
+    # Merge-#5 B2 honest-skip gate (mirrors the sibling kernels/qsa module
+    # gates): this kit's pools are device objects and get_device() has no
+    # accelerator on a CPU runner; the split's topic files are CUDA/AMD
+    # CI-registered upstream, so a CPU run must SKIP, not fail, everything
+    # built here -- while the kit's device-free surfaces keep running.
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA is required for the unified-radix-cache kits")
     device = get_device()
 
     mamba2_cache_params = None
