@@ -71,10 +71,6 @@
 # --- FAM-A2a  port-hicache-file (files: mem_cache file backend:
 #     hicache_storage.py, lru_file_evictor, storage-path plumbing; context
 #     entries 24/30/209/217/249 + the 10-28 per-replica dir split)
-# #44422  open (head 0276104d40) [Fix] tolerate concurrent file storage dir
-#         creation (cross-process makedirs race; same-replica TP ranks still
-#         race even with our per-replica dirs). 1 line + race regression.
-#         State: IN-WT(port-hicache-file)
 # #42676  open (head 37671da2be) [HiCache] honor --file-storage-path on every
 #         attach path; fixes the env-vs-flag precedence inversion we rely on.
 #         9 files, ~+20 non-test. State: IN-WT(port-hicache-file)

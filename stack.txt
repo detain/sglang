@@ -5806,6 +5806,28 @@ STACK, IN BUILD ORDER (bottom first)
       # +60-line CPU regression rides in the same lru test file (entry
       # 250 carries the file-level battery numbers).
 
+        252. 0b5a7df7c7  PR #44422 (open, head 0276104d40)  HiCacheFile storage-dir creation tolerates the cross-process race -- exist_ok=True closes a check-then-makedirs TOCTOU that could crash rank init
+      # https://github.com/sgl-project/sglang/pull/44422. WHAT:
+      # HiCacheFile.__init__ guarded os.makedirs(self.file_path) with
+      # `if not os.path.exists(...)` -- two rank-0 workers (the predicate
+      # tp_rank == 0 and attn_cp_rank == 0 admits more than one process
+      # per directory) could pass the check together and the second
+      # creator's makedirs raised FileExistsError AT INIT. THE FIX
+      # (1 line, hicache_storage.py): os.makedirs(..., exist_ok=True) --
+      # absorbs exactly the race while STILL propagating genuine errors
+      # (a permission-denied path is not "already exists", it raises and
+      # the boot dies loudly, as it should).
+      # WHY FOR US: our 10-28 per-replica dir split narrowed the sharing
+      # but same-replica TP ranks still create the SAME directory, so
+      # this crash class is live on our geometry, not hypothetical.
+      # RED-PROOF, MACHINE-CHECKED (worker, at the landed diff):
+      # reverting the one line reproduces the FileExistsError in the new
+      # race regression -- the test is not vacuous.
+      # DEVIATIONS: none -- clean cherry-pick of open head 0276104d40.
+      # BATTERY: new test/registered/unit/mem_cache/
+      # test_hicache_file_directory_race.py 4P (CVD=9); the whole-
+      # tranche numbers ride in the header note.
+
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
 ==============================================================================
