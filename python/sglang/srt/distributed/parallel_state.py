@@ -560,7 +560,7 @@ class GroupCoordinator:
         # SHM transport (1.9 GB/s here). See host_staged_allreduce.py.
         self.host_staged_comm = None
         if (
-            os.environ.get("SGLANG_HOST_STAGED_ALLREDUCE") == "1"
+            envs.SGLANG_HOST_STAGED_ALLREDUCE.get()
             and self.world_size == 2
             and is_cuda_alike()
         ):
@@ -629,9 +629,7 @@ class GroupCoordinator:
         construction rendezvouses: refuse on every rank or on none.
         """
         if not (
-            os.environ.get("SGLANG_LL_ALLREDUCE") == "1"
-            and self.world_size == 2
-            and is_cuda_alike()
+            envs.SGLANG_LL_ALLREDUCE.get() and self.world_size == 2 and is_cuda_alike()
         ):
             return None
         if self.pcie_ipc_eligible:

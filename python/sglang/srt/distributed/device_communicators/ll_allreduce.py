@@ -23,6 +23,8 @@ import time
 import numpy as np
 import torch
 
+from sglang.srt.environ import envs
+
 logger = logging.getLogger(__name__)
 
 _HEADER = 4096
@@ -84,9 +86,7 @@ class LLAllReduce:
     ):
         assert world_size == 2, "LL all-reduce is written for two ranks"
         self.rank = rank_in_group
-        self.max_bytes = int(
-            os.environ.get("SGLANG_LL_ALLREDUCE_MAX_BYTES", str(64 << 10))
-        )
+        self.max_bytes = envs.SGLANG_LL_ALLREDUCE_MAX_BYTES.get()
         # an LL word carries 4 data bytes in 8
         self.slot_bytes = 2 * self.max_bytes
         total = _HEADER + 4 * self.slot_bytes

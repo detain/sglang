@@ -578,19 +578,55 @@ def test_guard_inert_when_ll_was_never_requested(
     assert _ll_warnings(caplog) == []
 
 
-def test_ll_env_acceptance_is_exactly_one(monkeypatch):
-    """entry-256 reads the raw env with a == "1" check; pin that the guard
-    honors nothing else. An environ.py migration must change this test on
-    purpose, with the delta stated, never silently."""
-    monkeypatch.setenv("SGLANG_LL_ALLREDUCE", "true")
-    module, _ = _ll_module_stub()
-    coordinator = _ll_stub_coordinator(pcie_ipc_eligible=False)
-    with (
-        patch.dict(sys.modules, {_LL_MODULE: module}),
-        patch.object(parallel_state, "is_cuda_alike", return_value=True),
+def test_ll_env_acceptance_is_env_bool(monkeypatch):
+    """ENVREG widened the gate from the raw == "1" read to the registered
+    EnvBool: 1/true/yes/y (case-insensitive) all arm, anything falsy or junk
+    does not (junk resolves to the default with a warning). The widening is
+    the safer superset -- an operator who wrote SGLANG_LL_ALLREDUCE=true
+    meant it on, and the PCIe-IPC collision guard applies to every spelling.
+    """
+    for value, armed in (
+        ("1", True),
+        ("true", True),
+        ("TRUE", True),
+        ("yes", True),
+        ("y", True),
+        ("0", False),
+        ("false", False),
+        ("no", False),
     ):
-        assert coordinator._build_ll_allreduce("tp") is None
-    module.LLAllReduce.assert_not_called()
+        monkeypatch.setenv("SGLANG_LL_ALLREDUCE", value)
+        module, comm = _ll_module_stub()
+        coordinator = _ll_stub_coordinator(pcie_ipc_eligible=False)
+        with (
+            patch.dict(sys.modules, {_LL_MODULE: module}),
+            patch.object(parallel_state, "is_cuda_alike", return_value=True),
+        ):
+            built = coordinator._build_ll_allreduce("tp")
+        assert (built is comm) is armed, value
+
+
+def test_comm_envs_are_registered_not_raw(monkeypatch):
+    """The entry-256 fork-convention deviation is closed: the three reads
+    live in environ.py, so an environ-only grep finds them, and the
+    construction sites read the handles. Mocks cannot catch a reverting to
+    raw os.environ.get -- pin the sources.
+    """
+    from sglang.srt.distributed.device_communicators import ll_allreduce
+    from sglang.srt.environ import envs
+
+    assert envs.SGLANG_LL_ALLREDUCE.default is False
+    assert envs.SGLANG_HOST_STAGED_ALLREDUCE.default is False
+    # The EnvInt default equals the raw fallback str(64 << 10) it replaced.
+    assert envs.SGLANG_LL_ALLREDUCE_MAX_BYTES.default == 64 << 10
+
+    gate_src = inspect.getsource(parallel_state.GroupCoordinator._build_ll_allreduce)
+    init_src = inspect.getsource(parallel_state.GroupCoordinator.__init__)
+    ll_src = inspect.getsource(ll_allreduce.LLAllReduce.__init__)
+    for name in ("SGLANG_LL_ALLREDUCE", "SGLANG_HOST_STAGED_ALLREDUCE"):
+        assert f'os.environ.get("{name}")' not in gate_src + init_src
+    assert "envs.SGLANG_LL_ALLREDUCE_MAX_BYTES.get()" in ll_src
+    assert 'os.environ.get("SGLANG_LL_ALLREDUCE_MAX_BYTES"' not in ll_src
 
 
 def test_host_transport_needle_names_which_transport_won(caplog):

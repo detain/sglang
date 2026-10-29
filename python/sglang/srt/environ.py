@@ -1466,6 +1466,14 @@ class Envs:
     # See docs/references/environment_variables.
     SGLANG_ENABLE_PCIE_IPC_ALLREDUCE = EnvBool(False)
     SGLANG_PCIE_IPC_MAX_NUMEL = EnvInt(0)
+    # The two opt-in TP2 PCIe transports of the #39605 port (entry 256),
+    # promoted from raw os.environ reads to registration so env audits see
+    # them. LL yields to an armed PCIe-IPC allreduce on the same group
+    # (stack collision guard in parallel_state).
+    SGLANG_LL_ALLREDUCE = EnvBool(False)
+    # bf16 messages up to this many bytes take the LL path.
+    SGLANG_LL_ALLREDUCE_MAX_BYTES = EnvInt(64 << 10)
+    SGLANG_HOST_STAGED_ALLREDUCE = EnvBool(False)
 
     # ===================================================================
     # RoPE cache
