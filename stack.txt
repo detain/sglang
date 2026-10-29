@@ -6790,15 +6790,27 @@ STACK, IN BUILD ORDER (bottom first)
       # +96/-24: arg_groups/parallel_hook.py + test_server_args.py).
       # APPLIED AS MERGED, patch shows in origin/main (git cherry '-').
       # NCCL's GRAPH_REGISTER recycling of graph-pool temporaries under
-      # expandable_segments is the bug class; the OLD guards missed our
-      # shape, the new predicate covers every boot where a captured graph
-      # can hold a collective. ** EVERY FUTURE STACK BOOT HAS A DIFFERENT
-      # NCCL ENVIRONMENT FROM ALL PRIOR BOOTS -- see the CAVEATS
-      # boot-needle bullet before reading any first-boot log or writing
-      # any needle test.** Battery: server_args file 303P/128sub ->
-      # 308P/128sub EXACT (the wave's predicted figure; +5P = the new
-      # default-off/untouched cases in the NCCL-graph-register class,
-      # subtests unmoved).
+      # expandable_segments is the bug class (upstream symptom: DP ranks
+      # ramping at different rates spin in ncclDevKernel_SendRecv during
+      # graph replay -- reproduced on tp4/dp4/ep4 = OUR shape); the OLD
+      # guards missed our boot, the new predicate
+      # _graph_may_capture_collectives() covers every multi-rank boot where
+      # ANY graph phase is non-DISABLED (config None -> True, "errs toward
+      # True"). ** INTEGRATOR CODE CHECK, BECAUSE THE HANDOFF NOTE WAS
+      # WRONG: the handoff (and my own first draft of the CAVEATS bullet)
+      # asserted "there is NO explicit-override warning, an operator
+      # setting silently wins". FALSE -- the
+      # setdefault-detects-then-logger.warning("NCCL_GRAPH_REGISTER=%s was
+      # set explicitly; %s") block at parallel_hook.py:445-449 PREDATES
+      # this pick (it arrived with the #38936-era LM-head guard, present at
+      # the pre-284 tip) and this pick did NOT touch it: an explicit
+      # setting wins AND WARNS. What this pick actually deletes is our
+      # entry-#38936-era _graph_pool_is_pausable helper, subsumed by the
+      # general predicate (grep-verified: no dangling callers). Corrected
+      # record lives in the CAVEATS boot-needle bullet.** Battery:
+      # server_args file 303P/128sub -> 308P/128sub EXACT (the wave's
+      # predicted figure; +5P = the new default-off/untouched cases in the
+      # NCCL-graph-register class, subtests unmoved).
 
       # BATCH-5 BATTERY (integrator, main tree; CVD=9, prod venv):
       # test_mamba_track_state_dtype.py 8P/9sub ** AT EVERY MEASUREMENT OF
@@ -7660,20 +7672,40 @@ CAVEATS
     setdefault'd on EVERY multi-rank graph-capable boot -- THE 9.sh TP4
     ARM INCLUDED, not just TP2 -- because NCCL recycles graph-pool
     temporaries under expandable_segments and the older guards missed our
-    shape. TWO OPERATIONAL CONSEQUENCES: (i) ** THERE IS NO EXPLICIT-
-    OVERRIDE WARNING -- setdefault means an operator who SETS
-    NCCL_GRAPH_REGISTER in the environment silently WINS (their value is
-    kept, ours is not applied and nothing prints). If a boot ever shows a
-    non-zero NCCL_GRAPH_REGISTER, the first question is WHO SET IT in the
-    run script or shell, not whether the hook failed.** (ii) ** THE FIRST
-    BOOT AFTER THIS LANDS MUST CHECK THE DECODE-GRAPH HANG CLASS: any new
-    hang/stall inside a captured graph that contains a collective is now
-    suspect #1 = the registration change, so keep a pre-boot NCCL env dump
-    and compare, and read every old needle test that asserted on the
-    ABSENCE of NCCL_GRAPH_REGISTER in the dump as STALE (entry-245's
-    needle-string trap applies: assert on strings that actually print).**
-    Merge-#5 note: this is a MERGED pick (patch-equal to upstream
-    786cdfc040), so the merge brings nothing new here.
+    shape. WHAT ACTUALLY MOVED (verified in code, 2026-10-29, because the
+    handoff note got this wrong -- ** CORRECTION ON RECORD: the claim
+    "no explicit-override warning / an operator setting silently wins" IS
+    FALSE. The warning EXISTS and PREDATES THIS PICK: the
+    `if os.environ.setdefault("NCCL_GRAPH_REGISTER","0") != "0":
+    logger.warning("NCCL_GRAPH_REGISTER=%s was set explicitly; %s.")`
+    block at parallel_hook.py:445-449 was ALREADY there at the pre-284
+    tip (it came in with the #38936-era LM-head guard); #43216 did not
+    touch it. An explicit operator setting DOES win AND DOES WARN **).
+    The pick's real content is the TRIGGER: two narrow guards
+    (enable_tp_lm_head_all_to_all; enable_memory_saver AND
+    SGLANG_MEMORY_SAVER_CUDA_GRAPH) were REPLACED by
+    _graph_may_capture_collectives() = max(tp,ep,dp) > 1 AND
+    (cuda_graph_config is None OR ANY phase backend != DISABLED),
+    documented to "err toward True" -- so ** our entry-#38936-era
+    _graph_pool_is_pausable helper was DELETED as a strict subset of that
+    predicate (no dangling callers, grep-verified); if a future fork
+    change ever needs the narrow pausable-pool trigger again, it now has
+    to re-derive it from the general predicate.** THREE OPERATIONAL
+    CONSEQUENCES: (i) read the warning line above as a LIVE NEEDLE -- if a
+    boot prints it, someone exported NCCL_GRAPH_REGISTER in the run script
+    or shell and THEIR value wins by design (legitimate, logged, not a
+    hook failure); (ii) ** any old needle asserting the ABSENCE of
+    NCCL_GRAPH_REGISTER in a boot env dump is now STALE -- keep a pre-boot
+    dump and compare (entry-245's needle-string trap applies: assert on
+    strings that actually print);** (iii) THE FIRST BOOT AFTER THIS LANDS
+    OWES A DECODE-GRAPH HANG CHECK: this fix's own symptom class is graph
+    replay of captured cross-rank collectives spinning in
+    ncclDevKernel_SendRecv while DP ranks ramp -- reproduced upstream on
+    tp4/dp4/ep4, i.e. OUR shape -- so if a new hang/stall appears inside a
+    captured graph, suspect #43216 first and test by exporting
+    NCCL_GRAPH_REGISTER=1 (which now also prints the warning, giving a
+    clean A/B). Merge-#5 note: this is a MERGED pick, patch-equal to
+    upstream 786cdfc040, so the merge brings nothing new here.
 
   * #33029 NOT-NEEDED -- THE PER-RANK-TRIP-COUNT COLLECTIVE CLASS IS
     CLOSED ON OUR TREE, DO NOT PORT IT AT MERGE #5 (wanted_stack.txt

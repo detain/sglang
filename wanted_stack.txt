@@ -314,11 +314,18 @@
 #         merged pick, patch-equal to origin/main 786cdfc040; server_args
 #         303P -> 308P/128sub). ** THE NCCL NEEDLE FLAG: NCCL_GRAPH_REGISTER
 #         =0 is now setdefault'd on EVERY multi-rank graph-capable boot --
-#         THE 9.sh TP4 ARM TOO, not just TP2 -- and there is NO warning when
-#         an operator sets it explicitly (setdefault silently yields). The
-#         NCCL environment of every future boot differs from all prior stack
-#         boots; CAVEATS carries the boot-needle bullet (first-boot decode-
-#         graph hang check + old absence-needles STALE). State: LANDED(284)
+#         THE 9.sh TP4 ARM TOO, not just TP2 ** (the narrow
+#         LM-head/pausable-pool triggers became
+#         _graph_may_capture_collectives(): max(tp,ep,dp)>1 and any graph
+#         phase enabled; our entry-#38936-era _graph_pool_is_pausable
+#         helper was SUBSUMED and deleted, no dangling callers). NOTE: the
+#         handoff's "no explicit-override warning" claim was CHECKED AND IS
+#         WRONG -- an operator-set NCCL_GRAPH_REGISTER WINS AND PRINTS A
+#         WARNING (parallel_hook.py:445-449, predates this pick); the
+#         CORRECTED record is in the CAVEATS boot-needle bullet. The NCCL
+#         environment of every future boot differs from all prior stack
+#         boots; old absence-needles are STALE, and the first boot owes a
+#         decode-graph hang check. State: LANDED(284)
 # #45631 -> #45855 -> #46167  -- LANDED 2026-10-28 as entries 272-274
 #         @ code tip 2714457128, TAKEN AS THE UNIT (muse_spark hunk of
 #         #45631 DROPPED: file absent from our tree; re-check the out=
