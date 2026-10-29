@@ -6377,6 +6377,92 @@ STACK, IN BUILD ORDER (bottom first)
       # real page-64/QSA boundaries, #46643 TTFT re-measure (entry-198
       # precedent).
 
+  parsers-logits-2026-10-28 wave (branch port-parsers-logits, born
+  d598eff7da; 4 picks, ALL CLEAN at the integrator -- disjoint files vs
+  the spec-mamba + admission waves as the FAM split planned; the four
+  landed shas are byte-identical to the worker tip for every file in the
+  wave, verified by tree diff):
+
+        271. 1280f5b699  PR #44124 (MERGED 2026-10-27 @ origin/main 9d45fdda46)  qwen3_coder MIXED-PARAM UNION DECODE -- structured values no longer flattened through a string-typed schema branch
+      # https://github.com/sgl-project/sglang/pull/44124 (2 files,
+      # +241/-14, all qwen3_coder_detector.py + its test). UNIONS vs the
+      # stack surface: (i) _convert_param_value string branch -- our
+      # STRING_PARAM_TYPES module constant (entries 157/160 era) KEPT,
+      # value-identical to the PR's inlined list, the PR's union-decode
+      # block taken verbatim as the branch body; (ii) entries 159
+      # (_strip_complete_tool_calls/_iter_tool_call_bodies) and 160
+      # (_schema_allows_null + gated null handling) UNTOUCHED by the PR's
+      # hunks, retained in full; (iii) an EXTRA CALL SITE the upstream PR
+      # cannot know about: our streaming string fast path (entry 109 +
+      # entry-160 null_as_json gate) calls _get_arguments_config BEFORE
+      # the tuple return -- adapted to 'param_config, _ = ...'. The
+      # worker's battery CAUGHT a miss here: 141F before the amend.
+      # PARITY NOTE (ported): the entry-109 fast path opens only for
+      # exact type:"string" schemas, so string|object unions keep taking
+      # the buffered path -- one-shot and streaming union decode stay in
+      # parity.
+
+        272. ba1c940603  PR #45631 (MERGED 2026-10-21 @ origin/main f1e26dc658)  lm_head writes logits DIRECTLY into the fp32 buffer (out= kwarg through _compute_lm_head) -- muse_spark hunk DROPPED, file not in our tree
+      # https://github.com/sgl-project/sglang/pull/45631 (2 files after
+      # the drop: logits_processor.py + test_fp32_lm_head.py). DROPPED
+      # HUNK ON RECORD: models/muse_spark.py is a modify/delete -- the
+      # file entered upstream via #44666, which our stack never merged;
+      # nothing in-tree subclasses _compute_lm_head, so the drop is
+      # trivially disjoint. ** IF #44666 EVER PORTS: its _compute_lm_head
+      # override MUST GAIN THE out= KWARG -- re-check this hunk then. **
+      # logits_processor.py merged clean against our drifted copy (the
+      # upstream gathered-softcap/defer_verify_gather region the hunks
+      # assumed is NOT in-tree; our entry-162 pcie_ipc=True kwarg sits
+      # between hunks and survived -- see 274 for the same drift).
+      # [TRILOGY: 272+273+274 are ONE CONTRACT UNIT -- see the 274
+      # close-out; NEVER take 45631/45855 without 46167.]
+
+        273. 01fc1307a6  PR #45855 (MERGED 2026-10-22 @ origin/main d67d1ae02c)  lm_head precision PRESERVED with shared buffers -- the fp32 buffer is now the only copy, no bf16 round-trip in the shared path (clean pick)
+      # https://github.com/sgl-project/sglang/pull/45855 (2 files,
+      # +76/-36: logits_processor.py +4/-... and the test). ZERO conflicts
+      # and ZERO deviations -- applied as merged. Middle child of the
+      # trilogy (272/273/274).
+
+        274. 2714457128  PR #46167 (MERGED 2026-10-23 @ origin/main f05ad5ec01)  bf16 -> fp32 logits cast becomes a Triton KERNEL (cast_to_float32_logits) -- CLOSES THE TRILOGY: 272's direct-write + 273's shared fp32 buffer + this kernel is a 3-PR CONTRACT; NEVER port 45631/45855 WITHOUT 46167
+      # https://github.com/sgl-project/sglang/pull/46167 (3 files,
+      # +25/-3: kernels/ops/activation/softcap.py + its __init__ +
+      # logits_processor.py call). DEVIATIONS: (1) gathered_softcap block
+      # ABSENT HERE -- the conflict carried the wrapper welded to
+      # upstream-only _gathered_softcap_logits_kernel/
+      # gathered_softcap_logits (the same gather-fused/deferred-verify
+      # region 272 noted missing): WRAPPER-ONLY KEPT, gather block
+      # dropped, standalone import per our per-name idiom. (2)
+      # ** SILENT-AUTO-MERGE HAZARD, FIXED: ** git would have applied the
+      # registration verbatim with capabilities=CUDA_ONLY -- an import our
+      # activation/__init__ refactor REMOVED; the worker replaced it with
+      # the local _CUDA frozenset, VALUE-IDENTICAL to upstream CUDA_ONLY
+      # (kernels/spec.py:181). Machine-proved: test_kernels_namespace 76P
+      # EXACT. (3) APPLY_SOFTCAP constexpr hunks applied clean around our
+      # local softcap_out autotune surface (untouched).
+      # GPU DEBT (whole trilogy): rewrite test_fp32_lm_head.py to survive
+      # CPU collection (its module-level get_device() default arg ALREADY
+      # makes it non-COLLECTABLE under CVD=9 -- PREDATES the trilogy,
+      # line-present at entry-260-era base; the worker's predicted logits
+      # figure could NOT be re-measured here because every GPU on this box
+      # is BUSY with the LIVE prod server -- owed with the cast-kernel
+      # NUMERICS check and a spec-verify CAST PERF spot at the GPU
+      # window).
+
+      # BATCH-3 BATTERY (main-tree tip 2714457128, CVD=9, per-file):
+      # function_call dir 652P/1964sub EXACT (holds ON TOP of batch-1+2 --
+      # the disjointness claim survives contact with the real tree);
+      # test_qwen3_coder_numeric_precision 4P/156sub EXACT;
+      # kernels_namespace 76P EXACT (the 274 fix's machine proof); spec
+      # dir 335P/11S/180sub EXACT (batch-1 pin SURVIVES the whole 14-pick
+      # stack). TWO FLAGGED NUMBERS, NOT ATTRIBUTABLE TO THIS STACK'S
+      # DIFFS: (x) sampling dir measured 223P/2S/43sub -- the wave's
+      # predicted 263P is NOT REPRODUCIBLE ON ANY TREE HERE: the worker's
+      # OWN tip measures 223P/2S/43sub identically AND all three waves
+      # diff ZERO lines under test/registered/unit/sampling/; the 40-P gap
+      # lives between the prediction and this method, not in the landed
+      # code (audit trail: S/ subtests match to the unit). (y) logits
+      # 56P/7S unverifiable on this box -- see the 274 GPU-debt block.
+
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
 ==============================================================================
