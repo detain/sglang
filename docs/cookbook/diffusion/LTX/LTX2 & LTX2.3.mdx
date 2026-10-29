@@ -87,7 +87,10 @@ graph segments, cutting host ops per step by about 10x with bit-identical output
 On H100 with LTX-2 two-stage at 768x512 / 25 frames, a step drops from 128-137 ms
 to 45 ms.
 
-Graphs replay only the exact signatures captured at warmup, so declare the
+On GPUs with at least 130 GiB (H200, B200, B300), `LTX2TwoStagePipeline`
+serving turns breakable CUDA graphs ON by default when the DiTs stay
+resident (LTX-2.3: `resident` mode); `--enable-breakable-cuda-graph false`
+runs eager. Graphs replay only the exact signatures captured at warmup, so declare the
 served workload:
 
 ```bash
@@ -289,4 +292,3 @@ import { ComfyUISupport } from '/src/snippets/diffusion/comfyui-support.jsx';
 
 <ComfyUISupport model="video" />
 
-<!-- TODO(merge5): fold upstream changes dropped here (entries 153 own this file; batch B1) -->
