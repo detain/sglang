@@ -256,6 +256,17 @@ class StaticKVStorage:
             # Per-call per-req C128 table for the last_loc lookup.
             if self._batch is not None:
                 extra_alloc_kwargs["req_to_token_pool"] = self._batch.req_to_token_pool
+        if page_interleave_shard_size(allocator) > 1:
+            # Entry-200 forward, re-planted by B2 onto the #46970x storage seam
+            # (take_extend already carries it): a sharded decode pops the
+            # chain's rotation class, so alloc_decode demands one base per
+            # request -- the kv_rotation_base stamped at chain creation (the
+            # extend path stamps it post-alloc). Without it the allocator
+            # raises on its own assert: sharded-QSA decode was dead on
+            # arrival at the merge.
+            extra_alloc_kwargs["rotation_bases"] = [
+                req.kv_rotation_base for req in self._batch.reqs
+            ]
 
         out = allocator.alloc_decode(
             seq_lens, seq_lens_cpu, last_loc, **extra_alloc_kwargs

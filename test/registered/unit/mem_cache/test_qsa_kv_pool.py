@@ -214,6 +214,3 @@ def test_pending_state_transfer_item_covers_the_whole_ring(monkeypatch):
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
 
-# TODO(merge5): entry 125/200 + 285-287 ring tests KEPT past upstream #45672
-# prune (mirror cases only upstream; ring/sharding cases are fork-owned);
-# re-derive register_cpu_ci est + prune audit (batch B2).
