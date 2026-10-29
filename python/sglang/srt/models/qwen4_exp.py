@@ -455,7 +455,13 @@ def _prepare_ple_batch(
     ngram_history = None
     if ngram_size is not None:
         assert ngram_eos_token_id is not None
-        history = get_req_to_token_pool().get_ngram_context(state_indices)
+        # Read once, before the layer loop: wait for the layer whose host
+        # load-back restores the context. The entry-167 pre-#46970x read
+        # (req_to_token_pool.get_ngram_context, deleted by #46970..#46991)
+        # and this one were the same data; both consumers take this view.
+        router = get_token_to_kv_pool().layer_router
+        router.wait_for_part(NGRAM_PART)
+        history = router.part_view(NGRAM_PART).get_context(state_indices)
         if use_packed_ngram and packed_query_start_loc is not None:
             ngram_input_ids = tokens
             ngram_history = history
@@ -471,11 +477,6 @@ def _prepare_ple_batch(
                     tokens,
                     tokens.new_full((), ngram_eos_token_id),
                 )
-        # Read once, before the layer loop: wait for the layer whose host
-        # load-back restores the context.
-        router = get_token_to_kv_pool().layer_router
-        router.wait_for_part(NGRAM_PART)
-        history = router.part_view(NGRAM_PART).get_context(state_indices)
         if history.shape[1] != ngram_size - 1:
             raise RuntimeError(
                 "Qwen4 PLE N-gram cache has the wrong context width: "
@@ -521,7 +522,9 @@ def _commit_ple_batch(batch: Optional[_PLEBatch], forward_batch: ForwardBatch) -
             batch.ngram_input_ids,
             batch.query_start_loc,
             batch.ngram_history,
-            pool.ngram_pool.context,
+            # Entry-238-era target re-homed post-#46970x: the packed update
+            # writes the same in-place buffer the router view exposes.
+            get_token_to_kv_pool().layer_router.part_view(NGRAM_PART).context,
             batch.state_indices,
             track_indices=track_indices,
             track_offsets=track_offsets,
@@ -3620,12 +3623,3 @@ class Qwen4ExpForConditionalGeneration(Qwen3VLForConditionalGeneration):
 
 
 EntryClass = [Qwen4ExpForConditionalGeneration]
-
-# TODO(merge5): re-plant entry 167/238-era PLE router-API reads (batch B5) --
-# merge-#5 union fused #46543's holder contract with the fork prepare_rows /
-# use_packed_ngram path, but TWO fork lines still call the pre-rewrite API:
-# get_req_to_token_pool().get_ngram_context(...) (fork-only method, deleted
-# from memory_pool.py with #46970..#46991; see replant/...qwen4_exp.py.
-# fork-hunks.patch) and fused_qwen4_packed_ngram_update's
-# pool.ngram_pool.context argument; re-home both onto layer_router.
-# NGRAM_PART.

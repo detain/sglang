@@ -100,9 +100,20 @@ def _run(packed, lengths, device, dtype, pad_tokens=0):
     conv_state = torch.randn(NUM_SLOTS, CHANNELS, STATE_LEN, device=device, dtype=dtype)
     batch = _batch(lengths, device, pad_tokens)
     x = torch.randn(batch.processed_tokens, CHANNELS, device=device, dtype=dtype)
-    pool = SimpleNamespace(short_conv_layer_cache=lambda layer_id: conv_state)
+    # Post-#46970x seam: _short_conv reads its state through the layer router's
+    # SHORT_CONV_PART KVLayer (view.layer_cache(view_layer_id)); stub that.
+    router = SimpleNamespace(
+        read=lambda layer_id, part: SimpleNamespace(
+            view_layer_id=layer_id,
+            view=SimpleNamespace(layer_cache=lambda view_layer_id: conv_state),
+        )
+    )
     with (
-        patch.object(qwen4_exp, "get_req_to_token_pool", lambda: pool),
+        patch.object(
+            qwen4_exp,
+            "get_token_to_kv_pool",
+            lambda: SimpleNamespace(layer_router=router),
+        ),
         patch.object(qwen4_exp, "_ple_padding_is_wasteful", lambda b: packed),
     ):
         out = qwen4_exp.Qwen4ExpPLELayer._short_conv(

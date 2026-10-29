@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, NamedTuple, Optional, Tuple
 
 import torch
@@ -44,6 +45,12 @@ _MASK_DP_PAD_MOE = _envs.SGLANG_OPT_MASK_DP_PAD_MOE.get()
 if TYPE_CHECKING:
     from sglang.srt.layers.moe.topk import TopKOutput
     from sglang.srt.layers.moe.utils import MoeRunnerBackendLike
+
+
+logger = logging.getLogger(__name__)
+# Expert-id space mismatches are reported once per (published, built) pair:
+# every MoE layer of an affected model would otherwise log the same line.
+_warned_id_space_mismatch: set[Tuple[str, str]] = set()
 
 
 try:
@@ -103,6 +110,12 @@ def _map_topk_ids_to_local_experts(
 
 
 def _keeps_global_expert_ids(backend: Optional[MoeRunnerBackendLike]) -> bool:
+    # These runners handle EP with global expert IDs:
+    # - cutlass / cutedsl / trtllm_routed handle EP internally
+    # - mxfp4 dispatcher mapping is already global
+    # - hpc_ops consumes global ids together with rank_ep / num_expert_total
+    # - flashinfer_megamoe routes by global expert ID inside the mega kernel
+    # - b12x_w4a16 translates global ids through its own per-call expert_map
     return backend is not None and (
         backend.is_flashinfer_cutlass()
         or backend.is_flashinfer_cutedsl()
@@ -111,6 +124,7 @@ def _keeps_global_expert_ids(backend: Optional[MoeRunnerBackendLike]) -> bool:
         or backend.is_hpc_ops()
         or backend.is_flashinfer_megamoe()
         or backend.is_flashinfer_mxfp4()
+        or backend.is_flashinfer_b12x_w4a16()
     )
 
 
@@ -143,6 +157,45 @@ class StandardDispatcher(BaseDispatcher):
                 "LoRA with expert parallelism requires the layer's MoE runner "
                 "to use the requested runner's expert-ID convention."
             )
+        # Entry-230 canary, re-anchored on #44993: the mapping now follows the
+        # BUILT runner (the fork's rescue lives in the core), so a layer whose
+        # built convention disagrees with the PUBLISHED one only diverges where
+        # a launch-shape decision still keys off the published value -- e.g.
+        # should_use_flashinfer_cutlass_moe_fp4_allgather() below performs the
+        # gather/reduce-scatter in the published backend's id space. This is
+        # deliberately a warning rather than a raise: the inputs come from
+        # per-layer quant methods this host cannot enumerate, so a hard failure
+        # could break a config that works. One known caller that sees the line:
+        # --quantization modelopt_fp4 with `auto` on SM100, where
+        # create_moe_runner resolves FLASHINFER_TRTLLM (a global-keeping
+        # runner) while the published value stays `auto` -- the unresolved
+        # half of this contract, not a false alarm. The startup resolution
+        # that makes the two agree on SM110/SM120 is arg_groups/overrides.py
+        # _moe_runner_backend_quant_constraints (entry 230 + upstream #45520).
+        if (
+            self.moe_ep_size > 1
+            and backend is not None
+            and _keeps_global_expert_ids(get_moe_runner_backend())
+            != _keeps_global_expert_ids(backend)
+        ):
+            pair = (
+                str(getattr(get_moe_runner_backend(), "value", "unknown")),
+                str(getattr(backend, "value", backend)),
+            )
+            if pair not in _warned_id_space_mismatch:
+                _warned_id_space_mismatch.add(pair)
+                logger.warning(
+                    "MoE expert-id space mismatch: --moe-runner-backend %s and "
+                    "this layer's built %s runner disagree on _keeps_global_"
+                    "expert_ids(), so under EP > 1 the published-value launch "
+                    "decisions (fp4 allgather) act in one id space while the "
+                    "dispatcher delivers the other's (the cutlass kernels, for "
+                    "one, compute start_expert from the id: "
+                    "num_experts_per_node * ep_rank). Pass a matching backend "
+                    "explicitly, e.g. --moe-runner-backend %s.",
+                    *pair,
+                    pair[1],
+                )
         self.num_experts = moe_runner_config.num_experts
         self.num_local_experts = moe_runner_config.num_local_experts
         self.num_local_shared_experts = moe_runner_config.num_fused_shared_experts
@@ -298,13 +351,3 @@ class StandardDispatcher(BaseDispatcher):
                 sizes=get_dp_global_num_tokens(),
             )
         return hidden_states
-
-
-# TODO(merge5): re-plant entry 230 semantics (batch B5) -- published-value
-# MISMATCH WARNING + entry-225 sentinel gate dropped for upstream #44993's
-# effective-backend structure (upstream keeps the published-value CONTRACT
-# via get_moe_runner_backend() in the LoRA-EP guard, but not the warn-once
-# diagnostic). Fork hunks:
-# /tmp/opencode/merge5-dossier/replant/python__sglang__srt__layers__moe__token_dispatcher__standard.py.fork-hunks.patch
-# UNION GATE (dispatch): standard_dispatcher 12P + model_overrides
-# 112P/1S/181sub + fold probe 8P must pass before B5 sign-off.

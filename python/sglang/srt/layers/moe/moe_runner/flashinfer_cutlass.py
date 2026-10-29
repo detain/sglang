@@ -45,7 +45,7 @@ from sglang.srt.runtime_context import (
     max_prefill_buffer_tokens,
 )
 from sglang.srt.utils import is_flashinfer_available
-from sglang.srt.utils.common import next_power_of_2
+from sglang.srt.utils.common import is_sm120, next_power_of_2
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +87,9 @@ class FlashInferCutlassMoeQuantInfo(MoeQuantInfo):
     swiglu_beta: Optional[torch.Tensor] = None
     swiglu_limit: Optional[torch.Tensor] = None
     apply_routed_scaling_factor: bool = True
+    # #44994 paired-NVFP4 FC2 weight: legal only on the sm120 native MTP-MMA
+    # route below; any other path that receives one fails loud.
+    pair_w2_weight: Optional[torch.Tensor] = None
     g1_alpha_up: Optional[torch.Tensor] = None
     smallm_workspace: Optional[Nvfp4MoeWorkspace] = None
     smallm_global_routed_experts: Optional[int] = None
@@ -726,6 +729,25 @@ def _smallm_ineligibility_reason(
     return None
 
 
+def _sm120_mtp_mma_supported() -> bool:
+    import os
+
+    # Matches only FlashInfer's default FP4 quantizer with the fused FC2 epilogue.
+    return (
+        is_sm120()
+        and envs.SGLANG_FLASHINFER_MOE_FUSED_FINALIZE.get()
+        and not envs.FLASHINFER_NVFP4_4OVER6.get()
+        and os.environ.get("FLASHINFER_DISABLE_FP4_QUANT_FAST_MATH", "0") == "0"
+        and os.environ.get("TRTLLM_DISABLE_FP4_QUANT_FAST_MATH", "0") == "0"
+    )
+
+
+def _flashinfer_autotune_active() -> bool:
+    from flashinfer.autotuner import AutoTuner
+
+    return AutoTuner.get().is_tuning_mode
+
+
 def _run_flashinfer_cutlass(
     *,
     dispatch_output,
@@ -755,6 +777,35 @@ def _run_flashinfer_cutlass(
     x, x_sf, output_dtype, output_col = _prepare_input(
         dispatch_output, quant_info, runner_config
     )
+
+    if (
+        quant_info.quant_type == "fp4"
+        and not runner_config.is_gated
+        and runner_config.activation == "relu2"
+        and runner_config.moe_ep_size == runner_config.moe_tp_size == 1
+        and x_sf is None
+        and not enable_alltoall
+        and is_sm120()
+    ):
+        from sglang.kernels.ops.gemm.sm120_nvfp4_moe import try_nvfp4_moe
+
+        result = try_nvfp4_moe(
+            x,
+            quant_info.w13_weight,
+            quant_info.w2_weight,
+            quant_info.quant_scales,
+            topk_ids,
+            topk_weights,
+            output_dtype=output_dtype,
+            out=output,
+            pair_w2_weight=quant_info.pair_w2_weight,
+            # Preserve FlashInfer target/draft tactic discovery during autotuning.
+            use_mtp=_sm120_mtp_mma_supported() and not _flashinfer_autotune_active(),
+        )
+        if result is not None:
+            return _maybe_apply_routed_scaling_factor(result, quant_info, runner_config)
+    if quant_info.pair_w2_weight is not None:
+        raise RuntimeError("A paired NVFP4 weight reached an unsupported MoE path")
 
     workspace = quant_info.smallm_workspace
     quant_scales = quant_info.quant_scales
@@ -922,13 +973,21 @@ def fused_experts_none_to_flashinfer_cutlass(
 
 @register_fused_func("flashinfer", "flashinfer_cutlass")
 def fused_experts_flashinfer_to_flashinfer_cutlass(
-    dispatch_output: FlashinferDispatchOutput,
+    dispatch_output: FlashinferDispatchOutput | StandardDispatchOutput,
     quant_info: MoeQuantInfo,
     runner_config: MoeRunnerConfig,
-) -> FlashinferCombineInput:
+) -> FlashinferCombineInput | StandardCombineInput:
     from sglang.srt.layers.moe.token_dispatcher.flashinfer import (
         FlashinferCombineInput,
     )
+    from sglang.srt.layers.moe.token_dispatcher.standard import StandardDispatchOutput
+
+    # All-gather prefill must use ordinary expert execution and reduce-scatter
+    # combine, without the decode A2A workspace or kernel layout.
+    if isinstance(dispatch_output, StandardDispatchOutput):
+        return fused_experts_none_to_flashinfer_cutlass(
+            dispatch_output, quant_info, runner_config
+        )
 
     assert isinstance(quant_info, FlashInferCutlassMoeQuantInfo), (
         f"Unexpected quant_info type for flashinfer_cutlass: {type(quant_info)}"
@@ -1283,8 +1342,11 @@ def _fused_experts_flashinfer_mxfp4_cutlass(
 
     return StandardCombineInput(hidden_states=out)
 
-# TODO(merge5): fold upstream changes dropped here (entries 9,174,244,247 own this file; batch B5) --
-# merge-#5 flipped flashinfer_cutlass.py from take-upstream to fork-owned: the b12x W4A16 route
-# (entry 247, 67P/46sub pinned) is fork-only (origin/main has ZERO b12x refs) and #44993/#44994's
-# 95-line effective-backend delta must be re-woven over it (patch: replant/python__sglang__srt__layers__moe__moe_runner__flashinfer_cutlass.py.upstream-side.patch). D-3 re-verify: 534x/415x alpha-fold + w13_layout + source_format
-# spelling vs flashinfer 0.7.2 are IN the fork version taken here.
+
+# merge-#5 flipped flashinfer_cutlass.py from take-upstream to fork-owned: the b12x
+# W4A16 route (entry 247) is fork-only (origin/main has ZERO b12x refs). #44993/
+# #44994's upstream-side delta was re-woven over the fork in B5 (pair_w2_weight +
+# the sm120 native MTP-MMA route + its fail-loud paired-weight guard + the
+# all-gather-prefill Standard delegation); the tune-range helper had already
+# arrived at the merge. D-3 re-verify stays closed: 534x/415x alpha-fold,
+# w13_layout and source_format spelling vs flashinfer 0.7.2 are in the fork here.
