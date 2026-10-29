@@ -321,7 +321,7 @@
 #          origin/main is now 1dd0f361b8 = +435 commits since 12dc623102.
 #          [The 553836c164/+378 figure was the count at the 230-242 batch.]
 # updated: 2026-10-28 (entries 250-254): HICACHE FILE-BACKEND TRANCHE --
-#          FAM-A1 of the wave-1 queue in wanted_stack.txt (file first
+#          FAM-A2a of the wave-1 queue in wanted_stack.txt (file first
 #          committed today). Five OPEN-PR ports, one commit each on branch
 #          port-hicache-file (born at 6a726597e6), FF-landed as the
 #          byte-identical range 903910505e..d598eff7da -- 250 #42482
@@ -5827,6 +5827,44 @@ STACK, IN BUILD ORDER (bottom first)
       # BATTERY: new test/registered/unit/mem_cache/
       # test_hicache_file_directory_race.py 4P (CVD=9); the whole-
       # tranche numbers ride in the header note.
+
+        253. 639ae6a66d  PR #42676 (open, head 37671da2be, ported)  --file-storage-path is honored on EVERY storage-attach path, and the STORAGE_DIR-vs-flag precedence INVERTS: flag/extra-config now outrank the env var when both are set
+      # https://github.com/sgl-project/sglang/pull/42676. WHAT: the flag
+      # was injected only in UnifiedRadixCache.init_hicache -- the runtime
+      # PUT /hicache/storage-backend attach and the PD decode-offload
+      # attach built their storage config through
+      # HiCacheController._generate_storage_config WITHOUT it, so those
+      # paths silently fell to the env var or /tmp/hicache. The port
+      # routes the flag through the funnel instead of the call sites
+      # (cache_controller.py: setdefault("file_storage_path", ...) gated
+      # on storage_backend_type == "file"; unified_radix_cache.py's
+      # per-call-site injection, -5 lines, deleted).
+      # BEHAVIOR CHANGE, RECORD IT: HiCacheFile now resolves
+      # extra_config["file_storage_path"] -> the flag (funneled into
+      # extra_config) -> SGLANG_HICACHE_FILE_BACKEND_STORAGE_DIR ->
+      # /tmp/hicache. BEFORE, the env var won over the flag; NOW the
+      # flag/extra-config win when BOTH are set. OUR RUN SCRIPTS SET ONLY
+      # THE ENV VAR (9.sh / 9c.sh: SGLANG_HICACHE_FILE_BACKEND_STORAGE_DIR
+      # per-replica, no --file-storage-path), so PROD BEHAVIOR IS
+      # PRESERVED, byte-for-byte -- but the needle stands: if anyone ever
+      # adds --file-storage-path to a script that still exports the env,
+      # THE FLAG NOW WINS. Check before that edit.
+      # DEVIATIONS (ported, not pristine): (i) cache_controller.py import
+      # adapted to our runtime_context split -- the module already
+      # imported get_parallel there; the port adds get_serving to the
+      # SAME import (upstream head read server_args differently);
+      # (ii) union on docs/docs/references/environment_variables.mdx --
+      # our row documents the FORK's fast_file backend and its
+      # storage_dir extra-config preference; the row is KEPT and the
+      # PR's precedence sentence appended, not overwritten; (iii) the
+      # == "file" guard is deliberate -- fast_file_store.py's own env
+      # read is UNTOUCHED, fast_file keeps resolving storage_dir->env as
+      # before. The flag help text (arg_groups/fields/serving.py) and
+      # three other mdx files take the PR's wording verbatim.
+      # BATTERY: test_hicache_file_storage_path_unit.py rewritten by the
+      # PR to drive the REAL controller -> HiCacheFile chain (its own
+      # unit mock is gone): 1P/5sub; family battery and unit/mem_cache/
+      # numbers ride in the header note.
 
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
