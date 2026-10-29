@@ -28,6 +28,7 @@ from sglang.srt.mem_cache.page_interleave import (
     PageInterleavePlacement,
     PageShardSpec,
 )
+from sglang.srt.platforms import current_platform
 
 logger = logging.getLogger(__name__)
 
@@ -565,11 +566,12 @@ class QSATokenToKVPool(HybridLinearKVPool):
         self.mem_usage = (k_size + v_size) / GB
 
     def get_qsa_key_state_buffer(self, layer_id: int) -> torch.Tensor:
-        # NOTE: deliberately not carried by get_cpu_copy/load_cpu_copy below.
-        # The pending ring is addressed by request slot, not token slot: the
-        # resumed request re-runs prefill for its uncommitted tail, which
-        # rewrites the ring from scratch, so a retracted request never reads
-        # stale ring rows on resume.
+        # NOTE: carried by get_cpu_copy/load_cpu_copy below (PR #45865). The
+        # pending ring is addressed by REQUEST slot, not token slot, and
+        # retraction resumes the request on a different request-pool row, so
+        # the re-prefill of the uncommitted tail does NOT rewrite the ring's
+        # already-stored members -- without the ring leg a resumed request
+        # would compress its pending group from the row's previous owner keys.
         return self.qsa_key_state_buffer_pool[
             self._transfer_full_attention_id(layer_id)
         ]
@@ -672,6 +674,22 @@ class QSATokenToKVPool(HybridLinearKVPool):
     # RetractionBackup.cpu_tensors and back into load_cpu_copy on this same
     # concrete object, so the dict shape only has to pair with itself (mirrors
     # the {"kv": ..., "index_k": ...} pattern in DSATokenToKVPool).
+    # The pending index-K ring travels too (PR #45865): a retracted request
+    # resumes on a DIFFERENT request-pool row, so its ring is not rewritten
+    # from scratch by the re-prefill -- without the ring leg the resumed
+    # request runs on the next row's stale keys.
+
+    def _qsa_ring_rows(self, req_pool_index) -> torch.Tensor:
+        # One request owns ``ratio * qsa_num_groups`` rows (QSA_RING_GROUPS
+        # floor, PR #47051): carry the whole ring, so this tracks
+        # ``get_qsa_pending_state_buf_infos``' rows_per_item, not one group.
+        rows_per_request = self.qsa_compress_ratio * self.qsa_num_groups
+        start = int(req_pool_index) * rows_per_request
+        return torch.arange(
+            start,
+            start + rows_per_request,
+            device=self.qsa_rope_position_buffer.device,
+        )
 
     def get_cpu_copy(self, indices, mamba_indices=None, req_pool_index=None):
         kv_cache_cpu = super().get_cpu_copy(
@@ -688,7 +706,22 @@ class QSATokenToKVPool(HybridLinearKVPool):
         qsa_k_cpu = [
             buffer[rows].to("cpu") for buffer in self.qsa_compressed_k_buffer_pool
         ]
-        return {"kv": kv_cache_cpu, "qsa_compressed_k": qsa_k_cpu}
+        ring_cpu = None
+        if req_pool_index is not None and self.qsa_key_state_buffer_pool:
+            ring = self._qsa_ring_rows(req_pool_index)
+            ring_cpu = (
+                [
+                    buffer[ring].to("cpu", non_blocking=True)
+                    for buffer in self.qsa_key_state_buffer_pool
+                ],
+                self.qsa_rope_position_buffer[ring].to("cpu", non_blocking=True),
+            )
+            current_platform.synchronize()
+        return {
+            "kv": kv_cache_cpu,
+            "qsa_compressed_k": qsa_k_cpu,
+            "qsa_pending_ring": ring_cpu,
+        }
 
     def load_cpu_copy(
         self, cache_cpu, indices, mamba_indices=None, req_pool_index=None
@@ -719,6 +752,16 @@ class QSATokenToKVPool(HybridLinearKVPool):
             buffer.index_copy_(
                 0, rows, saved.to(device=buffer.device, dtype=buffer.dtype)
             )
+        ring_cpu = cache_cpu["qsa_pending_ring"]
+        if ring_cpu is not None and req_pool_index is not None:
+            ring = self._qsa_ring_rows(req_pool_index)
+            keys_cpu, rope_cpu = ring_cpu
+            for buffer, data in zip(self.qsa_key_state_buffer_pool, keys_cpu):
+                buffer[ring] = data.to(buffer.device, non_blocking=True)
+            self.qsa_rope_position_buffer[ring] = rope_cpu.to(
+                self.qsa_rope_position_buffer.device, non_blocking=True
+            )
+            current_platform.synchronize()
 
     @staticmethod
     def _get_paged_state_buf_infos(tensors, rows_per_item: int):
