@@ -433,7 +433,7 @@ class HiCacheFile(HiCacheStorage):
         self.config_suffix = self._build_config_suffix(storage_config)
 
         if not os.path.exists(self.file_path) and tp_rank == 0 and attn_cp_rank == 0:
-            os.makedirs(self.file_path)
+            os.makedirs(self.file_path, exist_ok=True)
             logger.info(f"Created HiCacheFile storage directory at {self.file_path}")
 
         # Metadata cache positive lookup toggle & TTL
