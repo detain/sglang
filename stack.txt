@@ -1,12 +1,13 @@
 # stack.txt — diffusion-stack-002-2026-10-28
-# updated: 2026-10-28 — LANES 1-5 + LATE LANDED: entries 1-41 (lane 5 = entries 28-39, cherry-picked
+# updated: 2026-10-28 — LANES 1-5 + LATE + LT LANDED: entries 1-42 (lane 5 = entries 28-39, cherry-picked
 #   c47e5627a0..01302d4af5 with ZERO conflicts; 40-41 = LATE tier: PORT #28690 continuous batching v0
-#   + LOCAL H3 TeaCache fix, cherry-picked dh3-first — both touch runtime/cache/teacache.py).
-#   Remaining to stack: LT.2 (port analysis underway) + OPTIONAL tier.
+#   + LOCAL H3 TeaCache fix, cherry-picked dh3-first — both touch runtime/cache/teacache.py;
+#   42 = LT tier final: PORT #33036 overlap declared-parallel conditioning stages, default-serial/inert).
+#   Remaining to stack: OPTIONAL tier only.
 #
 # branch : diffusion-stack  (fork remote: origin = https://github.com/detain/sglang.git)
 # base   : 3fff5a298a (fork main == upstream sgl-project/sglang main, synced 2026-10-28)
-# tip    : 95628d440e (entry 40; entry 41 = 775edafa05 applied first) + docs — 41 entries
+# tip    : 1be1b4f563 (entry 42 = LT.2 PORT #33036 DRAFT; 40-41 landed first as 95628d440e/775edafa05) + docs — 42 entries
 # hardware: 4x NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition, SM120, 96 GB, PCIe-only (no NVLink/P2P)
 # models : FLUX.1-dev, FLUX.2-dev, Qwen-Image, SD3.5-large, Wan2.2-T2V-A14B, LTX-Video, LTX-2.5
 # provenance: entries 1-27 are lanes 1-4 of the wanted_stack.txt plan, cherry-picked (no -x; each commit's
@@ -51,6 +52,21 @@
 #     #46319's multi-shard correctness intent survives (later-shard-wins replicates the state_dict
 #     `.update` order #46319's merge established). Both PRs are still open upstream; when either (or
 #     both) lands upstream, re-examine these two entries and collapse ours to match the merged shape.
+#   * Entry [42] (#33036) is an upstream OPEN DRAFT — expect revision. Re-pull posture: the port is a
+#     faithful per-hunk transplant (residual parallel_executor.py diff vs PR head = the 4 R1 weave
+#     points only); re-pull the PR head before any release merge and re-run the LT.2 sweeps; if the
+#     draft force-pushes, re-audit steps 8/10 (executor weave + ti2i/ti2v restructure) first.
+#   * Entry [42] R3 OWED: TextEncodingStage.concurrency_safe=True predates base's #40470 conditioning
+#     cache — HUMAN SIGN-OFF owed that conditioning_cache_group reads/writes can't race an overlapping
+#     ImageVAE sibling. Integration audit found NO race path (ImageVAEEncodingStage has zero cache
+#     touches; members write disjoint request fields; the cache group is a caller-thread contextvar
+#     the parallel path never wraps), but it was never exercised on GPU — treat as unconfirmed
+#     until the joint E2E below runs.
+#   * Entry [42] OWED (GPU window): joint E2E [40]-continuous batching x --parallel-stage-execution
+#     auto (overlap only fires for single-Req payloads, so interaction is via scheduler residency
+#     state, not the parallel path — still owed for safety), plus a serial-vs-auto byte-identical
+#     output check on one I2I model (Flux2 Klein / Qwen Image Edit, low step count). Default `serial`
+#     keeps the entry inert for our served configs until then.
 #
 # ─────────────────────────────────────────────────────────────────────────────
 # STACK ENTRIES (applied in order on top of base; new sha | source sha from commit trailer)
@@ -245,6 +261,31 @@
 #       tests (2 AttributeError + 4 latch/resurrection), all green post-fix; 64 pre-existing tests
 #       identical on both trees. Verify: 5-file suite 70 passed / 0 failed (51 subtests).
 #       Evidence: /tmp/opencode/dh3-report.md.
+#
+# ── LT — final wanted-plan tier (applied 2026-10-28; LT.2 -> [42], last PRIMARY entry) ──
+# [42] 1be1b4f563  PORT PR #33036 (DRAFT)  Overlap declared-parallel conditioning stages (23 files
+#       +1337/−169 | upstream OPEN DRAFT head 12e5682adf on mergebase 1270204d2c; per-hunk port, NOT
+#       a cherry-pick — 40/43 hunks CLEAN/MOVED re-anchored, 0 obsolete). Adds --parallel-stage-
+#       execution {auto|serial}, DEFAULT SERIAL = inert for all currently served configs; benefit is
+#       I2I/I2V low-step single-request latency only (T2V levels are single-member -> serial path).
+#       Machinery: ComposedPipelineBase.add_parallel_stages declaration + _execution_group/
+#       concurrency_safe/may_use_collectives stage contract + ParallelExecutor level-splitter with
+#       stream/thread-pool overlap, collective-order epochs, and offload/collective serial fallbacks.
+#       R1 CRITICAL WEAVE (not in upstream PR): the PR's wholesale main-loop rewrite re-woven onto
+#       this tip's grown loop — parallelism_type -> parallelism_type_for(batch) in _run_stage_by_
+#       paradigm AND the REPLICATED overlap gate; SEQUENCE_PARALLEL_OVER_CFG_RANKS branch carried
+#       through the extracted method (missing it = silent kv-gather regression); broadcast_pyobj
+#       import kept as at tip. Residual merged-vs-PR diff verified = exactly these 4 weave points.
+#       R2: dlate1/#33588 disaggregation growth in composed_pipeline_base (~1123+) untouched. R4:
+#       component_manager applied via git apply -3 conflict-free; #33588 warmup state machine
+#       (_record_warmup_phase_peak/_release_unconsumed_stage_prefetches/keep_ready_after_warmup)
+#       audited intact inside the new begin_use/end_use locked splits. Test mock gained
+#       parallelism_type_for per R1. Verify: py_compile 23/23; ruff CI-gate rules pass all files;
+#       pytest parallel_stage_groups(18)+server_args merged 256P/1F vs base control 237P/1F —
+#       identical failure sets (both /root/.cache-permission env artifacts) => ZERO NEW failures,
+#       19 net-new tests green; extended regression set 105P/1F ≡ control 105P/1F.
+#       Logs: /tmp/opencode/lt2-sweep-merged.txt, lt2-sweep-control.txt. See WATCH: draft re-pull,
+#       R3 conditioning-cache sign-off, joint GPU E2E (continuous x auto) all owed.
 #
 # ── INTEGRATION VERIFICATION (diffusion-stack @ 988a599d41, 2026-10-28) ──
 #   * 27/27 cherry-picks: commit messages byte-identical to lane commits (plain cherry-pick, no -x);

@@ -11,13 +11,13 @@
 # LANES are parallel worktree branches with disjoint file sets; integrate lanes 1->5 in order,
 # then the LATE serial block. As each entry lands, MOVE it to stack.txt and delete it here.
 #
-# STATUS 2026-10-28: LANES 1-5 + LT.1 HAVE LANDED — 41 entries in stack.txt.
+# STATUS 2026-10-28: ALL PRIMARY ENTRIES LANDED (LANES 1-5 + LATE + LT.2) — 42 entries in stack.txt.
 # Lanes 1-4 (entries 1-27): bccd8f5443 + integration fixup 988a599d41 + docs.
 # Lane 5 (entries 28-39): cherry-picked clean onto the lane-4 stack at c47e5627a0, 12/12, ZERO
 # conflicts (tip 01302d4af5; see stack.txt lane-5 verification block). Lane-2's L2.6 went to
 # REJECTED below. LATE (entry 40 = LT.1 #28690 continuous batching, 95628d440e, applied dh3-first
 # behind the H3 teacache fix entry 41, 775edafa05; see stack.txt LATE verification block).
-# REMAINING TO STACK: LT.2 (port analysis underway) + OPTIONAL tier.
+# REMAINING TO STACK: OPTIONAL tier only.
 #
 # ORDERING RATIONALE: within a lane, entries are ordered by file overlap. LATE items touch
 # scheduler.py AND cache/teacache files (now carrying the landed lane-2 scheduler fixes and
@@ -27,8 +27,11 @@
 # (LT.1 PORT #28690 LANDED 2026-10-28 -> stack.txt entry [40], new sha 95628d440e; its integration
 #  exposed the HunyuanImage3 stale-call + reset-resurrection bug -> fixed as stack.txt entry [41],
 #  775edafa05. GPU continuous E2E owed — see stack.txt WATCH.)
-LT.2  PORT PR #33036 overlap declared-parallel conditioning stages [open draft 12e5682adf, --parallel-stage-execution
-      default serial; composes with L4/L5 Wan configs] — PORT ANALYSIS UNDERWAY
+# (LT.2 PORT #33036 LANDED 2026-10-28 -> stack.txt entry [42], new sha 1be1b4f563; per-hunk port of
+#  the OPEN DRAFT head 12e5682adf with the R1 executor-loop weave (parallelism_type_for(batch) +
+#  SEQUENCE_PARALLEL_OVER_CFG_RANKS carried through). Default serial = inert for served configs.
+#  Owed: draft re-pull before release, R3 conditioning-cache concurrency sign-off, joint GPU E2E
+#  continuous x --parallel-stage-execution auto — see stack.txt WATCH.)
 # ==================== OPTIONAL TIER (merge only after primaries validate in a GPU window) ====================
 OPT.1 PR #46438 keep layerwise-offload buffers cached between requests (RTX 5090: -0.42 s/req) [open]
 OPT.2 PR #43339 share layerwise pinned weight stores across co-resident instances [open, +1043, med-high risk]
