@@ -6228,6 +6228,63 @@ STACK, IN BUILD ORDER (bottom first)
       # 2F remain the PRE-EXISTING order-dependent test_mm_process_config
       # pair, reproduced at base in a throwaway worktree.
 
+  admission-2026-10-28 wave (branch port-admission, born 6a726597e6; SIX
+  OPEN ports; MANDATORY after the spec-mamba wave because #46272's
+  schedule_batch/brp hunks land on the #45435/#45472 rewrites -- all six
+  picked with ZERO textual conflicts at the integrator (the two predicted
+  collision spots auto-merged; semantic preservation VERIFIED, see 265);
+  *=ported open PRs):
+
+        265. cf15d20c48  PR #46272 (open, head 4b57095434, ported)  O(B^2) -> O(B): id-keyed sets replace 'in list' scans in filter_batch, the prefill-result loop, and RankMetadata free-page release
+      # https://github.com/sgl-project/sglang/pull/46272 (+6/-3
+      # schedule_batch, +11/-4 batch_result_processor, +8/-2 hf3fs
+      # mini_3fs_metadata_server, +66-line test). THE INTERLOCK POINT:
+      # worker predicted real conflicts vs batch-1's brp/schedule_batch
+      # rewrites; git AUTO-MERGED both files (regions textually disjoint).
+      # SEMANTIC AUDIT AT THE MERGE (integrator, required because an
+      # auto-merge over two rewrites is a hazard class of its own): the
+      # decoding_req_ids lazy id-set REPLACES the req in batch.decoding_reqs
+      # scans only -- batch-1's mamba_untracked_decode_batch_idx gate
+      # (brp x1, schedule_batch x3 references) is BYTE-INVARIANT across the
+      # pick, and the checkpoint/advance branch the set feeds is the SAME
+      # one #45435's gate sits in. Targeted proof: req_pool_indices 3P;
+      # brp-boundary + mixed_mamba_track + mix_with_running +
+      # spec_grammar quartet 24P/17sub.
+
+        266. f5154e1ac5  PR #43484 (open, head a49095ea10, ported, schedule_policy-ONLY)  classic HybridReqToTokenPool finally GETS a mamba slot ledger in PrefillAdder -- with an UPSTREAM PR BUG CAUGHT
+      # https://github.com/sgl-project/sglang/pull/43484 (+72/-6
+      # schedule_policy.py, NO test files in the pick -- our existing
+      # test_prefill_adder/hybrid latch/retry set is the net). WHAT: the
+      # rem_mamba_slots ledger was isinstance-gated to the Unified*Mamba*
+      # allocator, so with HybridReqToTokenPool (the CLASSIC pool)
+      # admission checked NOTHING and long-request concurrency died on the
+      # mamba alloc assert. Mirrors ensure_mamba_capacity's sizing (1
+      # running slot + initial tracking slots per fresh req) and gates
+      # budget_state() on the full per-request charge.
+      # (a) **UPSTREAM PR BUG, ON RECORD**: the PR imports
+      # MAMBA_STATE_PER_REQ_PREFIX_CACHE(_LAZY) from mem_cache.common --
+      # those names exist NOWHERE upstream: the classic branch is a LATENT
+      # ImportError on the PR's own head. The worker substituted the PR
+      # BODY's own math: 1 + pool.mamba_initial_tracking_slots (3/2 slots
+      # non-lazy/lazy). If this ever merges upstream, re-check what the
+      # landed import actually resolves to.
+      # (b) components/mamba.py half FULLY SUPERSUMED, not applied: the
+      # donate-path assert is entries 197/216 (_try_alloc_mamba_slot ->
+      # None + _record_skipped_checkpoint warn-every-1000 + lazy
+      # prefix-lock release -- strictly richer than the PR's skip+warn) and
+      # the COW assert is entry 198 (MambaCowAllocError -> scheduler
+      # NO_TOKEN-retry). OUR retry semantics are KEPT over the PR's
+      # zero_match_result full-recompute.
+      # (c) Pool gate = isinstance(HybridReqToTokenPool) (like
+      # ensure_mamba_capacity), NOT the PR's hasattr -- hasattr makes our
+      # strict MagicMock stubs fabricate a ledger: 32 test mis-fires
+      # triaged by the worker.
+      # (d) Classic pool charged in a DEDICATED slot space
+      # (_mamba_slot_charge_for_req) with commit-path DEBIT threading
+      # (host-hit included); the unified path stays byte-for-byte
+      # identical (factor 1, charge == reserve // cost). Re-grounded on
+      # our drifted memory_budget refactor + byte-space mamba_gap_reserve.
+
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
 ==============================================================================
