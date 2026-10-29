@@ -6285,6 +6285,98 @@ STACK, IN BUILD ORDER (bottom first)
       # identical (factor 1, charge == reserve // cost). Re-grounded on
       # our drifted memory_budget refactor + byte-space mamba_gap_reserve.
 
+        267. 15d3ab1711  PR #46496 (OPEN AS DRAFT upstream, head 1947555adf, ported)  new-token ratio KEEPS its floor after a KV-full retraction -- one clamp line, fixes over-admission on unset max_tokens over long context (upstream issue #46495)
+      # https://github.com/sgl-project/sglang/pull/46496 (+3 scheduler.py
+      # clamp+comment; test_scheduler_retract_ratio.py NEW 2P incl. the
+      # floor case; test_scheduler_pause_generation.py stub min=0.0
+      # alignment). ** DRAFT STATUS: the PR is a DRAFT upstream -- treat
+      # the clamp as provisional, re-verify at merge #5 whether upstream
+      # landed it, changed it, or closed it. ** Retracting under an unset
+      # max_tokens over long context made retract_decode's estimate land
+      # under NewTokenRatioTracker.min and RELEASE THE FLOOR exactly when
+      # the pool ran dry.
+
+        268. 3fce5478ee  PR #46643 (open, ported)  THREE admission fixes; the big one is BEHAVIORAL: batch_is_full is now cleared UNCONDITIONALLY every scheduling round -- entry-198's hybrid-SSM reset arm and is_empty arm are strict subsets and are GONE
+      # https://github.com/sgl-project/sglang/pull/46643 (8 files,
+      # +66/-42). (1) a continuation chunk can no longer ask alloc_extend
+      # for more KV than is free: PrefillBudget.available_chunk_tokens caps
+      # by real free KV minus the one-page over-ask and DEFERS (None)
+      # instead of forcing a full chunk; (2) the single-unfinished-chunk
+      # guard now applies to ALL policies (a second unfinished chunk was
+      # untrackable); (3) batch_is_full cleared unconditionally each round
+      # -- a latched flag was otherwise only cleared when the running batch
+      # SHRANK, stalling the waiting queue until an unrelated finish
+      # (absorbs closed upstream #35609).
+      # ** BEHAVIOR CHANGE, ON RECORD: admission now re-runs EVERY round
+      # for ALL models. OWED AT THE SAME OWED RESTART as entry 263's
+      # measurement: TTFT + starvation-watch the waiting queue under load
+      # (the entry-198 precedent exists for EXACTLY this worry -- per-round
+      # admission interplay). **
+      # Entry-198 SUPERSESSION (partial): the hybrid-SSM per-round reset
+      # arm + is_empty arm REMOVED (subsumed by the unconditional clear);
+      # the two entry-198 gate tests re-pinned _keeps_latch -> _resets_latch
+      # (non-hybrid now retries every round too); the mamba-arm and
+      # COW-recovery cases pass UNCHANGED -- entry 198's NO_TOKEN-retry
+      # semantics are NOT touched.
+      # DEVIATIONS: the PR's new test_scheduler_batch_is_full_latch.py NOT
+      # imported (ours exists from the entry-222 wave with fork stubs --
+      # kept, stale #37612-arm comment refreshed); AITER backend hunk +
+      # test_aiter_attention_backend_handler.py SKIPPED per rule (ROCm);
+      # test_prefill_memory_budget import hunk conflicted the worker's way
+      # (tree lacks the upstream ChainAllocator test rework): PrefillBudget
+      # + SWAPrefillBudget UNION, TestContinuingChunkCap verbatim.
+
+        269. 344bbbe039  PR #45607 (open, head 7ba034ad7f, ported)  truncated hybrid-Mamba chunks align to KV PAGES -- a chunk ending inside a page let the mamba checkpoint (token 287) and the radix key (page 272) free the SAME PAGE TWICE (page-64 + QSA is US)
+      # https://github.com/sgl-project/sglang/pull/45607 (+70/-1:
+      # _align_truncated_hybrid_chunk + 3 call positions + 4 new tests in
+      # test_prefill_adder). COMPOSES with entry-177's _align_prefill_chunk
+      # (QSA lcm align): both aligners only SHRINK the chunk end toward a
+      # coarser multiple, applied page-align-first-then-lcm at the
+      # ignore-eos site and page-align at entry-177's position elsewhere.
+      # Deliberately NOT extended to the exact_chunk_fill arm -- upstream
+      # leaves the same shape. Final untruncated tails stay unrestricted.
+
+        270. 26f8b3c0e7  PR #45789 (open, head 0e2097072e, ported)  opt-in SGLANG_SPLIT_PREFILL_AT_MAMBA_FORK ends eligible prefills at the ALIGNED MAMBA FORK so the fork state AND the tail state both reach the cache -- default OFF, byte-identical until armed
+      # https://github.com/sgl-project/sglang/pull/45789 (5 files,
+      # +305/-4; environ.py EnvBool default False; needs extra-buffer
+      # radix strategy + hybrid SSM cache, non-dllm). DEVIATIONS: (i) the
+      # PR's policy-reopening term in the single-unfinished-chunk guard is
+      # a PROVEN NO-OP against #46643's landed unconditional guard --
+      # their test_second_unfinished_chunk_guard_follows_policy_unless_
+      # fork_split re-pinned to ..._is_unconditional; the other 8
+      # fork-matrix cases verbatim; (ii) the fork cut lands AFTER
+      # entry-269's #45607 page-align (both on page multiples, order-safe);
+      # (iii) truncation_align_size threads from scheduler.py into
+      # _mamba_fork_split_len ONLY -- entry-177's _align_prefill_chunk call
+      # keeps its default argument DELIBERATELY, no QSA-continuation drift;
+      # (iv) the PR base's PrefillBootstrapQueue test import does not exist
+      # in our file: resolved to os + environ.envs + policy-enum additions.
+
+      # BATCH-2 BATTERY (integrator, main tree tip 26f8b3c0e7, CVD=9,
+      # per-file; worker numbers REPRODUCED AT THEIR OWN TREES first to
+      # prove method identity: set45607 93P/65sub @c915f29b01 EXACT, trio
+      # 130P/2885S/93sub @16d5dbdcab EXACT, retract+pause 29P/8sub EXACT,
+      # adder+held_row 69P/85sub @8832eae148 EXACT, combo @8832eae148
+      # 1091P/2888S/969sub EXACT). ON THE COMBINED (batch-1+2) TREE:
+      # set45607 102P/90sub = worker-exact 93 + 8 (#45789 fork matrix) + 1
+      # (batch-1's mixed_track merged-form case), +25sub = fork matrix;
+      # trio 144P/2885S/118sub = worker-exact 130 + 4 (#45607) + 8
+      # (#45789) + 1 (#46643) + 1 (batch-1's radix tri-pool case);
+      # retract+pause 29P/8sub EXACT; adder+held_row 69P/85sub EXACT;
+      # combo 1098P/2888S/973sub = worker-exact 1091 + batch-1's managers
+      # delta 7P/4sub. MANAGERS DIR RE-PIN: 988P/2F/3S/904sub (base,
+      # measured at 8b170be3eb) -> 995 (batch-1) -> **1013P/2F/3S/933sub**
+      # (batch-2: +16 seven-file + 2 retract new); the 2F remain the
+      # order-dependent test_mm_process_config pair. NOTE: the worker's
+      # "#46643-tip 993P == stashed-baseline 992P" line does not decompose
+      # onto a fresh-worktree base (988 + retract 2 + req_pool 3 = 993 at
+      # #46643 EXACT; the '992' is stash-measurement noise, not a tree
+      # difference -- managers test content is EMPTY-diff between
+      # 6a726597e6 and 8b170be3eb). GPU DEBT (admission wave):
+      # classic-pool ledger at a REAL HybridReqToTokenPool, fork-split at
+      # real page-64/QSA boundaries, #46643 TTFT re-measure (entry-198
+      # precedent).
+
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
 ==============================================================================
