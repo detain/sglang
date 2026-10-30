@@ -1832,6 +1832,18 @@ macro_rules! tree_core_methods {
                     .map_err(node_access_error)
             }
 
+            /// The parent node's external handle, or None for the root.
+            /// NOT inspection-gated on purpose: `get_parent_node_id` is part of
+            /// the tree-core interface (unified_tree_core_interface.py) with a
+            /// pure-python twin, the python adapter delegates here
+            /// (rust_tree_core/adapter.py), and UnifiedRadixCache's hash-chain
+            /// walk calls it in production. `inspection` is off in release
+            /// builds, so gating it here breaks every non-inspection compile.
+            fn parent_node_id(&self, py: Python<'_>, node_id: NodeId) -> PyResult<Option<NodeId>> {
+                py.detach(|| self.core().parent_node_id(node_id))
+                    .map_err(node_access_error)
+            }
+
             /// The node's last page hash, or None when it was never hashed.
             fn get_last_hash_value(&self, py: Python<'_>, node_id: NodeId) -> PyResult<Option<String>> {
                 py.detach(|| self.core().get_last_hash_value(node_id))
@@ -2315,12 +2327,6 @@ macro_rules! tree_core_methods {
         impl<K: ChildKeyType + Send + Sync> TreeCoreBinding<$core<K>> {
             fn inspect_contains_node(&self, py: Python<'_>, node_id: NodeId) -> bool {
                 py.detach(|| self.core().inspect_contains_node(node_id))
-            }
-
-            /// The parent node's external handle, or None for the root.
-            fn parent_node_id(&self, py: Python<'_>, node_id: NodeId) -> PyResult<Option<NodeId>> {
-                py.detach(|| self.core().parent_node_id(node_id))
-                    .map_err(node_access_error)
             }
 
             fn inspect_get_child_node_ids(&self, py: Python<'_>, node_id: NodeId) -> PyResult<Vec<NodeId>> {

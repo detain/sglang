@@ -6578,16 +6578,23 @@ fn write_back_reinsert_defers_swa_backup_while_write_through_publishes() {
         .expect("live test node");
 
     let result = tc.insert(&insert_params_swa(&key, &[20, 21], 0, 0));
+    // Write-back defers the SWA backup: no BackupKV action at all. This test was
+    // replanted from the pre-merge `CacheAction` ENUM architecture, where the
+    // check read `matches!(action, CacheAction::BackupKV(_))`; post-merge
+    // cache_actions holds TRAIT OBJECTS, so the file-wide idiom is
+    // as_any().is::<T>() -- the same form the filter_map below uses and
+    // tests/components/mamba.rs uses three times. B3-7 converted the filter_map
+    // but not this assert, and left the converted expression as an orphan line
+    // below, which is what the test target then failed to compile on.
     assert!(
         !result
             .cache_actions
             .iter()
-            .any(|action| matches!(action, CacheAction::BackupKV(_)))
+            .any(|action| action.as_any().is::<BackupKV>())
     );
 
     tc.is_write_back = false;
     let result = tc.insert(&insert_params_swa(&key, &[20, 21], 0, 0));
-            .any(|action| action.as_any().is::<BackupKV>())
     let backups: Vec<_> = result
         .cache_actions
         .iter()

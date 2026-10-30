@@ -2112,6 +2112,14 @@ impl<K: ChildKeyType> UnifiedTreeCore<K> {
             swa_evicted_seqlen: state.swa_evicted_seqlen,
             swa_branching_seqlen: state.swa_branching_seqlen,
             mamba_value: state.mamba_value.as_ref().map(Tensor::shallow_clone),
+            // Paired with the mamba_value copied straight above: it records where
+            // THAT donated state was produced, so the entry-196/#38815 alignment
+            // guard (components/mamba.rs) can decline to stamp a later state onto
+            // an earlier, truncated key. Omitting it here left the field unset at
+            // compile time; filling None instead would have silently disarmed the
+            // guard for this walk step. Same propagation as the two sibling
+            // params sites in this function family.
+            mamba_value_seqlen: state.mamba_value_seqlen,
             inserted_len: state.inserted_len,
             priority: state.priority,
             track_adopted_ranges: state.track_adopted_ranges,
