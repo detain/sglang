@@ -1,6 +1,6 @@
 # stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
 #
-# STACK: qwennext-stack-318-2026-10-29 (main @ 2a6c204570, MERGE #5 TAKEN + ALL RE-PLANT BATCHES LANDED -- entries 310-315; ** POST-MERGE PORT QUEUE RESUMED: entries 316-318 ** -- origin/main had drifted to 2c6b95e035 = +1,154 since 12dc623102 by the pass-4 triage read)
+# STACK: qwennext-stack-319-2026-10-30 (main @ 2a6c204570, MERGE #5 TAKEN + ALL RE-PLANT BATCHES LANDED -- entries 310-315; post-merge port queue entries 316-318; ** 319 = MERGE-5 CARGO REPAIR: the era's 'cargo UNVERIFIED-debt' CLOSED AT A FIRST-COMPILING SEAT -- 3 B3-7 re-plant breaks fixed, TRUE RUST PIN 943P/0F/1-ignored, OPERATOR RELEASE BUILD GREEN ** -- origin/main had drifted to 2c6b95e035 = +1,154 since 12dc623102 by the pass-4 triage read)
 #   ** MERGE-ERA-CLOSED 2026-10-29 (session 3 / B6): B1-B6 ALL CLOSED, B2/B3/B4/B5 marker
 census ZERO, damage driven to env-class + documented survivors; the branch is BOOT-READY
 pending OPERATOR execution of the BOOT_DELTA first-boot choreography (see CAVEATS top
@@ -60,7 +60,9 @@ current-state bullet + entry 315). **
 #   +b12xgemm-2026-10-29(pr45391*)
 #   +idxbytes-2026-10-29(pr44462*)
 #   +hicliveness-2026-10-29(pr44342*×4)
-#   (entries 1-318; *=squash/ported, see commit messages. 10-10 added
+#   +merge5-repair-2026-10-30(cargo repair: parent_node_id cfg-placement +
+#    mamba_value_seqlen + test-target unbreak -- no upstream PR, see entry 319)
+#   (entries 1-319; *=squash/ported, see commit messages. 10-10 added
 #   entries 157-161: parser batch A (Qwen3-Coder tool-call fixes + sampling
 #   upper bounds), on top of upstream merge #3 (see synced). 10-10b added
 #   entries 162-166: SM120 batch B (#42863 PCIe-IPC vocab gathers, #42566
@@ -298,7 +300,13 @@ current-state bullet + entry 315). **
 #   make --enable-mixed-chunk safe and fix the QSA verify ring collision.
 #   * = picked with local modifications, see the entries)
 # branch : qwennext-stack
-# tip    : b7c656f69f   (post-merge waves: 81cb12f2b0 #45391 / cdd568bd6c #44462 / 29cb4fab8d+45da19f105+c50b262e23+b7c656f69f = the four #44342 commits; the stack.txt commits sit above it. Supersedes the merge-era tip line 5cde7a5ede -- B6's code commits f5c8a9ea23/244a992339/a4b8e21c6d sat ABOVE that value already, so read the synced block for merge history and this line for the live code tip.)
+# tip    : 065fdcdf33   (MERGE-5 CARGO REPAIR, rust-only: 3 files +29/-8, the first
+#          commit in the merge era VERIFIED by an actual cargo build -- check/clippy/
+#          fmt/test + the operator's release cdylib command all green; sits above the
+#          pass-4 code tip b7c656f69f, whose stack.txt docs commits sit above it too.
+#          Supersedes the header tip line b7c656f69f and, before it, the merge-era
+#          5cde7a5ede -- read the synced block for merge history and this line for the
+#          live code tip.)
 # base   : upstream sgl-project/sglang main @ 7ad55e4386 ([HiCache] TMA-staged
 #          host<->device KV transfer kernel (sm_90+) (#40278), 2026-09-21)
 # synced : upstream main @ f209e67767 (#39643, 2026-09-28) MERGED IN as
@@ -447,6 +455,94 @@ current-state bullet + entry 315). **
 #          the ban itself STAYS until sessions 2B/3 + operator judgment.]
 #          [B4 LANDED -- entry 312; managers+spec damage closed to ENV-class
 #          residue; the ban STAYS (B2/B5/B6 + operator judgment remain).]
+# updated: 2026-10-30 (entry 319): ** MERGE-5 CARGO REPAIR -- THE ERA'S
+#          "cargo UNVERIFIED-DEBT" IS CLOSED, AND IT WAS NEVER AN ENVIRONMENT
+#          GAP ** (1 commit, rust-only, 3 files +29/-8, no upstream PR; entry
+#          319 @ code tip 065fdcdf33). The operator's release build was the
+#          FIRST in the merge era to get past torch-sys and it landed three
+#          B3-7 re-plant compile errors (entry 311's rust cluster 7a28dc9e4a),
+#          all reproduced at this seat BEFORE editing: (1) ** parent_node_id was
+#          not missing, it was MIS-GATED ** -- B3-7 replanted the binding
+#          delegate inside `#[cfg(feature = "inspection")]` while its pyclass
+#          wrapper is unconditional and the CORE method (unified_tree_core.rs:
+#          4283, try_parent-based, Ok(None) on a root) was already correct;
+#          four evidence lines settled the direction of the fix -- the method is
+#          FORK-ONLY (absent at the merge-#5 base ae6ee527ba, so no upstream
+#          rename existed to chase), the fork's own pre-merge copy had it in the
+#          ALWAYS-ON impl, the shipped .so publishes it in a NON-inspection
+#          build, and the caller is PRODUCTION (unified_radix_cache.py:4388-4408
+#          hash-chain walk -> adapter.py:1082; it is an @abstractmethod of the
+#          tree-core interface with a pure-python twin, so both backends must
+#          serve it) -- GATING THE WRAPPER WOULD HAVE COMPILED AND THEN BROKEN
+#          PRODUCERS AT RUNTIME, which is why the delegate was MOVED instead.
+#          (2) ** mamba_value_seqlen was genuinely omitted ** at the upstream-new
+#          insert_overlap_step_ site, which copies 12 of 13 fields from the walk
+#          state; filled with `state.mamba_value_seqlen` matching BOTH sibling
+#          sites, because ** None would have compiled and silently disarmed the
+#          entry-196/#38815 guard ** that declines to stamp a donated mamba state
+#          onto a shorter/truncated key (consumer components/mamba.rs:174-183) --
+#          with the honest severity note that this site's params reaches only
+#          `update_component_on_insert_overlap`, which mamba does NOT override,
+#          so today the omission is compile-breaking and LATENT, not an
+#          observable misstamp. (3) ** FOUND BY VERIFYING, UNREPORTED: THE CRATE'S
+#          TEST TARGET DID NOT COMPILE AT ALL ** -- a half-converted replant left
+#          swa.rs's write-back/write-through test on the RETIRED `CacheAction`
+#          ENUM (out of scope) plus a stray orphan `.any(...)` line; converted to
+#          the file-wide trait-object idiom (as_any().is::<BackupKV>(), used 3x
+#          in mamba.rs and by the filter_map just below) and the orphan removed,
+#          with the ORIGINAL INTENT taken from the authority version a7d333d771
+#          (#44800). ** NO TEST WEAKENED, SPLIT OR #[ignore]D. **
+#          ** THE REAL REASON THIS STAYED OPEN ALL ERA, NOW ON RECORD: ** the
+#          documented blocker -- "tch 0.24.0's C++ shim fails even with LIBTORCH =
+#          seat gap" -- was ** A MISSING ENV VAR, NOT AN IMPOSSIBLE ENVIRONMENT **:
+#          the crate SHIPS torch_compat.h (57 lines) exactly to absorb tch 0.24's
+#          removed align_as/align_tensors (torch 2.13+) and cholesky/qr aliases
+#          (2.14; our venv is 2.14.1+cu130), and the README pairs it in CXXFLAGS.
+#          REQUIRED: LIBTORCH_USE_PYTORCH=1 LIBTORCH_BYPASS_VERSION_CHECK=1
+#          CXXFLAGS="-std=c++20 -include <crate>/torch_compat.h"
+#          LD_LIBRARY_PATH=<torch pkg>/lib. ** Sourcing the venv is NOT enough
+#          (its activate exports neither LIBTORCH nor LD_LIBRARY_PATH) and the
+#          path in the request, /home/my/.sglang/.venv, DOES NOT EXIST here
+#          (readlink -f merely canonicalises a string -- verified with test -e);
+#          the only venv is /home/my/sglang/.venv, which was READ-FROM, NEVER
+#          WRITTEN. Also dismissed with evidence: `nvm use 24` -- ** no build.rs
+#          exists anywhere under rust/ **, so nothing in this build touches npm.
+#          VERIFICATION ACTUALS (executed, not carried): cargo check prod
+#          features ** 3 errors -> exit 0 **; check WITH inspection ** exit 0 **
+#          (no duplicate definition); clippy clean; ** cargo fmt --check rc=0
+#          (the crate IS fmt-gated -- and a formatter-dragged 717-line churn was
+#          CAUGHT, REVERTED and re-applied by hand to +29/-8, a lesson for every
+#          future rust edit in this repo) **; ** cargo test = 944 collected ->
+#          943 PASSED / 0 FAILED / 1 IGNORED, re-confirmed after `touch` so the
+#          test target provably rebuilt ** -- that 1 ignore is UPSTREAM'S OWN
+#          (a77283fb02/#37290, insert_host_panics_on_a_colliding_page, documented
+#          "unconstructible today ... defensive-only"), NOT a suppressed failure;
+#          ** THE TRUE POST-MERGE RUST PIN IS 943P/0F/1-ignored, REPLACING THE
+#          UNMEASURED "932P/0F" ** that this file quotes in ~8 places (932 was the
+#          PRE-merge fork count; the merge + B2-B5 re-homes grew the suite to 944).
+#          ** THE OPERATOR'S EXACT COMMAND RUN VERBATIM: cargo rustc --lib
+#          --manifest-path ../rust/sglang-radix-tree/Cargo.toml --release
+#          --features 'pyo3/extension-module python-extension' --locked
+#          --crate-type cdylib -> exit 0, release Finished in 55.20s ** (and green
+#          again from the other admissible CWD, 51.97s); artifact
+#          target/release/libmem_cache.so 3,321,640 bytes, embedding
+#          `parent_node_id` and NOT `inspect_contains_node` -- reproducing the
+#          shipped binary's contract. Forward note, NOT re-run or re-pinned here:
+#          extension.py loads the binding AT MODULE IMPORT via loader.py's
+#          `cargo build --release --locked --package sglang-radix-tree --features
+#          python-extension` (the non-inspection set that would not compile; that
+#          command now exits 0 in 9.65s), so the failures the ledger filed as
+#          "cargo class" -- ** mem_cache dir's 2 collection errors, draft_gate 4F,
+#          page_interleave 17F ("_1_rust cargo class EXACTLY"), kv-cache-budget 1
+#          cargo-F ** -- ARE EXPECTED TO MOVE on the next full python battery run.
+#          LIMIT STATED SO NOBODY OVER-READS IT: ** the dir's 153F ARE NOT ALL
+#          CARGO ** (the balance is the device-gated class, untouched here), so
+#          1892P/153F/2err SUPERSEDES ON RE-MEASUREMENT, not by inference; and a
+#          green unit suite does NOT certify L3 rust BEHAVIOR on a boot -- that
+#          trust-check stays open with the restart watch. Status guard honoured:
+#          tree was clean (0 modifications) before editing, target/ artifacts left
+#          alone, nothing installed, no maturin publish, no git clean, NOTHING
+#          PUSHED.
 # updated: 2026-10-29 (entries 316-318): ** POST-MERGE PORT QUEUE RESUMED
 #          AND THE FIRST THREE STAGED WAVES LANDED -- 6 commits, ZERO
 #          CONFLICTS ** (all three branches born at EXACTLY the settled
@@ -8877,6 +8973,17 @@ STACK, IN BUILD ORDER (bottom first)
       #   identical at the pre-merge tip): the 932P/0F pin STILL CARRIES
       #   UNVERIFIED -- run cargo test -p sglang-radix-tree on a seat with a
       #   matching libtorch (session 3) **);
+      #   **[SUPERSEDED 2026-10-30 AT 065fdcdf33 -- CLOSED, AND THE "SEAT GAP"
+      #   WAS A MISDIAGNOSIS: it was a MISSING ENV VAR, NOT AN IMPOSSIBLE
+      #   ENVIRONMENT. ** The C++ shim failure is exactly what the crate's own
+      #   `torch_compat.h` exists to absorb -- it stubs tch 0.24's
+      #   `align_as`/`align_tensors` (removed in torch 2.13+) and the
+      #   `cholesky`/`qr` aliases (removed in 2.14; our venv IS 2.14.1), and the
+      #   README pairs it as CXXFLAGS="-std=c++20 -include <crate>/
+      #   torch_compat.h". With the FULL documented env the crate checks,
+      #   clippies, fmts, TESTS (943P/0F/1 upstream-ignored) and links the
+      #   release cdylib on THIS box. Real state of that debt: THREE B3-7
+      #   re-plant compile breaks (entry 319), now repaired. **]
       #   B3-8 dfe636dcb9 memory_pool (THE LAST B3 MARKER; 18 fused
       #   store_cache_fp8 + eager saturate + _safe_zeros + SM89 gate; 192
       #   capture guards x2; **203 lossless ring PLANTED IN FULL + CPU-
@@ -9369,6 +9476,9 @@ STACK, IN BUILD ORDER (bottom first)
       #   unverified from this seat's torch-sys/libtorch gap -- run
       #   `cargo test -p sglang-radix-tree` on a matching-libtorch seat;
       #   FIRST thing to trust-check re L3 rust behavior on the boot).
+      #   **[CLOSED 2026-10-30 AT 065fdcdf33: 943P/0F/1 ignored (upstream's
+      #   own); the "seat gap" was the README's CXXFLAGS/torch_compat.h env
+      #   being left out -- see entry 319 and the CAVEATS cargo bullet.]**
       # (4) MARKER CENSUS: tree-wide grep TODO(merge5): B2/B3/B4/B5/B6 =
       #   ** ZERO ** each. SURVIVORS: exactly the 15 '(batch B1)' markers,
       #   ALL in python/sglang/multimodal_gen/** (the 13 files named below),
@@ -9946,6 +10056,202 @@ STACK, IN BUILD ORDER (bottom first)
       # + device-gated classes) inherited at the base -- this pass neither
       # caused nor cured them; the set-identity check above is the proof.
 
+
+  merge5-repair-2026-10-30 wave (no branch, no upstream PR -- an
+  INTEGRATOR REPAIR at the operator's request, ONE commit; the era's cargo
+  verification debt converting into three real compile errors at the first
+  seat able to build the crate):
+
+        319. 065fdcdf33  MERGE-5 REPAIR (fork-side; no PR -- 3 rust source files, +29/-8)  restore parent_node_id's binding delegate + mamba_value_seqlen at an upstream-new InsertParams site + unbreak the crate's TEST target -- ** B3-7's rust re-plant (entry 311 cluster 7a28dc9e4a) could not compile, and the era's "cargo UNVERIFIED" marker was concealing three real breaks, not an environment gap **
+      # ** HOW IT SURFACED: ** the operator ran a real cargo/maturin-style
+      # RELEASE BUILD at /home/my/sglang/sglang -- the FIRST seat in the whole
+      # merge era to get past torch-sys -- and got error[E0599] x2 +
+      # error[E0063] x1 (their verbatim lines reproduced at this seat BEFORE
+      # any edit, same three, same lines: python_bindings.rs:3253 twice via the
+      # tree_core_binding! macro over both key types Vec<i64> and
+      # Vec<(i64,i64)>, plus unified_tree_core.rs:2105). This is entry 310's /
+      # CAVEATS' "cargo verification UNVERIFIED-debt" materializing exactly as
+      # feared -- B3-7 was landed "CPU-verified-clean; compilation = ENV DEBT".
+      # STATUS GUARD FIRST (the operator had been building in this tree):
+      # `git status` = ** 0 modifications ** (target/ artifacts are ignored and
+      # were left alone), so the repair proceeded without clobbering anything;
+      # the shipped extension binary and every python file are untouched by the
+      # commit.
+      # ** ROOT CAUSE 1 -- parent_node_id: WRONG `#[cfg]` BLOCK, NOT A MISSING
+      # METHOD (the distinction decides the fix). ** The core side was already
+      # present and CORRECT: unified_tree_core.rs:4283 resolves the external
+      # id, then `arena.node(id).try_parent().map(|p| arena.node(p).id)` ->
+      # ** Ok(None) on a root **, which is precisely the interface contract
+      # ("The parent node id, or None for the root") and its pure-python twin
+      # (unified_cache/unified_tree_core.py:583), and it deliberately uses
+      # try_parent() rather than node.rs:219's parent(), which PANICS on a root.
+      # The break is placement: B3-7 replanted the BINDING delegate
+      # TreeCoreBinding::parent_node_id inside the ** `#[cfg(feature =
+      # "inspection")]` ** impl (python_bindings.rs:2314-2324) while the pyclass
+      # wrapper method that hands it to Python (3252, emitted per key type by
+      # tree_core_binding!) is UNCONDITIONAL -- so any build WITHOUT inspection
+      # (i.e. every release/production build; the README states "Production
+      # wheels do not enable it") cannot compile. FOUR INDEPENDENT EVIDENCE
+      # LINES THAT SETTLE WHICH SIDE IS AUTHORITATIVE (i.e. move it, rather than
+      # gate the wrapper -- gating the wrapper would have compiled and then
+      # BROKEN PRODUCTION AT RUNTIME):
+      #   (i)  `git log -S parent_node_id -- rust/sglang-radix-tree` returns
+      #        only a77283fb02/7a464a7014 for the CORE method; the method does
+      #        ** NOT EXIST AT THE MERGE #5 BASE (ae6ee527ba) AT ALL ** -- it is
+      #        FORK-ONLY, so there was no upstream rename to chase and nothing to
+      #        lift from a replant snapshot;
+      #   (ii) the fork's own pre-merge copy (2f31a7e3fc, entry-199 era) had the
+      #        delegate in the ** ALWAYS-ON ** impl (nearest impl header line
+      #        1030; the two `cfg(inspection)` markers sit far above at 328/482)
+      #        -- B3-7 dropped it into the wrong block during re-plant;
+      #   (iii) the shipped extension binary (rust_tree_core/mem_cache...so,
+      #        Oct 28) ** EXPOSES `parent_node_id` AND CONTAINS NO
+      #        `inspect_contains_node` ** -- a non-inspection build that
+      #        published the method, which is the runtime contract to preserve;
+      #   (iv) the consumer is PRODUCTION: unified_radix_cache.py:4388/4393/4408
+      #        (the hash-chain walk) -> rust_tree_core/adapter.py:1082
+      #        get_parent_node_id -> binding.parent_node_id, and the python name
+      #        differs from the rust one BY DESIGN; it is an ** @abstractmethod
+      #        of the tree-core INTERFACE **
+      #        (unified_cache/unified_tree_core_interface.py:226) so BOTH
+      #        backends must serve it. B3-7's other half of this same seam -- the
+      #        adapter.py `inspect_get_parent_node_id` kwarg fix -- is the
+      #        sibling it DID get right.
+      # FIX: delegate moved to the always-on accessor impl beside its siblings
+      # node_backuped (1824) / is_root (1830), carrying a comment that states
+      # WHY it must never be inspection-gated. Post-fix proof mirrors (iii):
+      # the freshly built NON-inspection cdylib again embeds `parent_node_id`
+      # (1) and `inspect_contains_node` (0).
+      # ** ROOT CAUSE 2 -- mamba_value_seqlen: a truly OMITTED FIELD, with the
+      # semantics read from the guard it feeds rather than guessed. **
+      # insert_overlap_step_ (unified_tree_core.rs:2105) is an upstream-new / B3
+      # re-plant InsertParams site that copies ** 12 of the struct's 13 fields **
+      # from the walk state and drops exactly this one. `state.mamba_value_seqlen`
+      # is the only self-consistent fill and MATCHES BOTH SIBLING SITES VERBATIM
+      # (2058 insert_walk_step_, 2251 insert_commit_step_; the field is seeded
+      # onto the walk state at 1891 from the caller's params). WHY NOT `None` --
+      # ** `None` COMPILES AND SILENTLY DISARMS THE ENTRY-196 / #38815 ALIGNMENT
+      # GUARD **: the consumer components/mamba.rs:174-183 returns EARLY (declines
+      # to stamp) whenever `params.mamba_value_seqlen` is Some(seqlen) and
+      # `key.atom_len() + K::IS_BIGRAM != seqlen`, i.e. "the donated mamba state
+      # was produced at position X; a leaf truncated to a shorter component
+      # boundary (e.g. the SWA branch) is not X, and stamping it would attach a
+      # LATER state to an EARLIER key". Since this params carries
+      # `state.mamba_value` on the same line, pairing a real donated tensor with
+      # a None seqlen would be asserting it was produced nowhere.
+      # CALL-CHAIN HONESTY (measured, not asserted): at THIS site the params is
+      # passed ONLY to `update_component_on_insert_overlap`, which ** mamba does
+      # NOT override ** (only components/swa.rs:436 does, and it reads
+      # prev_prefix_len / swa_evicted_seqlen), and the binding is not reused
+      # further in the function -- so today the omission is COMPILE-BREAKING and
+      # LATENT-semantically rather than an already-observable misstamp. Fixed at
+      # the root anyway; recorded so nobody over-states the severity.
+      # ** ROOT CAUSE 3 -- FOUND BY VERIFYING, NOT REPORTED BY THE OPERATOR: THE
+      # CRATE'S TEST TARGET DID NOT COMPILE EITHER, which is why the 932P-era pin
+      # could never be checked. ** src/tests/components/swa.rs::
+      # write_back_reinsert_defers_swa_backup_while_write_through_publishes
+      # carried a HALF-CONVERTED replant: an
+      # `assert!(!...any(|a| matches!(a, CacheAction::BackupKV(_))))` written for
+      # the RETIRED `CacheAction` ** ENUM ** architecture (CacheAction is not in
+      # scope here -> E0433, "a type alias with a similar name exists") PLUS a
+      # ** STRAY ORPHAN LINE ** `.any(|action| action.as_any().is::<BackupKV>())`
+      # sitting between two statements with no head (syntax error E-parsed). The
+      # two idioms appear EXACTLY ONCE EACH IN THE WHOLE FILE, which is how I knew
+      # the orphan was the intended replacement for the stale assert and not
+      # something new. AUTHORITY = a7d333d771 (#44800), whose version of this test
+      # proves the INTENT: write-back branch asserts ** no ** BackupKV; then
+      # `is_write_back=false`, downcast-collect, `assert_eq!(backups,
+      # vec![vec![leaf]])`. FIX: the assert converted to the file-wide TRAIT-
+      # OBJECT idiom `as_any().is::<BackupKV>()` (used verbatim 3x in
+      # tests/components/mamba.rs and by the filter_map four lines below) and the
+      # orphan removed. ** NO TEST WAS WEAKENED, SPLIT OR #[ignore]D -- the
+      # assertion's meaning is unchanged, only its expression. **
+      # *** HOW TO BUILD THIS CRATE ON THIS BOX -- THE SINGLE MOST VALUABLE
+      # OUTCOME, AND A CORRECTION TO THE ERA'S OWN DIAGNOSIS. *** The recorded
+      # reason this debt stayed open was a "seat gap": "with LIBTORCH pointed at
+      # the venv torch 2.14.1, tch 0.24.0's C++ shim fails ... byte-identical at
+      # the pre-merge tip". ** THAT WAS A MISSING ENV VAR, NOT AN IMPOSSIBLE
+      # ENVIRONMENT. ** The crate SHIPS `torch_compat.h` (57 lines) FOR EXACTLY
+      # THIS: it neutralises tch 0.24's `align_as`/`align_tensors` (removed in
+      # torch 2.13+) and stubs the `cholesky`/`qr` aliases (removed in 2.14 -- our
+      # venv is torch 2.14.1+cu130), and the README pairs it in CXXFLAGS. REQUIRED
+      # ENV (the README recipe; nothing installed, no venv modified, read-only
+      # use of the existing one):
+      #   LIBTORCH_USE_PYTORCH=1 LIBTORCH_BYPASS_VERSION_CHECK=1 \
+      #   CXXFLAGS="-std=c++20 -include <crate>/torch_compat.h" \
+      #   LD_LIBRARY_PATH=<torch package>/lib
+      # Without LIBTORCH_USE_PYTORCH, cargo dies in torch-sys's build script
+      # ("Cannot find a libtorch install"). ** The venv's `activate` exports
+      # NEITHER LIBTORCH NOR LD_LIBRARY_PATH (grep count 0), so SOURCING THE VENV
+      # IS NOT SUFFICIENT -- and the path the operator quoted,
+      # /home/my/.sglang/.venv, DOES NOT EXIST on this box (readlink -f only
+      # canonicalises the string; `test -e` = absent); the one venv is
+      # /home/my/sglang/.venv. Also DISMISSED WITH EVIDENCE: `nvm use 24` is
+      # irrelevant here -- ** there is NO build.rs anywhere under rust/ **, so
+      # nothing in this crate's build can touch npm/node. THIS PARAGRAPH IS WHAT
+      # MAKES ALL FUTURE RUST DEBT CHECKABLE.
+      # VERIFICATION ACTUALS (this seat compiled, so every claim below is
+      # executed output, not a carried pin):
+      #   cargo check -p sglang-radix-tree --features python-extension
+      #     -> BEFORE: 3 errors (2x E0599 @3253 + E0063 @2105). AFTER: ** exit 0 **.
+      #   cargo check ... --features 'python-extension inspection' -> ** exit 0 **
+      #     (proves the move created NO duplicate definition under inspection).
+      #   cargo clippy -p sglang-radix-tree --features python-extension -> ** clean **
+      #   cargo fmt --check (in-crate) -> ** rc 0 ** -- the crate IS fmt-gated by
+      #     CI (pr-test-rust.yml / pre-commit rustfmt), so an editor autoformat
+      #     here is a REAL RISK: the first repair pass dragged in ** 717 lines of
+      #     unrelated rustfmt-version churn ** by saving the test file; that was
+      #     REVERTED and the change re-applied by hand, landing at +29/-8 total.
+      #     Lesson kept for the era: edit rust files with a formatter-free path.
+      #   cargo test -p sglang-radix-tree --locked  (dev profile, no --release)
+      #     -> ** 944 collected: 943 PASSED / 0 FAILED / 1 IGNORED ** (re-run
+      #     after `touch src/tests/components/swa.rs` to prove the test target
+      #     REALLY recompiled rather than reporting a stale binary -- it did:
+      #     "Compiling sglang-radix-tree"). ** THIS IS THE TRUE POST-MERGE RUST
+      #     PIN AND IT REPLACES THE UNMEASURED "932P/0F" ** (932 was the pre-merge
+      #     fork number; the merge + B2-B5 re-homes grew the suite to 944). The
+      #     single ignored test is ** upstream's own, pre-merge in origin **
+      #     (a77283fb02 / #37290): insert_host_panics_on_a_colliding_page,
+      #     documented in-file "TODO: unconstructible today -- the insert_host
+      #     walk ... follows any child on the suffix page instead of breaking at a
+      #     dead node, so the add path never sees an occupied page; the assert is
+      #     defensive-only". NOT introduced by this repair, NOT a suppressed
+      #     failure.
+      #   ** THE OPERATOR'S EXACT COMMAND, RUN VERBATIM, GREEN: **
+      #     cargo rustc --lib --manifest-path ../rust/sglang-radix-tree/Cargo.toml
+      #       --release --features 'pyo3/extension-module python-extension'
+      #       --locked --crate-type cdylib
+      #     -> ** exit 0, "Finished `release` profile [optimized] target(s) in
+      #     55.20s" **; re-run from the other CWD the relative manifest path
+      #     admits (rust/ instead of python/): ** exit 0, 51.97s **. Artifact
+      #     target/release/libmem_cache.so, 3,321,640 bytes, embedding
+      #     `parent_node_id` and NOT `inspect_contains_node`.
+      #   python-side loader command, verbatim from
+      #   rust_extensions/loader.py:402-407: cargo build --release --locked
+      #   --package sglang-radix-tree --features python-extension -> ** exit 0,
+      #   9.65s ** (from the crate dir; --package needs a workspace cwd, which is
+      #   what the loader supplies).
+      # ** FORWARD NOTE ON THE PYTHON PINS (per instruction: NOT re-run, NOT
+      # re-pinned on this turn): ** rust_tree_core/extension.py executes
+      # `bindings = load_tree_core_extension()` ** AT MODULE IMPORT **, and the
+      # loader builds with the NON-inspection feature set that would not compile
+      # -- therefore the failures the ledger filed as "cargo class" WERE THIS
+      # BREAK and are EXPECTED TO MOVE on the next full python battery run:
+      # ** the mem_cache dir's 2 collection errors, draft_gate's 4F,
+      # page_interleave's 17F (recorded as "_1_rust cargo class EXACTLY"), and
+      # kv-cache-budget's 1 cargo-F **. THE HONEST LIMIT OF THAT CLAIM: ** the
+      # dir's 153F ARE NOT ALL CARGO ** -- the balance is the device-gated class
+      # this repair does not touch, so the 1892P/153F/2err pin SUPERSEDES ON
+      # RE-MEASUREMENT, not by inference. No python suite was re-run here.
+      # DEBT CLOSED: the CAVEATS "CARGO sglang-radix-tree UNVERIFIED-DEBT"
+      # bullet is now ** VERIFIED-AT-065fdcdf33 ** with the counts above, and the
+      # two in-entry mentions (entries 310/311 era) carry dated SUPERSEDED
+      # markers. WHAT THIS DOES NOT CLAIM: it does not certify L3 rust BEHAVIOR
+      # on a boot (a compiled+green unit suite is not an e2e proof) -- the boot-
+      # side trust-check for rust_tree_core stays open with the rest of the
+      # restart watch, and the era's remaining rust-adjacent GPU debt is
+      # unchanged.
+
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
 ==============================================================================
@@ -10455,11 +10761,51 @@ CAVEATS
         verified unmoved)
       fused_moe_triton_config (restored) 2P; hybrid_pool_assembler ** 52P/
         36sub **; page_interleave ** 91P/17F-cargo **; pp_sync_drain ** 4P **
-      CARGO sglang-radix-tree  ** UNVERIFIED-DEBT, EXPLICIT: the 932P/0F
-        pin CARRIES UNMEASURED from this seat (torch-sys/libtorch gap byte-
-        identical pre-AND post-merge); RUN `cargo test -p sglang-radix-tree`
-        ON A MATCHING-LIBTORCH SEAT BEFORE TRUSTING L3 RUST BEHAVIOR ON THE
-        BOOT (B3-7 debt #2, now the merge era's only open verification).
+      CARGO sglang-radix-tree  ** **VERIFIED AT 065fdcdf33 (2026-10-30) --
+        THE MERGE ERA'S ONLY OPEN VERIFICATION DEBT IS NOW CLOSED.** ** TRUE
+        PIN, REPLACING THE UNMEASURED ** 932P/0F **:
+        ** `cargo test -p sglang-radix-tree --locked` (dev profile) =
+        944 collected -> 943 PASSED / 0 FAILED / 1 IGNORED **. That seat had to
+        be reached by REPAIRING the crate first: the operator's release build
+        exposed THREE B3-7 re-plant breaks (entry 319) -- parent_node_id
+        mis-gated behind the inspection feature, mamba_value_seqlen omitted at
+        an upstream-new InsertParams site, and a half-converted replant that
+        left the TEST TARGET non-compiling (so the 932P-era pin was never
+        checkable at all). The 1 ignored test is ** upstream's own pre-merge
+        #[ignore] ** (a77283fb02 / #37290,
+        insert_host_panics_on_a_colliding_page -- documented "unconstructible
+        today ... the assert is defensive-only"); NOTHING was added, weakened or
+        ignored by the repair. Also green at that commit: cargo check under
+        BOTH 'python-extension' and 'python-extension inspection',
+        cargo clippy, cargo fmt --check (rc=0; the crate IS fmt-gated),
+        the OPERATOR'S EXACT cdylib command (exit 0, 55.20s), and the python
+        loader's own build command (exit 0, 9.65s).
+        ** HOW TO BUILD THIS CRATE ON THIS BOX (the ingredient every prior
+        "cargo unverified" note was missing, incl. this era's uncheckable
+        claims): the crate README's env recipe is REQUIRED -- **
+        LIBTORCH_USE_PYTORCH=1 LIBTORCH_BYPASS_VERSION_CHECK=1 CXXFLAGS="-std=
+        c++20 -include <crate>/torch_compat.h" LD_LIBRARY_PATH=<torch pkg>/lib **
+        . Plain cargo dies inside torch-sys's build script ("Cannot find a
+        libtorch install"), and the venv's `activate` exports NEITHER LIBTORCH
+        NOR LD_LIBRARY_PATH -- so activation alone is NOT sufficient; use the
+        README env. (No build.rs exists anywhere under rust/, so the doc's
+        `nvm use 24` frontend habit is IRRELEVANT to this crate -- checked.)
+        ** CARGO-CLASS PYTHON FAILURES ARE NOW EXPECTED TO MOVE (forward note,
+        NOT re-run or re-pinned on the repair turn): **
+        rust_tree_core/extension.py loads `bindings = load_tree_core_extension()`
+        AT MODULE IMPORT and rust_extensions/loader.py:402-407 shells out to
+        `cargo build --release --locked --package sglang-radix-tree --features
+        python-extension` -- the NON-inspection feature set that would not
+        compile. Therefore every failure the ledger attributed to that class was
+        THIS break, not independent env debt: the mem_cache dir's ** 2
+        collection errors **, ** draft_gate's 4F **, page_interleave's ** 17F
+        (recorded as "_1_rust cargo class EXACTLY") **, and kv-cache-budget's **
+        1 cargo-F **. The next full python battery run on a seat that builds the
+        extension should show those resolved -- so ** THE CURRENT MEM_CACHE DIR
+        PIN (153F/2err) AND ITS FRIENDS SUPERSEDE-ON-NEXT-CONTACT, and the
+        REMAINING 153F ARE NOT ALL CARGO **: the balance is the device-gated
+        class, which this repair does not touch. Do not re-pin by inference --
+        re-measure.
       LINT: check_registered_tests / check_no_bare_pytest_main /
         check_no_registered_tests_in_package rc=0 (after the fused_moe_
         config restore + every re-home); ruff F821+E9+format clean on every
