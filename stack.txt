@@ -307,6 +307,14 @@ current-state bullet + entry 315). **
 #          Supersedes the header tip line b7c656f69f and, before it, the merge-era
 #          5cde7a5ede -- read the synced block for merge history and this line for the
 #          live code tip.)
+# HEAD   : ** CODE UNCHANGED AT 065fdcdf33 ** -- the follow-up turn on this same
+#          state is DOCS-ONLY: it MEASURES the repair's python consequences
+#          (mem_cache dir 1892P/153F/2err -> ** 2535P/23F/0 errors **, draft_gate
+#          10P+4F -> 12P/0F, page_interleave 91P/17F -> 108P/0F, budget 17P+1F ->
+#          18P/0F, rust suites 581P/25P/15P/2P all green, all 23 survivors traced
+#          to the DEVICE class) and replaces entry 319's forward note with those
+#          actuals. Header name stays qwennext-stack-319-2026-10-30; entry count
+#          stays 319.
 # base   : upstream sgl-project/sglang main @ 7ad55e4386 ([HiCache] TMA-staged
 #          host<->device KV transfer kernel (sm_90+) (#40278), 2026-09-21)
 # synced : upstream main @ f209e67767 (#39643, 2026-09-28) MERGED IN as
@@ -537,7 +545,9 @@ current-state bullet + entry 315). **
 #          cargo-F ** -- ARE EXPECTED TO MOVE on the next full python battery run.
 #          LIMIT STATED SO NOBODY OVER-READS IT: ** the dir's 153F ARE NOT ALL
 #          CARGO ** (the balance is the device-gated class, untouched here), so
-#          1892P/153F/2err SUPERSEDES ON RE-MEASUREMENT, not by inference; and a
+#          1892P/153F/2err HAS SINCE BEEN RE-MEASURED (see the measured follow-up: dir now
+#          ** 2535P/23F/1448S/4629sub, 0 errors **; all 23 survivors are DEVICE class, none
+#          cargo) -- the hedge below is history; and a
 #          green unit suite does NOT certify L3 rust BEHAVIOR on a boot -- that
 #          trust-check stays open with the restart watch. Status guard honoured:
 #          tree was clean (0 modifications) before editing, target/ artifacts left
@@ -10231,18 +10241,104 @@ STACK, IN BUILD ORDER (bottom first)
       #   --package sglang-radix-tree --features python-extension -> ** exit 0,
       #   9.65s ** (from the crate dir; --package needs a workspace cwd, which is
       #   what the loader supplies).
-      # ** FORWARD NOTE ON THE PYTHON PINS (per instruction: NOT re-run, NOT
-      # re-pinned on this turn): ** rust_tree_core/extension.py executes
-      # `bindings = load_tree_core_extension()` ** AT MODULE IMPORT **, and the
-      # loader builds with the NON-inspection feature set that would not compile
-      # -- therefore the failures the ledger filed as "cargo class" WERE THIS
-      # BREAK and are EXPECTED TO MOVE on the next full python battery run:
-      # ** the mem_cache dir's 2 collection errors, draft_gate's 4F,
-      # page_interleave's 17F (recorded as "_1_rust cargo class EXACTLY"), and
-      # kv-cache-budget's 1 cargo-F **. THE HONEST LIMIT OF THAT CLAIM: ** the
-      # dir's 153F ARE NOT ALL CARGO ** -- the balance is the device-gated class
-      # this repair does not touch, so the 1892P/153F/2err pin SUPERSEDES ON
-      # RE-MEASUREMENT, not by inference. No python suite was re-run here.
+      # ** FORWARD NOTE NOW REPLACED BY MEASUREMENT (follow-up turn, same
+      # code tip 065fdcdf33 -- docs-only; the python consequence of this
+      # repair was RUN, not inferred). EVERY CLAIM BELOW IS EXECUTED OUTPUT
+      # on CVD=9 + prod venv + PYTHONPATH=this tree, base = the ledger's
+      # claimed damage: **
+      #   (1) ** unit/mem_cache DIR (--continue-on-collection-errors):
+      #     claimed-broken ** 1892P/153F/1447S/2 ERRORS/4530sub in 6:0x **
+      #     -> ** MEASURED NOW 2535P / 23F / 1448S / 0 ERRORS / 4629sub in
+      #     1:52 ** (+643P, **-130F, and the 2 collection errors are GONE**),
+      #     with skip +1 and subtests +99. The dir is now ** ERROR-FREE ** and
+      #     ~3.2x FASTER (the old failures repeatedly re-drove a cargo build
+      #     that could not succeed).
+      #     MECHANISM OF THE +643, MEASURED PER FILE: six files in this dir
+      #     import rust_tree_core and now total ** 662 items ** --
+      #     test_rust_tree_core_integration ** 581P/1S/0F ** (the single
+      #     largest contributor; the prompt's "13P-ish per B3" is a SUBSET
+      #     figure, NOT this file's total -- the ledger's own pre-merge
+      #     history for it is 464P/1S -> 456P/1S, and MERGE #5 grew it to 582),
+      #     test_tree_core_registry ** 33P/43sub **, test_rust_tree_core_
+      #     errors ** 25P/0F ** (the "2F+2err class" file),
+      #     test_hicache_mamba_ckpt_pos_fence ** 15P **,
+      #     test_unified_hicache_transfer_lifecycle ** 8P **,
+      #     test_rust_tree_core ** 2P/0F **. Files that could not IMPORT the
+      #     extension errored at collection and contributed NOTHING; files
+      #     that collected but built a rust-backed core at RUN time counted as
+      #     FAILURES -- both populations are now live, which is why passes rise
+      #     by far more than the 130 failures that converted.
+      #   (2) ** draft_gate: claimed 10P + 4F -> MEASURED 12P / 0F (12
+      #     collected, 4 subtests) **. Reconciles exactly: 10 previously
+      #     passing + 2 previously failing nodes = the file's 12; the "4F" were
+      #     sub-failures inside those 2 nodes.
+      #   (3) ** page_interleave_shard: claimed 91P/17F/56sub -> MEASURED
+      #     108P / 0F / 56sub ** -- arithmetic PERFECT (91 + 17 = 108), which
+      #     RETROACTIVELY CONFIRMS the B2-era attribution "17F == the _1_rust
+      #     cargo class EXACTLY" as correct, not guesswork.
+      #   (4) ** kv-cache-budget: claimed 17P + 1 cargo-F -> MEASURED
+      #     test_prefill_memory_budget 18P/0F/7sub ** (17 + 1 = 18, exact
+      #     again). Adjacent controls, unmoved as expected:
+      #     test_kv_cache_configurator_mamba_budget ** 4P/2sub **,
+      #     test_unified_byte_budget_sizing ** 7P/8sub **.
+      #   (5) ** rust-adjacent suites: test_rust_extension.py 15P/0F **
+      #     (the extension/loader suite), plus the per-file rust numbers in
+      #     (1). LINT GATES UNCHANGED: check_registered_tests /
+      #     check_no_bare_pytest_main / check_no_registered_tests_in_package
+      #     ** all rc=0 ** after the repair.
+      # ** CAUSE CLASSIFICATION OF EVERY SURVIVING FAILURE (the part that
+      # CORRECTS MY OWN EARLIER HEDGE). ** My forward note said "the dir's
+      # 153F ARE NOT ALL CARGO -- the balance is the device-gated class"; the
+      # measured truth is that the balance is ** FAR SMALLER THAN IMPLIED: ALL
+      # 23 surviving failures are DEVICE CLASS, ZERO are cargo-class, and there
+      # is NO THIRD CAUSE **. Signatures on the full run: 29 x "RuntimeError:
+      # No CUDA GPUs are available" and 12 x "Exception: retry() exceed maximum
+      # number of retries" -- which are THE SAME CAUSE, because
+      # utils/common.py:3804's retry wrapper is re-raising after N attempts at
+      # work that dies in torch.cuda._lazy_init. Per-node attribution (12
+      # FAILED + 11 SUBFAILED = 23): test_kv_layer_access 5, test_kv_layer_
+      # router 3, test_unified_pricing_property 2 (+2 subTests), test_
+      # decode_retraction_backup 2 -- traced to memory_pool.py:132
+      # `_safe_zeros -> torch.empty(..., device=cuda)` i.e. these tests
+      # allocate a REAL KV pool and CANNOT pass on a GPU-less seat by design --
+      # and test_kv_storage_lifecycle's 9 subTests (chains swa/mamba/tri x
+      # seeds 0/1/2), each independently traced to the same cuda_init failure.
+      # Classified, ** NOT fixed ** (out of scope, and correctly so: these are
+      # honest device failures, not skips to be papered over -- the gate to
+      # make them self-skip on a device-less seat belongs to their owners, and
+      # 12/11 FAILED-vs-SUBFAILED bookkeeping is unchanged in kind).
+      # ** NEW DIR PIN: 2535P / 23F / 1448S / 4629sub / 0 errors ** (the
+      # 1892P/153F/2err figure is SUPERSEDED, and supersession is by
+      # MEASUREMENT now, not by inference).
+      # ** TWO ENV/PROCESS FINDINGS FROM THIS TURN, BOTH WORTH KEEPING: **
+      #   (a) ** THE PYTHON-SIDE LOADER IS FULLY SELF-SUFFICIENT -- IT NEEDS
+      #     NO SHELL ENV AT ALL. ** rust_extensions/torch_build.py
+      #     :27-101 derives everything from the RUNNING INTERPRETER: it POPS
+      #     LIBTORCH_USE_PYTORCH and sets LIBTORCH/LIBTORCH_INCLUDE/
+      #     LIBTORCH_LIB to that torch package, LIBTORCH_BYPASS_VERSION_CHECK=1,
+      #     CXX11 ABI, LD_LIBRARY_PATH, PYO3_PYTHON, CC_SHELL_ESCAPED_FLAGS,
+      #     `-std=c++20` for torch >= 2.12 ** PLUS the torch_compat.h include **
+      #     (so the compat header is not optional on the loader path), and
+      #     RUSTFLAGS rpaths; the fingerprint even hashes the header.
+      #     CONSEQUENCE: entry 319's required-env recipe is for ** HAND-RUN
+      #     cargo ** (my verification commands), and I must NOT be read as
+      #     saying python batteries need that env -- they do not. Which also
+      #     HARDENS THE ROOT-CAUSE VERDICT: the historical "cargo build ...
+      #     exit 101" failures happened WITH a correct environment, so they
+      #     were ** purely the compile break **, not env debt.
+      #   (b) ** TREE-DIRT GUARDS, CHECKED BEFORE THE FIRST RUN AND CLEAN AT
+      #     EXIT: ** the loader builds into `SGLANG_CACHE_DIR/rust_extensions/
+      #     {targets,artifacts,locks}` = ** /home/my/.cache/sglang/...,
+      #     OUTSIDE THE REPO **, so no build can dirty the tree; and the
+      #     in-package artifact is doubly gitignored (rust_tree_core/.gitignore
+      #     `mem_cache.so` + root .gitignore:206 `*.so`) -- only
+      #     __init__.py/adapter.py/extension.py/.gitignore are TRACKED there, and
+      #     no build writes those. The shipped Oct-28 .so was ** NOT touched **
+      #     (mtime unchanged after every run; loader.py:88 documents that
+      #     unverified in-package artifacts are IGNORED in favour of the
+      #     fingerprinted cache, so my source repair correctly bypassed it).
+      #     ** git status = 0 lines at entry and at exit; nothing installed into
+      #     any venv; NOTHING PUSHED. **
       # DEBT CLOSED: the CAVEATS "CARGO sglang-radix-tree UNVERIFIED-DEBT"
       # bullet is now ** VERIFIED-AT-065fdcdf33 ** with the counts above, and the
       # two in-entry mentions (entries 310/311 era) carry dated SUPERSEDED
@@ -10501,7 +10597,7 @@ CAVEATS
           with ImportError: cannot import name STORAGE_SYNC_TIMEOUT_
           DEFAULT_S from cache_controller ** -- a real gate)
         test/registered/unit/mem_cache/ 1885P/153F/1447S/2err/4518sub ->
-          ** 1892P/153F/1447S/2err/4530sub ** -- arithmetic closes EXACTLY
+          ** 1892P/153F/1447S/2err/4530sub ** [**SUPERSEDED BY THE MEASURED FOLLOW-UP AT THE SAME CODE TIP: 2535P/23F/1448S/4629sub, 0 errors**] -- arithmetic closes EXACTLY
           (base + entry 317's +3P/+7sub + entry 318's +4P/+5sub). ** THE
           FAILURE SIDE IS SET-IDENTITY, NOT A COUNT: my tip's 49 distinct
           FAILED node ids == the worker's base-fails.txt set, diff 0 lines.
@@ -10510,7 +10606,7 @@ CAVEATS
           tip. ** The 153F + 2 collection errors are INHERITED post-merge
           CPU-lane debt (cargo-offline + device-gated classes): this pass
           neither caused nor cured them.
-        test_kv_cache_configurator_draft_gate.py ** 10P + 4F, AND THE 4F
+        test_kv_cache_configurator_draft_gate.py ** 10P + 4F [now MEASURED 12P/0F/4sub post-repair], AND THE 4F
           ARE NOW MACHINE-IDENTIFIED: CalledProcessError cargo build
           --release --locked --package sglang-radix-tree --features
           python-extension -> exit 101 / "failed to build
@@ -10790,22 +10886,88 @@ CAVEATS
         NOR LD_LIBRARY_PATH -- so activation alone is NOT sufficient; use the
         README env. (No build.rs exists anywhere under rust/, so the doc's
         `nvm use 24` frontend habit is IRRELEVANT to this crate -- checked.)
-        ** CARGO-CLASS PYTHON FAILURES ARE NOW EXPECTED TO MOVE (forward note,
-        NOT re-run or re-pinned on the repair turn): **
-        rust_tree_core/extension.py loads `bindings = load_tree_core_extension()`
-        AT MODULE IMPORT and rust_extensions/loader.py:402-407 shells out to
-        `cargo build --release --locked --package sglang-radix-tree --features
-        python-extension` -- the NON-inspection feature set that would not
-        compile. Therefore every failure the ledger attributed to that class was
-        THIS break, not independent env debt: the mem_cache dir's ** 2
-        collection errors **, ** draft_gate's 4F **, page_interleave's ** 17F
-        (recorded as "_1_rust cargo class EXACTLY") **, and kv-cache-budget's **
-        1 cargo-F **. The next full python battery run on a seat that builds the
-        extension should show those resolved -- so ** THE CURRENT MEM_CACHE DIR
-        PIN (153F/2err) AND ITS FRIENDS SUPERSEDE-ON-NEXT-CONTACT, and the
-        REMAINING 153F ARE NOT ALL CARGO **: the balance is the device-gated
-        class, which this repair does not touch. Do not re-pin by inference --
-        re-measure.
+        ** CARGO-CLASS PYTHON FAILURES: **MEASURED, NOT INFERRED** (follow-up
+        turn at the SAME code tip 065fdcdf33; docs-only commit). The loader
+        builds the NON-inspection feature set that could not compile, so every
+        failure the ledger filed as "cargo class" WAS this break -- measured
+        after-state, base = the ledger's claimed damage:
+          * ** unit/mem_cache DIR (--continue-on-collection-errors):
+            1892P/153F/1447S/2 ERRORS/4530sub  ->  2535P / 23F / 1448S /
+            0 ERRORS / 4629sub ** (+643P, -130F, BOTH collection errors dead,
+            runtime 6:0x -> 1:52). ** NEW DIR PIN: 2535P/23F/1448S/4629sub,
+            0 errors -- the 1892P/153F/2err figure is SUPERSEDED BY MEASUREMENT,
+            replacing this bullet's earlier "supersede-on-next-contact" hedge. **
+            Jump mechanism, measured per file: the dir's six rust-importing
+            files now total ** 662 items ** -- test_rust_tree_core_integration
+            ** 581P/1S/0F ** (pre-merge ledger history for it was 464P/1S ->
+            456P/1S; MERGE #5 grew the file to 582, so ANY "13P" QUOTE ABOUT IT
+            IS A SUBSET FIGURE, NOT THE FILE), test_tree_core_registry
+            ** 33P/43sub **, test_rust_tree_core_errors ** 25P/0F ** (the old
+            "2F+2err" file), test_hicache_mamba_ckpt_pos_fence ** 15P **,
+            test_unified_hicache_transfer_lifecycle ** 8P **, test_rust_tree_core
+            ** 2P/0F **. Files that could not IMPORT the extension errored at
+            collection and scored NOTHING; files that collected but built a
+            rust-backed core at RUN time scored as FAILURES -- both populations
+            are live now, which is why passes rise far more than the 130
+            failures that converted.
+          * draft_gate ** 10P+4F -> 12P/0F/4sub ** (reconciles: 10 old passes +
+            2 old failing nodes = the file's 12; the "4F" were sub-failures).
+          * page_interleave_shard ** 91P/17F/56sub -> 108P/0F/56sub ** (91+17=108
+            EXACT -- retroactively CONFIRMS the B2-era attribution "17F == the
+            _1_rust cargo class EXACTLY" as measurement, not guesswork).
+          * kv-cache-budget ** 17P+1 cargo-F -> test_prefill_memory_budget
+            18P/0F/7sub ** (17+1=18 exact). Controls unmoved:
+            configurator_mamba_budget 4P/2sub, unified_byte_budget_sizing 7P/8sub.
+          * test_rust_extension.py ** 15P/0F **; check_registered_tests /
+            check_no_bare_pytest_main / check_no_registered_tests_in_package
+            still ** rc=0 ** after the repair.
+        ** CORRECTION TO MY OWN HEDGE, ON THE RECORD: ** the sentence below this
+        block once read "the 153F ARE NOT ALL CARGO -- the balance is the
+        device-gated class", which OVER-STATED THE RESIDUE. MEASURED TRUTH:
+        ** ALL 23 SURVIVING FAILURES ARE DEVICE CLASS, ZERO ARE CARGO CLASS, AND
+        THERE IS NO THIRD CAUSE. ** Signatures on the full run: 29 x
+        "RuntimeError: No CUDA GPUs are available" and 12 x "Exception: retry()
+        exceed maximum number of retries" -- ** ONE CAUSE, TWO TEXTS **: the
+        retry wrapper at utils/common.py:3804 re-raises after N attempts at work
+        that dies in torch.cuda._lazy_init. Per node (12 FAILED + 11 SUBFAILED =
+        23): test_kv_layer_access 5, test_kv_layer_router 3,
+        test_unified_pricing_property 2 + 2 subTests, test_decode_retraction_
+        backup 2 -- all traced to memory_pool.py:132 `_safe_zeros ->
+        torch.empty(..., device=cuda)`, i.e. these allocate a REAL KV pool and
+        CANNOT pass on a GPU-less seat by design -- plus test_kv_storage_
+        lifecycle's 9 subTests (chains swa/mamba/tri x seeds 0/1/2), each
+        independently traced to the same cuda_init failure. ** CLASSIFIED, NOT
+        FIXED, DELIBERATELY: they are honest device failures, not skips to be
+        papered over; converting them to self-skips on a device-less seat belongs
+        to their owners and is outside a compile-repair's scope. **
+        ** THE LOADER NEEDS NO SHELL ENV AT ALL -- IMPORTANT, AND THE GUARD
+        AGAINST MISREADING THE RECIPE ABOVE. **
+        rust_extensions/torch_build.py:27-101 derives the entire environment
+        from the RUNNING INTERPRETER: it POPS LIBTORCH_USE_PYTORCH, points
+        LIBTORCH/LIBTORCH_INCLUDE/LIBTORCH_LIB at that torch package, sets
+        LIBTORCH_BYPASS_VERSION_CHECK=1, the CXX11 ABI flag, LD_LIBRARY_PATH,
+        PYO3_PYTHON, CC_SHELL_ESCAPED_FLAGS, `-std=c++20` for torch >= 2.12
+        ** AND THE torch_compat.h INCLUDE ** (the header is NOT optional on this
+        path), plus RUSTFLAGS rpaths -- the artifact fingerprint even hashes the
+        header. So the README env above is for ** HAND-RUN cargo ** (my
+        verification commands); plain `pytest` runs are already correct, and the
+        measured numbers in this bullet were produced that way. CONSEQUENCE FOR
+        THE ROOT CAUSE: the historical "cargo build ... exit 101" occurred WITH a
+        correct environment, so it was ** PURELY THE COMPILE BREAK **, never env
+        debt -- the era's "seat gap" reading is now dead on BOTH paths.
+        ** TREE-DIRT GUARDS HELD (checked BEFORE the first run, verified at
+        exit): ** the loader builds into ** /home/my/.cache/sglang/
+        rust_extensions/{targets,artifacts,locks} ** (SGLANG_CACHE_DIR default
+        ~/.cache/sglang) -- OUTSIDE THE REPO, so a build cannot dirty the tree;
+        and the in-package artifact is DOUBLY gitignored (rust_tree_core/
+        .gitignore `mem_cache.so` + root .gitignore:206 `*.so`), with only
+        __init__.py / adapter.py / extension.py / .gitignore TRACKED in that dir
+        and no build writing those. The shipped Oct-28 .so was NOT touched (mtime
+        unchanged after every run; loader.py:88 documents that unverified
+        in-package artifacts are IGNORED in favour of the fingerprinted cache --
+        which is why a source repair correctly bypasses the stale binary).
+        ** git status = 0 lines at entry AND exit; nothing installed into any
+        venv; NOTHING PUSHED. **
       LINT: check_registered_tests / check_no_bare_pytest_main /
         check_no_registered_tests_in_package rc=0 (after the fused_moe_
         config restore + every re-home); ruff F821+E9+format clean on every
