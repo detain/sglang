@@ -268,6 +268,18 @@ if HAS_TILELANG:
             tilelang.PassConfigKey.TL_ENABLE_FAST_MATH: True,
             tilelang.PassConfigKey.TL_DISABLE_TMA_LOWER: True,
             tilelang.PassConfigKey.TL_DISABLE_WARP_SPECIALIZED: True,
+            # TileLang's checker cannot disprove a collision on
+            # ``Logits[row_base + qi, column]`` because the column carries the
+            # dynamic load ``Starts[row_base + qi]``: it warns "Data race
+            # detected ... written by multiple threads in loop (n,)" on every
+            # fresh compile. The writes are provably disjoint: qi indexes the
+            # row (distinct rows for distinct qi); within one qi the column is
+            # n shifted by a per-row constant, so distinct n write distinct
+            # columns; across pipeline stages ti the absolute key
+            # key_base + n is unique (tiles partition by block_n), and the by
+            # split further partitions tiles across CTAs. Guards below only
+            # drop writes, never duplicate a coordinate.
+            tilelang.PassConfigKey.TL_DISABLE_DATA_RACE_CHECK: True,
         }
     )
     def _tilelang_qsa_mqa_prefill_relative_kernel(
