@@ -1,6 +1,6 @@
 # stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
 #
-# STACK: qwennext-stack-319-2026-10-30 (main @ 2a6c204570, MERGE #5 TAKEN + ALL RE-PLANT BATCHES LANDED -- entries 310-315; post-merge port queue entries 316-318; ** 319 = MERGE-5 CARGO REPAIR: the era's 'cargo UNVERIFIED-debt' CLOSED AT A FIRST-COMPILING SEAT -- 3 B3-7 re-plant breaks fixed, TRUE RUST PIN 943P/0F/1-ignored, OPERATOR RELEASE BUILD GREEN ** -- origin/main had drifted to 2c6b95e035 = +1,154 since 12dc623102 by the pass-4 triage read)
+# STACK: qwennext-stack-320-2026-10-30 (main @ 2a6c204570, MERGE #5 TAKEN + ALL RE-PLANT BATCHES LANDED -- entries 310-315; post-merge port queue entries 316-318; MERGE-5 CARGO REPAIR entry 319 -- ** era's cargo UNVERIFIED-debt CLOSED, TRUE RUST PIN 943P/0F/1-ignored **; entry 320 = TLFIX, scope-disable of a TileLang data-race FALSE-POSITIVE on the QSA prefill relative kernel)
 #   ** MERGE-ERA-CLOSED 2026-10-29 (session 3 / B6): B1-B6 ALL CLOSED, B2/B3/B4/B5 marker
 census ZERO, damage driven to env-class + documented survivors; the branch is BOOT-READY
 pending OPERATOR execution of the BOOT_DELTA first-boot choreography (see CAVEATS top
@@ -62,7 +62,9 @@ current-state bullet + entry 315). **
 #   +hicliveness-2026-10-29(pr44342*×4)
 #   +merge5-repair-2026-10-30(cargo repair: parent_node_id cfg-placement +
 #    mamba_value_seqlen + test-target unbreak -- no upstream PR, see entry 319)
-#   (entries 1-319; *=squash/ported, see commit messages. 10-10 added
+#   +tlfix-2026-10-30(TLFIX: per-kernel TL_DISABLE_DATA_RACE_CHECK --
+#    stack-owned, no upstream PR, see entry 320)
+#   (entries 1-320; *=squash/ported, see commit messages. 10-10 added
 #   entries 157-161: parser batch A (Qwen3-Coder tool-call fixes + sampling
 #   upper bounds), on top of upstream merge #3 (see synced). 10-10b added
 #   entries 162-166: SM120 batch B (#42863 PCIe-IPC vocab gathers, #42566
@@ -300,7 +302,13 @@ current-state bullet + entry 315). **
 #   make --enable-mixed-chunk safe and fix the QSA verify ring collision.
 #   * = picked with local modifications, see the entries)
 # branch : qwennext-stack
-# tip    : 065fdcdf33   (MERGE-5 CARGO REPAIR, rust-only: 3 files +29/-8, the first
+# tip    : e9f0ae1838   (TLFIX, entry 320: python/sglang/srt/layers/attention/qsa/mqa.py +12/-0,
+#          ONE pass-config key + its proof as a comment; stack-owned plain pick, no -x;
+#          sits above the cargo-repair tip 065fdcdf33 -- qsa dir verified SET-IDENTICAL
+#          across both (3F/111P/624S/6E at each tip, node-id diff EMPTY), so a compile-
+#          analysis-only change measured as zero behavior delta. Superseded values in
+#          this line's history: 065fdcdf33 (repair), b7c656f69f (pass-4), 5cde7a5ede
+#          (merge era) -- read the synced block for merge history.)
 #          commit in the merge era VERIFIED by an actual cargo build -- check/clippy/
 #          fmt/test + the operator's release cdylib command all green; sits above the
 #          pass-4 code tip b7c656f69f, whose stack.txt docs commits sit above it too.
@@ -463,6 +471,58 @@ current-state bullet + entry 315). **
 #          the ban itself STAYS until sessions 2B/3 + operator judgment.]
 #          [B4 LANDED -- entry 312; managers+spec damage closed to ENV-class
 #          residue; the ban STAYS (B2/B5/B6 + operator judgment remain).]
+# updated: 2026-10-30 (entry 320): ** TLFIX -- ONE PASS-CONFIG KEY, AND THE
+#          FIRST WARNING THE MERGED TREE PRINTED ON REAL TRAFFIC TURNS OUT TO
+#          BE A CHECKER FALSE-POSITIVE, NOT FORK DAMAGE ** (branch
+#          port-tlfix @ 964439a4ce, born at EXACTLY code tip 065fdcdf33
+#          (merge-base verified), landed PLAIN (stack-owned -- no upstream
+#          commit to reference) as e9f0ae1838; ** LANDED CLEAN, ZERO
+#          CONFLICTS **; 1 file +12/-0). What it silences:
+#          `Warning: Data race detected: Logits(row_base + qi, column) is
+#          written by multiple threads in loop (n,)` printed ONCE PER TP RANK
+#          on the rebuilt 9d arm's first real request. ** THE DIAGNOSIS THAT
+#          MATTERS FOR THE ERA: the warned kernel is upstream 642e9c1448
+#          (#45791) arriving as MERGE #5 CARGO under entry 310 -- it was never
+#          a fork pick -- which is the whole explanation of the
+#          9d-WARNS/9b-CLEAN split (9b still runs the PRE-REBUILD copy). A
+#          reader who assumed fork damage would chase the wrong tree; the
+#          split self-heals when 9b is rebuilt. ** Verdict: ** false positive;
+#          the write is injective on (qi, n, ti) per CTA ** -- qi picks the
+#          row, within a row the column is n shifted by a PER-ROW CONSTANT
+#          Starts[row_base+qi], across stages the absolute key key_base+n is
+#          unique (tiles partition by block_n), bx splits rows and by splits
+#          tiles, and the 0<=column<width guards ** DROP writes rather than
+#          duplicating coordinates **; the checker simply cannot correlate a
+#          dynamic row-constant load across iterations, and its all-zeros
+#          shape is a degenerate SAT probe, not a serving case. ** THE
+#          PROOF NOW LIVES IN THE SOURCE (11 comment lines) so nobody
+#          re-derives it. ** Fix shape is deliberately minimal: the key is
+#          added to ** THIS KERNEL'S jit pass_configs ONLY ** (the scope the
+#          decorator already uses for TL_DISABLE_TMA_LOWER / TL_DISABLE_
+#          WARP_SPECIALIZED) -- NOT a global disable, so a real future race
+#          in a sibling kernel still warns. INTEGRATOR VERIFICATION BEYOND
+#          THE WORKER'S CLAIM: the API was EXECUTED at this seat under CVD=9
+#          with no kernel compile -- PassConfigKey.TL_DISABLE_DATA_RACE_CHECK
+#          == **'tl.disable_data_race_check'**, and
+#          should_enable_race_check(PassContext(...)) returns ** False WITH
+#          the key, True WITHOUT IT ** (consumer: pipeline_utils.py:46), plus
+#          mqa imports clean with HAS_TILELANG=True. Worker's cited line
+#          numbers re-pinned for this tree: def 273 -> ** 285 **, the write
+#          :343 -> ** 355 ** (column expr 350, guards 353-354, the new key at
+#          282). ** NO GPU DEBT ADDED: the key skips a COMPILE-TIME ANALYSIS
+#          PASS ONLY -- codegen is byte-identical, so there is nothing to
+#          re-verify numerically; this entry deliberately does NOT join the
+#          hardware-debt list. ** BATTERY: qsa dir measured at BOTH tips --
+#          base 065fdcdf33 and tip e9f0ae1838 both ** 3F/111P/624S/6E **, and
+#          the 9 FAILED+ERROR ** NODE-IDS ARE SET-IDENTICAL (diff EMPTY) **:
+#          3F = test_qsa_trtllm_sparse_decode_arch_gate[sm100/sm12x/sm120],
+#          6E = test_qsa_hicache.py's fixture cases, all 12 signatures =
+#          `RuntimeError: No CUDA GPUs are available` -- the documented
+#          pre-existing DEVICE classes, untouched. METHOD NOTE KEPT: the
+#          worker ran that dir with CVD UNSET, this seat runs CVD=9 (prod
+#          holds all four GPUs); totals agree either way HERE, and the
+#          discrepancy is recorded rather than smoothed. Gates: ruff repo
+#          ruleset + format clean on mqa.py, check_registered_tests rc=0.
 # updated: 2026-10-30 (entry 319): ** MERGE-5 CARGO REPAIR -- THE ERA'S
 #          "cargo UNVERIFIED-DEBT" IS CLOSED, AND IT WAS NEVER AN ENVIRONMENT
 #          GAP ** (1 commit, rust-only, 3 files +29/-8, no upstream PR; entry
@@ -10347,6 +10407,119 @@ STACK, IN BUILD ORDER (bottom first)
       # side trust-check for rust_tree_core stays open with the rest of the
       # restart watch, and the era's remaining rust-adjacent GPU debt is
       # unchanged.
+
+
+  tlfix-2026-10-30 wave (branch port-tlfix, worktree wt-tlfix, born at
+  EXACTLY code tip 065fdcdf33 -- verified by merge-base; ONE stack-owned
+  commit, PLAIN cherry-pick (no -x: there is no upstream commit to point at,
+  the warning's code arrived as merge cargo and the fix is ours); ** LANDED
+  CLEAN, ZERO CONFLICTS **; 1 file, +12/-0):
+
+        320. e9f0ae1838  STACK-OWNED FIX (no upstream PR; the warned code is upstream 642e9c1448 / #45791 riding merge #5)  TLFIX: scope-disable TileLang data-race false-positive on the QSA prefill relative kernel -- one per-kernel pass key, zero behavior change, the write-disjointness proof recorded IN THE COMMENT
+      # WHAT IT FIXES: the FIRST real request on the rebuilt 9d arm printed,
+      # once per TP rank:
+      #   Warning: Data race detected: `Logits(row_base + qi, column)` is
+      #   written by multiple threads in loop (n,)  ... pass
+      #   PassKey.TL_DISABLE_DATA_RACE_CHECK to disable this check
+      # KERNEL IDENTITY: `_tilelang_qsa_mqa_prefill_relative_kernel` in
+      # python/sglang/srt/layers/attention/qsa/mqa.py -- the only kernel in
+      # that file whose loop body names `column`, `ti` and `tile_count`.
+      # CITED LINES RE-VERIFIED BY THE INTEGRATOR AND RE-PINNED FOR THIS
+      # TREE: the worker cited mqa.py:273 (the def) and :343 (the write), both
+      # PRE-PICK; the +12-line insert shifts them, so at THIS tip they are
+      # ** def 285 / column expr 350 / guards 353-354 / the write
+      # `Logits[row_base + qi, column] = reduced[n, qi]` at 355 **, with the
+      # new key at ** 282 ** inside the decorator's pass_configs (266-283).
+      # ** ORIGIN -- THIS IS MERGE CARGO, NOT A FORK PICK, WHICH IS WHY IT
+      # LOOKED LIKE A 9d-ONLY REGRESSION: ** the kernel entered the stack as
+      # upstream ** 642e9c1448 "[Perf] QSA: Optimize prefill indexer in long
+      # cached prefixes (#45791)" ** arriving via ** MERGE #5 (ae6ee527ba,
+      # main @ 2a6c204570) under stack.txt entry 310 ** -- it was never
+      # hand-picked. THAT FULLY EXPLAINS THE 9d-WARNS / 9b-CLEAN SPLIT: the 9b
+      # arm still runs the PRE-REBUILD copy, which predates the merge, so it
+      # cannot warn about code it does not have. Anyone reading the warning as
+      # "fork code went wrong" would chase the wrong tree; the split is a
+      # build-vintage artifact, and it will DISAPPEAR from the comparison the
+      # moment 9b is rebuilt onto the merged tip.
+      # VERDICT: ** CHECKER FALSE-POSITIVE, NOT A REAL RACE ** -- and the
+      # proof now lives in the source as an 11-line comment so the next reader
+      # does not have to re-derive it. Condensed, the write
+      # `Logits[row_base + qi, key_base + n - Starts[row_base + qi]]` is
+      # ** injective on (qi, n, ti) per CTA ** by four levels: (1) ** qi
+      # selects the ROW ** -- distinct qi means distinct rows; (2) ** within a
+      # row the column is n shifted by a PER-ROW CONSTANT **
+      # `Starts[row_base + qi]`, so distinct n write distinct columns of that
+      # row; (3) ** across pipeline stages `ti` the ABSOLUTE key
+      # `key_base + n` is unique**, because tiles partition
+      # [start_min, end_max) by `block_n`; (4) ** the grid partitions the rest
+      # ** -- `bx` splits rows, `by` splits tiles further across CTAs. And the
+      # two bounds guards (`0 <= column < width`) ** DROP writes, never
+      # duplicate a coordinate **, so they cannot manufacture a second writer.
+      # The checker warns because it ** cannot symbolically correlate the
+      # dynamic `Starts[]` load across loop iterations ** and therefore
+      # conservatively assumes the worst; the "all zeros" shape it surfaces
+      # (rows=1, width=1, n=1, tile_count=1) is its ** degenerate SAT probe,
+      # not a serving scenario **.
+      # THE FIX, AND WHY IT IS THE RIGHT SHAPE: adds
+      # `tilelang.PassConfigKey.TL_DISABLE_DATA_RACE_CHECK: True` to ** THIS
+      # KERNEL'S jit pass_configs ONLY ** -- the same per-kernel PassContext
+      # scope the decorator already uses for TL_DISABLE_TMA_LOWER (and
+      # TL_DISABLE_WARP_SPECIALIZED two lines above). NOT a global disable,
+      # NOT a check removal for the other kernels in the file: a future REAL
+      # race in a sibling kernel still warns.
+      # ** API PROOF -- INTEGRATOR-VERIFIED BEYOND THE WORKER'S CLAIM. ** The
+      # worker recorded the key's value and consumer; at this seat the whole
+      # chain was EXECUTED under CVD=9 with NO kernel compile:
+      #   `tilelang.PassConfigKey.TL_DISABLE_DATA_RACE_CHECK` ==
+      #     **'tl.disable_data_race_check'**  (transform/pass_config.py:52)
+      #   consumer `should_enable_race_check(pass_ctx)`
+      #     (backend/pass_pipeline/pipeline_utils.py:46) reads
+      #     `not pass_ctx.config.get(TL_DISABLE_DATA_RACE_CHECK, False)`, and
+      #     called against real PassContexts it returns ** False WITH our key
+      #     ** and ** True WITHOUT it ** -- i.e. the two-state behavior of the
+      #     exact knob we set, demonstrated rather than asserted.
+      #   `import sglang...qsa.mqa` succeeds with HAS_TILELANG == True, so the
+      #     symbol resolves at import (that is all this change needs -- see
+      #     next paragraph, nothing is compiled here).
+      # ** NO BEHAVIOR CHANGE, AND NO GPU DEBT ADDED: ** the pass key only
+      # SKIPS A COMPILE-TIME ANALYSIS PASS; ** codegen is unchanged **, so the
+      # generated kernel is byte-identical and there is nothing to re-verify
+      # numerically in a GPU window. This is deliberately NOT one of the
+      # entries that owes a hardware follow-up.
+      # BATTERY -- ** SET-IDENTITY MEASURED BY THE INTEGRATOR AT BOTH TIPS,
+      # NOT JUST THE TOTALS: ** qsa dir
+      # (test/registered/kernels/ops/attention/qsa/, CVD=9, prod venv,
+      # `--continue-on-collection-errors`):
+      #   base 065fdcdf33 : 3 failed / 111 passed / 624 skipped / 6 errors
+      #   tip  e9f0ae1838 : ** 3 failed / 111 passed / 624 skipped / 6 errors **
+      #   -> totals IDENTICAL ** and the 9 FAILED+ERROR NODE IDS ARE
+      #   SET-IDENTICAL (diff = EMPTY) **: 3F =
+      #   test_qsa.py::test_qsa_trtllm_sparse_decode_arch_gate
+      #   [sm100/sm12x/sm120], 6E = test_qsa_hicache.py's fixture-dependent
+      #   cases (test_packed_mtp_indexer_roundtrip[pools0],
+      #   test_qsa_file_restart_and_missing_sidecar[pools0],
+      #   test_qsa_host_roundtrip_and_consumer_fence[pools0..3]). CAUSE OF ALL
+      #   NINE, traced in the log: 12 occurrences of ** `RuntimeError: No CUDA
+      #   GPUs are available` ** at torch/cuda/__init__.py:591 -- pre-existing
+      #   DEVICE-GATED classes already documented in CAVEATS, untouched by this
+      #   pick (as expected for a compile-analysis-only change).
+      #   METHOD-DELTA NOTED AND RESOLVED: the worker ran this dir with ** CVD
+      #   UNSET **; the ledger's standing discipline is ** CVD=9 ** (prod holds
+      #   all four GPUs, so this seat must never touch them). Both totals land
+      #   at 111P/624S/3F/6E, so the discrepancy is immaterial HERE -- recorded
+      #   rather than smoothed over, because a future reader must know which
+      #   convention produced a number.
+      # GATES AT THE TIP: ruff v0.15.1 repo ruleset (--select=F401,F821,F823,
+      # UP037) ** All checks passed ** + `ruff format --check` ** 1 file already
+      # formatted ** on mqa.py; `check_registered_tests.py` ** rc=0 **.
+      # WHAT THIS ENTRY DOES NOT DO: it does not claim the warning could not
+      # have been silenced by flipping the check globally -- it claims the
+      # scoped form is the correct one, and the four-level proof is why NO
+      # check needs to stay on for this kernel. If TileLang ever ships a
+      # checker that can correlate a dynamic row-constant shift, the key can
+      # be dropped; the comment is the reminder.
+
+
 
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
