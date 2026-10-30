@@ -1,6 +1,6 @@
 # stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
 #
-# STACK: qwennext-stack-320-2026-10-30 (main @ 2a6c204570, MERGE #5 TAKEN + ALL RE-PLANT BATCHES LANDED -- entries 310-315; post-merge port queue entries 316-318; MERGE-5 CARGO REPAIR entry 319 -- ** era's cargo UNVERIFIED-debt CLOSED, TRUE RUST PIN 943P/0F/1-ignored **; entry 320 = TLFIX, scope-disable of a TileLang data-race FALSE-POSITIVE on the QSA prefill relative kernel)
+# STACK: qwennext-stack-321-2026-10-30 (main @ 2a6c204570, MERGE #5 TAKEN + ALL RE-PLANT BATCHES LANDED -- entries 310-315; post-merge port queue 316-318; MERGE-5 CARGO REPAIR 319 (** true rust pin 943P/0F/1-ignored **); TLFIX 320; ** 321 = FIRST POST-MERGE PROD BOOT RECORD (9d, ready 14:23:10) -- LLGUARD needle + armed PCIe-IPC + cold-autotune bargain + L3 survival all OBSERVED, forced-retune lever RETIRED **)
 #   ** MERGE-ERA-CLOSED 2026-10-29 (session 3 / B6): B1-B6 ALL CLOSED, B2/B3/B4/B5 marker
 census ZERO, damage driven to env-class + documented survivors; the branch is BOOT-READY
 pending OPERATOR execution of the BOOT_DELTA first-boot choreography (see CAVEATS top
@@ -64,7 +64,9 @@ current-state bullet + entry 315). **
 #    mamba_value_seqlen + test-target unbreak -- no upstream PR, see entry 319)
 #   +tlfix-2026-10-30(TLFIX: per-kernel TL_DISABLE_DATA_RACE_CHECK --
 #    stack-owned, no upstream PR, see entry 320)
-#   (entries 1-320; *=squash/ported, see commit messages. 10-10 added
+#   +first-boot-record-2026-10-30(BOOT: 9d first post-merge prod boot --
+#    no code, observation + verdicts, see entry 321)
+#   (entries 1-321; *=squash/ported, see commit messages. 10-10 added
 #   entries 157-161: parser batch A (Qwen3-Coder tool-call fixes + sampling
 #   upper bounds), on top of upstream merge #3 (see synced). 10-10b added
 #   entries 162-166: SM120 batch B (#42863 PCIe-IPC vocab gathers, #42566
@@ -471,6 +473,94 @@ current-state bullet + entry 315). **
 #          the ban itself STAYS until sessions 2B/3 + operator judgment.]
 #          [B4 LANDED -- entry 312; managers+spec damage closed to ENV-class
 #          residue; the ban STAYS (B2/B5/B6 + operator judgment remain).]
+# updated: 2026-10-30 (entry 321): ** FIRST POST-MERGE PROD BOOT RECORDED --
+#          NO CODE, ALL OBSERVATION, AND FOUR ERA BETTS TURN OUT TO HAVE
+#          LANDED ** (9d = the NVFP4 arm, launched 14:19:41, ** SERVER READY
+#          14:23:10 ** on 2026-10-30, on the entry-319 state; log
+#          /home/my/sglang_next9d.log). ** EVERY FACT BELOW WAS RE-READ FROM
+#          THE LOG BY THE INTEGRATOR WITH LINE NUMBERS, not transcribed --
+#          that is the point of a record entry. **
+#          (a) ** ENTRY-308'S LLGUARD AND ITS BOOT NEEDLE ARE VALIDATED ON
+#          PRODUCTION: ** lines ** 27 AND 28 ** (BOTH TP ranks) read
+#          `[AR] group tp host-memory transports: PCIe-IPC=True
+#          host-staged=False LL=False` -- exactly the reading pass 4 said our
+#          arms must show. This is the first time the armed PCIe-IPC transport
+#          (carried 162-164, armed 245, guarded 308) has been observed
+#          SERVING rather than configured.
+#          (b) ** NCCL SETDEFAULT UNCONTESTED: ** grep count of "was set
+#          explicitly" = ** 0 **, so entry 284's NCCL_GRAPH_REGISTER=0 applied
+#          quietly on both ranks and no operator export overrode it (the
+#          absence of that warning IS the evidence).
+#          (c) ** THE HEADLINE: ENTRY-260'S COLD AUTOTUNE BOOT WAS PAID AND
+#          S-EXT1'S RETUNE FOLDED INTO IT AT ZERO EXTRA COST -- THE PASS-3
+#          BARGAIN DELIVERED. ** 145/146 14:21:49 the ARMED transport's own
+#          autotune reports "FlashInfer PCIe-IPC all-reduce autotuned ** 9
+#          shape(s) **" (first prod measurement of that); 147/148 the genuine
+#          tuning pass on cache ** fc58ac…** runs 149/151/152 ** gemm1 100%
+#          20/20 ** and 153/154 ** gemm2 100% 20/20 **; 155/156 completed
+#          14:22:04; ** 157 the extra EXTEND pass at 4096 tokens -- the pass
+#          entry 304 re-tunes on seeded DISTINCT dummy tokens --** runs
+#          14:22:04->14:22:05; and the cache dirs ** fc58accda32c3b83 AND
+#          e2fed3dfe1861856 were both WRITTEN at 14:22 (verified on the
+#          FILESYSTEM, not just in the log) **; 174 14:22:13 shows the
+#          follow-on ** WARM ** e2fed pass. ==> ** THE FORCED-RETUNE LEVER IS
+#          RETIRED: deleting rank_tp*_pp*_dp*.json is NO LONGER OWED, and that
+#          BOOT_DELTA §1a branch is CLOSED (a LANDED-RECORDED pointer was
+#          added there, additive-only; script-facing text untouched per the
+#          PROPOSED convention). ** One decoy defused for future readers: the
+#          Oct-28-mtime dirs 3fa63023eb2183a0 / 98fb90954791d4c4 are
+#          untouched PRE-REBUILD artifacts, not a missing retune.
+#          (d) ** L3 SURVIVED MERGE #5 -- HEALTHY END-TO-END: ** 219/220
+#          14:22:55 both ranks "Creating storage backend **'file'**
+#          (…HiCacheFile)"; 655/656 14:30:30 both ranks "** HiCache prefetch
+#          success ** req=ecb33180a16c… completed=1088 matched=0 loaded=1088";
+#          grep count of `storage_unavailable` across the boot = ** 0 **. So
+#          #39727's C9 anti-needle is satisfied BEHAVIORALLY (a 1088-token hit
+#          loaded from a PRE-merge-written store with no decline and, per
+#          entry 318, no rank-agreed health drop). HONEST LIMIT: ONE
+#          successful prefetch proves liveness, not hit-rate or perf -- and
+#          the new gauge `sglang:hicache_storage_healthy` appears ** 0 times
+#          in the LOG ** because it is a /metrics exposition, so the gauge
+#          read itself still needs a scrape and stays on the watch list.
+#          (e) ** FIRST-SIGHT OBSERVATION, LOGGED AS WATCH AND DELIBERATELY
+#          NOT FIXED: ** lines ** 25 AND 26 **, BOTH ranks at 14:19:50 --
+#          "CustomAllreduce is disabled because PyTorch's caching allocator is
+#          VMM-backed (PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True); its
+#          CUDA graph buffers cannot be shared over CUDA IPC." The actionable
+#          hint is IN THE MESSAGE: unset expandable_segments, or pass
+#          --disable-custom-allreduce to silence it. WHY IT IS LIKELY MOOT BUT
+#          STILL WORTH RECORDING: ** PCIe-IPC is the tp transport (see (a)), so
+#          torch's custom-AR declining does not remove the fast path we use --
+#          but this is NCCL's OWN custom-allreduce falling back, which IS the
+#          fallback that matters on a group where PCIe-IPC is NOT eligible
+#          (non-tp groups, ws==1, deterministic inference -- precisely the
+#          cases entry 308's predicate leaves alone). SO: IF ALLREDUCE PERF
+#          EVER LOOKS OFF ON AN ARM OTHER THAN tp, CHECK THIS LINE BEFORE
+#          RE-LITIGATING THE TRANSPORTS. ** Family note: this is the same VMM/
+#          expandable_segments interaction as entry 284 (NCCL_GRAPH_REGISTER
+#          recycling) and entry 255's VMM-allocator refusal -- the allocator
+#          choice has now been seen touching CUDA-IPC sharing too; read those
+#          three together at the next allocator review. Also first-sight and
+#          benign: 246 parallel_prompt_encode "encode_batch runs serially"
+#          (entry-201-adjacent NOTE -- and with --tokenizer-worker-num unset,
+#          entries 275-277's worker path stays inert exactly as entry 275
+#          recorded); 247/248 both ranks "Removing stale PyTorch extension
+#          lock for ** hicache_hash_cpp **" (self-healing leftover build
+#          locks); and the PRE-EXISTING warning set unchanged in kind --
+#          context_length 1,000,000 > derived (3/11/18/20/32, the entry-177
+#          align area), "Using FP8 KV cache but no scaling factors provided.
+#          Defaulting to 1.0" (67/71, entry-243 territory, EXPECTED for this
+#          checkpoint), one c10d barrier() UserWarning (141).
+#          WHAT THIS BOOT SETTLES, COMPRESSED: the armed PCIe-IPC transport
+#          serves and reports itself; the cold boot absorbed every queued
+#          retune (#45543 decode, #43927 default tactic, #44514 cache key,
+#          S-EXT1 extend) in ONE startup; the L3 file store survived the
+#          merge; and a post-cargo-repair tree runs production traffic. STILL
+#          OPEN, MEASURED-NOT-YET (not disproved): entry 277's first-delta /
+#          tool-call-stream latency watch with grouped tokenizer sends ON, the
+#          entry-263/#45472 and entry-268/#46643 TTFT + starvation watches
+#          under real load, and the GPU-window debt of entries 316-320. Header
+#          321; code tip UNCHANGED at e9f0ae1838 (this entry is no-code).
 # updated: 2026-10-30 (entry 320): ** TLFIX -- ONE PASS-CONFIG KEY, AND THE
 #          FIRST WARNING THE MERGED TREE PRINTED ON REAL TRAFFIC TURNS OUT TO
 #          BE A CHECKER FALSE-POSITIVE, NOT FORK DAMAGE ** (branch
@@ -10521,6 +10611,154 @@ STACK, IN BUILD ORDER (bottom first)
 
 
 
+  first-boot-record-2026-10-30 (entry 321 is a RECORD commit, NOT a pick:
+  no code, first post-merge production boot observed on the 9d arm; every
+  fact below was RE-READ FROM THE LIVE LOG /home/my/sglang_next9d.log by the
+  integrator with line numbers, not transcribed from the operator's summary):
+
+        321. (no code)  BOOT RECORD -- ** FIRST POST-MERGE PROD BOOT: 9d (NVFP4 arm) on the entry-319 state, launched 14:19:41, SERVER READY 14:23:10 on 2026-10-30 ** -- the merge era's first real-boot validation, and it CONFIRMS FOUR STACK PREDICTIONS AND CLOSES THE FORCED-RETUNE BRANCH
+      # SUBJECT: the first production boot AFTER MERGE #5 + the re-plant
+      # batches + the cargo repair (header qwennext-stack-319-2026-10-30,
+      # code tip 065fdcdf33 at launch; 9c/9d run-script family, NVFP4 arm,
+      # TP2+EP2, --hicache-size 32 / mamba auto / write_through_selective /
+      # storage=file, context_length 1,000,000, PCIe-IPC armed). Log:
+      # ** /home/my/sglang_next9d.log ** (714,620 bytes at read time; the 9b
+      # arm's log is separate and still pre-rebuild -- see entry 320).
+      # ==========================================================================
+      # (a) ** ENTRY-308's LLGUARD + ITS BOOT NEEDLE VALIDATED ON PRODUCTION. **
+      #   log lines ** 27 AND 28 ** at 14:19:50, i.e. BOTH TP ranks:
+      #     [AR] group tp host-memory transports: ** PCIe-IPC=True
+      #     host-staged=False LL=False **
+      #   EXACTLY the reading pass 4 predicted our arms must show ("want
+      #   PCIe-IPC=true, LL=false"). This is the first time the armed PCIe-IPC
+      #   transport -- carried since entries 162-164, armed by entry 245,
+      #   guarded by entry 308 -- has been observed SERVING rather than
+      #   merely configured.
+      # (b) ** NCCL SETDEFAULT UNCONTESTED: ** grep count of
+      #   `was set explicitly` in the boot log = ** 0 **, so nobody exported
+      #   NCCL_GRAPH_REGISTER and entry 284's #43216 setdefault took effect
+      #   quietly on both ranks (the warning at parallel_hook.py:445-449 is
+      #   the operator-override signal; its absence IS the evidence).
+      # ==========================================================================
+      # (c) ** THE HEADLINE: ENTRY-260's COLD AUTOTUNE BOOT WAS PAID, AND
+      #   S-EXT1'S RETUNE FOLDED INTO IT AT ZERO EXTRA COST -- EXACTLY AS
+      #   DESIGNED IN ENTRIES 304 + 308-adjacent CAVEATS. ** Sequence, with
+      #   lines/timestamps from the log:
+      #     145/146 14:21:49 both ranks -- "FlashInfer PCIe-IPC all-reduce
+      #            autotuned 9 shape(s) (hidden=2560, rows=(1,2,4,8,16,32,64,
+      #            128,...))" (the first-ever prod measurement of the ARMED
+      #            transport's autotune: 9 size classes tuned).
+      #     147/148 14:21:49 -- "Running FlashInfer autotune with cache:
+      #            .../flashinfer/autotune/0.7.2/sm120/** fc58ac...**" = the
+      #            GENUINE TUNING pass:
+      #     149/151/152  -- "[AutoTuner]: Tuning trtllm::fused_moe::** gemm1:
+      #            100%| 20/20 **[00:02, 8.70 profile/s]"
+      #     153/154      -- "Tuning trtllm::fused_moe::** gemm2: 100%| 20/20 **"
+      #     155/156 14:22:04 -- "FlashInfer autotune completed."
+      #     157      14:22:04 -- "FlashInfer autotune: ** extra EXTEND pass at
+      #            4096 tokens (32 seqs x 128 tokens) **" = entry 176's
+      #            prefill-sized EXTEND pass -- THE ONE S-EXT1 (entry 304)
+      #            RE-TUNES ON SEEDED DISTINCT DUMMY TOKENS.
+      #     158/159/160/161 14:22:04 -> 14:22:05 -- the EXTEND pass runs on the
+      #            same fc58 cache and completes; ** the on-disk cache dirs
+      #            fc58accda32c3b83 AND e2fed3dfe1861856 BOTH carry mtime
+      #            "Oct 30 14:22" ** (verified against the filesystem, not
+      #            just the log), i.e. the new-key records were WRITTEN BY
+      #            THIS BOOT -- so the extend-bucket tactics are now tuned on
+      #            distinct dummy tokens, NOT the inherited zero-filled ones.
+      #     174      14:22:13 -- a further "Running FlashInfer autotune with
+      #            cache: .../** e2fed3...**" pass = the ** WARM ** path
+      #            (entry-259 default-tactic / entry-228 warm-boot behavior).
+      #   VERDICT: the boot-cost bargain struck in pass 3 ("land S-EXT1 BEFORE
+      #   the restart so entry 260's scheduled cold boot absorbs the retune
+      #   for free") ** DELIVERED ** -- one cold boot paid for the cache-key
+      #   bump (#44514, entry 260), the decode-token fix (#45543, entry 258),
+      #   the default-tactic join (#43927, entry 259) AND the EXTEND-path
+      #   re-tune (entry 304), with no extra startup penalty attributable to
+      #   S-EXT1.
+      #   ==> ** THE FORCED-RETUNE LEVER IS NOW RETIRED: deleting the per-rank
+      #   rank_tp*_pp*_dp*.json files is NO LONGER OWED, and the
+      #   "warm-boot-happened-first" branch in /tmp/opencode/next-boot/
+      #   BOOT_DELTA.md §1a is CLOSED. ** (Recorded as a LANDED-RECORDED
+      #   pointer there, minimal edit.) Also note for future readers: the two
+      #   OLD cache dirs 3fa63023eb2183a0 / 98fb90954791d4c4 keep Oct-28
+      #   mtimes -- untouched pre-rebuild artifacts, NOT evidence of a
+      #   missing retune.
+      # ==========================================================================
+      # (d) ** HICACHE L3 IS HEALTHY END-TO-END ON THE MERGED TREE -- the
+      #   §3(l)-adjacent / entry-318 liveness behavior observed for real: **
+      #     219/220 14:22:55 both ranks -- "Creating storage backend ** 'file'
+      #            ** (sglang.srt.mem_cache.hicache_storage.HiCacheFile)"
+      #     655/656 14:30:30 both ranks -- "** HiCache prefetch success **
+      #            req=ecb33180a16c... ** completed=1088 matched=0 loaded=10
+      #            88 **" (the first real prefetch: 1088 tokens loaded from
+      #            the file store, symmetric across ranks)
+      #     grep count of `storage_unavailable` in the whole boot = ** 0 **
+      #   ==> **#39727's ANTI-NEEDLE IS SATISFIED BEHAVIORALLY: the on-disk
+      #   store SURVIVED MERGE #5's key-scheme risk** -- a 1088-token L3 hit
+      #   loaded from a pre-merge-written store with no unavailable/degraded
+      #   signal, no endpoint-clamp decline, and (entry 318) no
+      #   rank-agreed-health drop. Caveat kept honest: ONE successful prefetch
+      #   is a liveness proof, not a hit-rate or perf measurement -- the
+      #   gauge-side observation (`sglang:hicache_storage_healthy`) is
+      #   ** NOT PRESENT IN THIS LOG (grep count 0) **, which is expected
+      #   because it is a /metrics exposition, not a log line; reading it
+      #   still needs a /metrics scrape and stays on the watch list.
+      # ==========================================================================
+      # (e) ** FIRST-SIGHT OBSERVATION -- LOGGED AS WATCH, DELIBERATELY NOT
+      #   FIXED THIS PASS: ** lines ** 25 AND 26 ** at 14:19:50, BOTH ranks:
+      #     "CustomAllreduce is disabled because PyTorch's caching allocator
+      #     is VMM-backed (PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True);
+      #     its CUDA graph buffers cannot be shared over CUDA IPC. ** Unset
+      #     expandable_segments to re-enable it. ** To silence this warning,
+      #     specify disable_custom_all_reduce=True explicitly."
+      #   ACTIONABLE HINT, AS THE MESSAGE ITSELF SAYS: either unset
+      #   expandable_segments in PYTORCH_CUDA_ALLOC_CONF, or pass
+      #   --disable-custom-allreduce to stop paying the warning. WHY IT IS
+      #   LIKELY MOOT BUT STILL WORTH A LINE NEXT TIME: ** PCIe-IPC is the tp
+      #   transport on this arm (see (a)), so TORCH's custom-AR falling back
+      #   does not remove the fast path we actually use ** -- yet this is
+      #   NCCL's OWN custom-allreduce capability declining, which is the
+      #   fallback that would matter on a group where PCIe-IPC is NOT
+      #   eligible (non-tp groups, ws==1, deterministic inference -- the
+      #   exact cases entry 308's predicate leaves alone). SO: ** if allreduce
+      #   performance ever looks off on an arm other than tp, check this line
+      #   BEFORE re-litigating the transports. ** Cross-reference: this is the
+      #   SAME VMM/expandable_segments interaction family as entry 284
+      #   (#43216's NCCL_GRAPH_REGISTER recycling under expandable_segments)
+      #   and entry 255's VMM-allocator refusal -- the allocator choice has
+      #   now been observed touching CUDA-IPC sharing as well; a future
+      #   allocator review should read these three together.
+      #   Also first-sight, benign: 246 14:23:26 "parallel_prompt_encode:
+      #   tokenizers encode_batch runs serially in this process
+      #   (TOKENIZERS_PARALLELISM...)" (entry-201-adjacent: a NOTE, not a
+      #   fault -- and with --tokenizer-worker-num unset, entries 275-277's
+      #   worker path is inert as recorded); 247/248 14:23:26 both ranks
+      #   "Removing stale PyTorch extension lock for ** hicache_hash_cpp ** at
+      #   ~/.cache/torch_extensions/..." (leftover lock files from an earlier
+      #   build being reclaimed; self-healing); and the PRE-EXISTING warning
+      #   set, unchanged in kind: context_length 1,000,000 > derived
+      #   (lines 3/11/18/20/32 -- the entry-177 truncation-align area), "Using
+      #   FP8 KV cache but no scaling factors provided. Defaulting to scaling
+      #   factors of 1.0" (67/71 -- entry-243 territory, fp8_e4m3 KV with no
+      #   calibration scales, EXPECTED for this checkpoint), and one
+      #   c10d_logger barrier() UserWarning (141).
+      # ==========================================================================
+      # WHAT THIS BOOT PROVES, COMPRESSED: the merge era's four biggest
+      # untested bets are now OBSERVED rather than assumed -- (1) the armed
+      # PCIe-IPC transport serves and reports itself (entry 245 + 308), (2)
+      # the cold autotune boot absorbs every queued retune at once (entries
+      # 258/259/260/304), (3) the L3 file store survived MERGE #5 intact
+      # (entries 250-254, 289-295, #39727 watch C9), (4) the repaired rust
+      # extension loads and the tree runs production traffic on a post-repair
+      # boot (entry 319). STILL OPEN AFTER THIS BOOT (not disproved, just not
+      # yet measured): the entry-277 first-delta / tool-call-stream latency
+      # re-check with grouped tokenizer sends ON, the #45472/#46643 TTFT and
+      # starvation watches (entry 263/268), the entry-268 unconditional
+      # batch_is_full clear under real load, b12x-dense (inert, entry 316 --
+      # nothing to see here until an arm boots it), and the whole GPU-window
+      # debt list in entries 316-320.
+
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
 ==============================================================================
@@ -11234,7 +11472,19 @@ CAVEATS
         table).
 
   * S-EXT1 (entry 304) DOES NOT RETUNE ANYTHING UNTIL A COLD BOOT HAPPENS --
-    DO NOT MISTAKE A WARM HIT FOR EVIDENCE (2026-10-29). The patch changes
+    DO NOT MISTAKE A WARM HIT FOR EVIDENCE (2026-10-29).
+    **[CLOSED BY OBSERVATION 2026-10-30 -- KEEP THIS BULLET FOR ITS REASONING,
+    BUT THE DEBT IT WARNED ABOUT IS PAID: ** the first post-merge prod boot
+    (9d, ready 14:23:10) ** WAS ** the cold boot, it ran the genuine 20/20
+    gemm1+gemm2 tuning on the fc58 cache AND the entry-176 EXTEND pass, and
+    ** both cache dirs (fc58accda32c3b83, e2fed3dfe1861856) were written at
+    14:22 ** -- verified on the filesystem, so S-EXT1's retune folded in at
+    zero extra cost exactly as designed. ** THE rank-JSON DELETION LEVER BELOW
+    IS RETIRED AND ITS BRANCH IS CLOSED; see entry 321(c) and the
+    LANDED-RECORDED pointer at BOOT_DELTA §1a. ** Everything under this line
+    stays as the reasoning that scheduled it -- INCLUDING the rule that a warm
+    HIT IS NOT EVIDENCE, which governs any FUTURE key-bump (the next one will
+    need the same sequencing).] The patch changes
     the EXTEND autotune's DUMMY INPUTS (zero-filled -> seeded distinct via
     #45543's own helper) but deliberately ** does NOT change the cache key**,
     so extend-bucket records tuned on all-zero dummies remain VALID and KEEP
