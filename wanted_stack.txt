@@ -365,6 +365,39 @@
 #         modelopt_quant.py (+210/-24) hunks; its claimed prerequisite
 #         flashinfer E4M3-K/32 W4A16 support has since shipped -- re-read
 #         whether a clean upstream route now exists. State: TODO
+#         [11-10: MERGE #6 LANDED the +950 window under this item's BASE --
+#         the flashinfer_cutlass/modelopt_quant surface it cites met upstream
+#         churn; PR head still ddd4d0df2a per the 11-09 gh refresh.
+#         RE-DERIVE the 25-file diff against the merge6 tree BEFORE doing the
+#         resync -- the f6b41c4e21-era notes above may be stale. State: TODO]
+#
+# =============================================================================
+# WAVE SWEEP-11-10 -- the 2026-11-10 gh sweep's OPEN-WINDOW recommends
+#     (full PORT record: stack.txt entry 322; the 995 merged-new arrivals
+#     ALREADY LANDED via MERGE #6 -- their reconcile obligations live in
+#     entry 322 + the 125 TODO(merge6) markers, NOT in this queue). HEADS
+#     were NOT recorded at sweep time: ** gh-recheck owed before every pick **.
+#     Touched-state check: #44342-family lines above UNCHANGED -- still OPEN
+#     @ 98bfcbd450 (44343/44348/44339 likewise), per watch-refresh 11-10.
+# =============================================================================
+#
+# --- FAM-SWEEP1110-PORT  (the 7 PORT-RECOMMENDs, land on the POST-MERGE6
+#     tree; serial within family -- mqa.py / qsa_indexer.py /
+#     modelopt_quant.py / unified_radix_cache.py are all re-plant zones)
+# #48250  open [TODO] qsa: JIT CUDA indexer-decode scoring (H) | value: bit-exact SM120, 1.6-2.7x on 4-row NEXTN verify | friction: mqa.py/qsa_indexer.py manual merge; subsumes 46631 + most of 48251
+# #48295  open [TODO] modelopt: block-FP8 MTP draft experts -> NVFP4 (H) | value: draft -1GB, +40K KV tokens, accept-length UNCHANGED | friction: B5 NVFP4 zone; draft re-A/B owed; port AFTER 0.7.3 adoption if it re-touches modelopt
+# #48274  open [TODO] qsa: fold score scale into prefill-relative kernel (M) | value: 1.26-1.46x, bit-identical | friction: re-pin the entry-320 TLFIX pass key (InvScale)
+# #49518  open [TODO] hicache: Mamba/KDA L3 snapshot interval (M) | value: -67% mamba checkpoint writes to file-L3 | friction: unit-aware vs 217/250/254/290/318; rust rebuild; verify write_through_selective accepted
+# #45819  open [TODO] spec: accept q rounding just above 1 (M) | value: acceptance recovery at T>0, greedy unaffected | friction: trivial; eagle_utils:778 consumer VERIFIED live
+# #48271  open [TODO] qsa: drop per-layer RoPE cache-length check (L) | value: one less D2H sync per QSA layer on eager prefill | friction: adapt-not-apply, small
+# #49516  open [TODO] test: mixed-chunk hybrid-radix checkpoint e2e (L) | value: guards landed #45435 on prod's exact combo | friction: test-only; needs Qwen3.5-0.8B + forward-pass-metrics
+#
+# --- FAM-SWEEP1110-WATCH  (the 5 watches -- each line's GATE is binding):
+# #48376-#48379  open [WATCH] QSA K/V host-offload series (H-watch) | value: 2.75-8x KV capacity, RTX PRO 6000 measured | GATE: hook REFUSES HiCache + mixed-chunk, both prod ON -- A/B only as a deliberate OFF-trade (operator call); hand-merge vs the entry-200 zone
+# #49404  open [WATCH] exact rep-penalty per draft position | GATE: the rep-penalty CENSUS first (generation_config + client params): never !=1 -> R; ever !=1 -> PORT (correctness H)
+# #46211  open [WATCH] EAGLE v2 opt-in step graphs | value: collectives 3->1 on TP4-PCIe | GATE: upstream landing first; 5.1k LOC CONFLICTING, megakernel-contaminated numbers
+# #44482  open [WATCH] --system-prompt fixed prefix | value: 3x mamba concurrency, fixed-prompt bulk | GATE: workload never established; collides the entry-312 admission re-plant
+# #48251  open [WATCH] 64-CTA/row TileLang decode | GATE: REDUNDANT-IF-#48250 taken -- carry only if 48250 declined
 #
 # =============================================================================
 # SECTION B REMAINDER -- merged accelerators (cherry-pick -x from origin/main;
@@ -998,6 +1031,40 @@
 #         real [x,32]-ue8m0 checkpoint decision), not as standalone cleanup.
 #         State: TODO (when armed)
 #
+# S-BLAKE3  (ENV, OPERATOR CALL -- added 2026-11-10) -- TODO: install the
+#         blake3 wheel into the prod venv WHEN AND IF booting the merge6
+#         tree. Upstream #47120 made it a HARD DEP (multimodal/cache/
+#         digest.py) and the cascade did NOT change that; the wheel is
+#         ABSENT and ALONE errors ~380 collected battery lines across
+#         mem_cache/managers/spec at dea2641dc2 -- until it lands, those
+#         numbers MEAN NOTHING. VENV WRITES ARE NEVER AGENT-SIDE (protocol
+#         rule 3 family): operator decides. State: TODO(operator-gated)
+# S-FI073-ADOPT  (ENV+repo pairing -- added 2026-11-10) -- TODO-CONDITIONAL:
+#         adopt flashinfer 0.7.3 in the entry-228 order: ** WHEEL TRIO
+#         FIRST (flashinfer-python[cu13] + flashinfer-cubin + flashinfer-
+#         jit-cache, all 0.7.3, cu13 index), THEN pyproject + engine-assert
+#         + Dockerfile pins in the SAME step.** The merged tree was CASCAD-
+#         EDBACK to 0.7.2 pins to match the installed wheel; the ADOPTION
+#         takes upstream's #48468 hunks properly. REQUIRED AT ADOPTION: the
+#         21-arg fast_prefill_plan tail (fixed_uniform_q_len -- entry-228's
+#         20-element hand-list is overtaken) and expect exactly ONE cold
+#         autotune retune boot (version-keyed caches under ~/.cache/
+#         sglang/flashinfer/autotune/). ** THIS ITEM ARBITRATES THE OPEN
+#         TENSION: upstream JIT sampling.cuh reportedly compiles ONLY
+#         against 0.7.3 headers while the tree pins 0.7.2 -- unresolved
+#         until a GPU boot judges (stack.txt entries 322/323). **
+#         State: TODO-CONDITIONAL(on blake3 + operator boot gate)
+# S-REPLANT6  (STACK-OWNED queue pointer -- added 2026-11-10) -- TODO: the
+#         MERGE #6 re-plant queue, merge-#5 shape: 125 TODO(merge6) markers
+#         (b1 12 / b2 23 / b3 18 / b4 39 / b5 17 / b6 16) mapped to the
+#         BATCH OWNERS b1->310-era / b2->314 / b3->311 / b4->312 / b5->313 /
+#         b6->315; worklist = marker entry= fields + dossier MANIFEST.tsv
+#         (/tmp/opencode/merge6-dossier, 317 replant artifacts;
+#         ours-dropped.txt = re-plant source, theirs-dropped.txt = fold
+#         source). RULE: diff ours-dropped against the taken code and
+#         ** ADOPT-UPSTREAM-WHERE-EQUIVALENT ** (dual-implementation note,
+#         stack.txt entry 323). State: TODO(re-plant era OPEN)
+#
 # =============================================================================
 # KV-ROUTE DECISION RECORD -- operator, 2026-10-29 (binding on merge #5 and
 # on every future KV-dtype question; this is a DECISION, not a TODO)
@@ -1187,3 +1254,36 @@
 #  release-branch cherry-picks that never touched origin/main (incl. #46682's
 #  odd landing -- flagged in C10). Full lists live in the two sweep reports
 #  (2026-10-28), summarized in stack.txt's 250+ wave entries as they land.
+#
+# --- 2026-11-10 SWEEP ADDITIONS (23; full verdicts stack.txt entry 322 +
+# --- its EVALUATED echo; both-halves rule applies; do not re-add without
+# --- new evidence):
+#  DSPARK/DFLASH/NGRAM/MULTI-LAYER family -- the jianc99 4618x adaptive-
+#  verify series + siblings, all gated behind never-run spec algs: #46185
+#  (ring-verify, generic halves no-op), #46186 (NEXTN never calls its
+#  builder), #46187 (estimator uncalled; caller #46190 unmerged), #46189
+#  (layouts only DSpark/DFlash produce), #46385 (multi-layer-eagle +
+#  rejection-sampling both off), #47058 (DFLASH draft architecture),
+#  #47671 (NGRAM not run; rejects ngram+replayssm), #47694 (DSpark-only
+#  files), #44588 (collides 46187, mutually exclusive upstream), #35413
+#  (DSpark compact + declines hybrid GDN -- DOA). State: EXCLUDED
+#  GATE-NEVER-SATISFIED: #33291 (deterministic-mode required; ReplaySSM
+#  CLASH; 21.7k LOC), #43571 (mixed-chunk-OFF gate; diff is a whitespace
+#  reflow), #47773 (deterministic-mode only), #48667 (PD-disagg not run),
+#  #48167 (draft has NO mamba/GDN state; enabling stub alone), #47807
+#  (SWA/layernorm-SP/reject-sampling not run; the one good half DUPLICATES
+#  landed entry 288). State: EXCLUDED
+#  ALREADY-LANDED / DUPLICATE: #49497 (seeded warm-up tokens = entries
+#  258/304 minus cache-key marker + kill-switch; 0.7.3 CANARY: cites
+#  make_repeating_tensor_initializer -- re-verify tactic picks at 0.7.3
+#  ADOPTION, entry-260 precedent). State: EXCLUDED
+#  WRONG-ARCH / MODEL / QUANT: #46631 (SM107-only; #48250 carries the
+#  SM120 half), #48759 (SM80-gated branch, SM120 never takes it), #43008
+#  (DeepSeek-V4.1-only dispatch), #48517 (fires only under an explicit
+#  --quantization modelopt_fp4 target override our launch lines never
+#  pass), #46887 (DSA != QSA AND the feature sits inside the prefill CUDA
+#  graph prod runs eager). State: EXCLUDED
+#  WORKLOAD-NEVER-RUN: #48299 (RL weight-update sessions only; recorded
+#  SILENT-corruption class for our exact flashinfer_cutlass runner --
+#  RE-ARM if any /update_weights_from_* ever appears in prod). State:
+#  EXCLUDED(re-arm-on-workload)
