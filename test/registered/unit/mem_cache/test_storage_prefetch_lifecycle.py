@@ -16,6 +16,7 @@ from sglang.srt.managers.schedule_batch import ReqKvInfo, split_cached_prefix_by
 from sglang.srt.mem_cache.base_prefix_cache import (
     BasePrefixCache,
     CacheRequestHandle,
+    CacheRequestOutcome,
     InitLoadBackParams,
 )
 from sglang.srt.mem_cache.buffer_mode.pipeline import (
@@ -100,9 +101,16 @@ def _staged_fixture(full_match=2):
     )
     cc = HybridCacheController.__new__(HybridCacheController)
     # Worker-thread state __init__ sets; read by the tick of #47617 (inert here, no workers started).
+    # Fork liveness state the collective wrapper reads (#44342, stack entry 311):
+    # a healthy stub needs the failure flag off (the same idiom as
+    # test_hicache_trailing_endpoint's 2-rank harness).
+    cc.storage_sync_failed = False
+    cc.storage_sync_failure = None
+    cc._storage_sync_lock = threading.Lock()
     cc.storage_stop_event = threading.Event()
     cc.prefetch_thread = cc.prefetch_io_aux_thread = None
     cc.prefetch_sync_thread = cc.backup_thread = None
+    cc.pp_prefetch_command_thread = None
     cc.pp_prefetch_command_group = None
     cc.page_size = 2
     cc.get_hash_str = get_hash_str
@@ -252,7 +260,11 @@ def _arm_tick(cache, sync_counts=False):
             setattr(cc, name, Queue())
         cc.extra_host_mem_release_queues = {}
     else:
-        cache._sync_hicache_ready_counts = Mock(return_value=(0, 0, (0, 0, 0, 0), ()))
+        cache._sync_hicache_ready_counts = Mock(
+            return_value=(0, 0, (0, 0, 0, 0), (), True)
+        )
+        # 5th slot: the fork's storage-worker health bit (stack entry 311's
+        # sync-recovery fold into _sync_hicache_ready_counts); a healthy stub.
     cache.writing_check = Mock()
     cache.loading_check = Mock()
     cache._drain_storage_control_queues_impl = Mock()
@@ -1260,6 +1272,10 @@ class TestStoragePrefetchDeadlineAnchor(CustomTestCase):
                 )
                 self.assertEqual(cache._storage_prefetch_wait[_REQ].timeout_s, 2.0)
                 with patch("time.perf_counter", return_value=102.1):
+                    # Production order under upstream #44614's restructure: the
+                    # tick's rank-agreed deadline vote precedes the admission
+                    # poll (the poll only reads the verdict).
+                    cache._vote_prefetch_deadlines()
                     self.assertTrue(cache.check_prefetch_progress(_REQ))
                 self.assertTrue(refetch.deadline_expired)
                 self.assertNotIn(_REQ, cache.ongoing_prefetch)
@@ -1276,7 +1292,9 @@ class TestStoragePrefetchDeadlineAnchor(CustomTestCase):
                     cache._storage_prefetch_wait[_REQ].timer.started_at, 200.0
                 )
                 self.assertEqual(cache._storage_prefetch_wait[_REQ].timeout_s, 2.0)
-                cache.release_aborted_request(_REQ)
+                # Post-merge #48491 rename: the abort release is the base hook
+                # _abandon_attempt, reached through finish() with ABORT.
+                cache.finish(_REQ, CacheRequestOutcome.ABORT)
                 self.assertFalse(cache._storage_prefetch_wait)
 
     def test_timeout_preserves_complete_kv_with_pending_sidecar(self):
@@ -1312,7 +1330,17 @@ class TestStoragePrefetchDeadlineAnchor(CustomTestCase):
                         cache.check_prefetch_progress(_REQ)
                     if failed:
                         operation.mark_terminate()
-                    with patch("time.perf_counter", return_value=200.0):
+                    # Production order under upstream #44614's restructure: the
+                    # tick's deadline vote precedes the poll, and the vote only
+                    # runs for the timeout policy. The failed arm is polled
+                    # WITHIN the budget so the storage failure -- not a lapsed
+                    # deadline -- is the sole reason for the cut (that is the
+                    # distinction this case pins).
+                    with patch(
+                        "time.perf_counter",
+                        return_value=100.5 if failed else 200.0,
+                    ):
+                        cache._vote_prefetch_deadlines()
                         self.assertEqual(
                             cache.check_prefetch_progress(_REQ),
                             failed or policy != "wait_complete",
@@ -1336,6 +1364,9 @@ class TestStoragePrefetchDeadlineAnchor(CustomTestCase):
 
                 def poll(now):
                     with patch("time.perf_counter", return_value=now):
+                        # Every scheduler step ticks first: the deadline vote
+                        # (upstream #44614's restructure) precedes the poll.
+                        cache._vote_prefetch_deadlines()
                         ready = cache.check_prefetch_progress(_REQ)
                         stats.observe_storage_prefetch_ready(ready)
                     return ready

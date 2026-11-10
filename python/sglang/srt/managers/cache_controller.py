@@ -1199,7 +1199,13 @@ class HiCacheController:
 
         transfers = self._l2_transfers(host_indices, device_indices, pool_transfers)
         completion = self.l2_transfer_engine.submit_device_to_host(transfers)
-        # TODO(merge6) zone=b3 entry=311 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__managers__cache_controller.py.ours-dropped.txt
+        # merge-#6 B3 seam closed (stack entry 311): the dropped fork line
+        # (allocator.set_hicache_transfer_done_event((id(self), "write"),
+        # completion.finish_event) -- entry-168's write-side half) is superseded
+        # by upstream c24285bde9 (#48008's per-band page ledger) + 2cbb66f563
+        # (#48012): record_host_transfer below publishes the same completion
+        # signal per-page to the storage the move waits on, for BOTH directions
+        # (the load twin passes writes=True).
 
         if self.kv_storage is not None:
             self.kv_storage.record_host_transfer(

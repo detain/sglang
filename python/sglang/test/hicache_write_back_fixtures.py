@@ -114,7 +114,12 @@ class InstantWriteBackController:
             timing_enabled=False,
         )
 
-    def start_writing(self):
+    def start_writing(self, *, wait_for_forward: bool = False):
+        # Mirrors HiCacheController.start_writing's keyword (merge-#6 B3): the
+        # write-back drain in UnifiedRadixCache.writing_check submits both the
+        # batched-backup queue and its own copies under ONE fenced call. A copy
+        # here is instant, so there is no forward to wait for and the flag is
+        # accepted-and-ignored, not a weakened fence.
         if self.write_queue:
             self.ack_write_queue.append(self._done_ack(self.write_queue))
 

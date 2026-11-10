@@ -127,6 +127,7 @@ from sglang.srt.observability.metrics_collector import (
     StorageMetricsCollector,
 )
 from sglang.srt.runtime_context import (
+    get_context,
     get_disagg,
     get_memory,
     get_model,
@@ -624,7 +625,16 @@ class UnifiedRadixCache(BasePrefixCache):
                 storage_extra_config.setdefault(
                     "file_storage_path", server_args.file_storage_path
                 )
-        # TODO(merge6) zone=b3 entry=311 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__mem_cache__unified_radix_cache.py.ours-dropped.txt
+        # merge-#6 B3 seam closed (stack entry 311): the dropped fork call to
+        # StorageAttachment.resolve_prefetch_threshold (the buffer-mode
+        # complete-window threshold floor) was deliberately deleted upstream by
+        # dfaca5681d (#46934, "Restore sub-window SWA L3 hits under a mid-tree
+        # anchor") -- the floor suppressed sub-window SWA L3 hits, which #46934
+        # restores; window sizing is enforced per-allocation inside
+        # BufferModePipeline (pipeline.py:454/551) instead. The per-call-site
+        # file_storage_path fold above is redundant-but-consistent with the
+        # fork's entry-253 funnel (cache_controller.py:948 setdefault), which
+        # still runs on EVERY attach path.
 
         attach_hybrid_pool_to_unified_cache(
             self,
@@ -3904,23 +3914,42 @@ class UnifiedRadixCache(BasePrefixCache):
                 )
             aux_hit_tokens = hit_tokens
 
+            # Entry 293's opt-in full-hit staging wait: park the hit and retry
+            # on a cadence within the budget instead of partial-allocating (the
+            # allow_partial=False keeps the span whole); default wait 0 = the
+            # old decline-and-revoke. Merge-#6 B3 re-plant (stack entry 311):
+            # the cadence gate and the expired no-retry arm were dropped by
+            # take-upstream; without them every tick re-enters
+            # allocate_storage_hit (evict_host churn) past the budget.
+            now = time.monotonic()
+            deadline = getattr(operation, "host_capacity_deadline", None)
+            expired = wait_full and deadline is not None and now >= deadline
+            if (
+                wait_full
+                and not expired
+                and now < getattr(operation, "host_capacity_next_retry", 0)
+            ):
+                return False
+
             # Hybrid pools (SWA / Mamba) are trailing-window aligned, so a
             # shortened recovery boundary may be invalid in storage; only
             # full-only models may truncate the prefix to fit host capacity.
-            allow_partial = not info.comp_xfers
-            host_indices, alloc_len = cc.allocate_storage_hit(
-                operation,
-                hit_tokens,
-                allow_partial=allow_partial,
-                min_tokens=self.prefetch_threshold if allow_partial else hit_tokens,
-                evict_host=self.evict_host,
-                # TODO(merge6) zone=b3 entry=311 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__mem_cache__unified_radix_cache.py.ours-dropped.txt
+            # (Upstream #46970x rule, kept; entry-293's wait_full additionally
+            # keeps the span whole while a full-hit wait is parked.)
+            allow_partial = not wait_full and not info.comp_xfers
+            host_indices, alloc_len = (
+                (None, hit_tokens)
+                if expired
+                else cc.allocate_storage_hit(
+                    operation,
+                    hit_tokens,
+                    allow_partial=allow_partial,
+                    min_tokens=self.prefetch_threshold if allow_partial else hit_tokens,
+                    evict_host=self.evict_host,
+                )
             )
             if host_indices is None:
                 retries = getattr(operation, "host_capacity_retries", 0)
-                now = time.monotonic()
-                deadline = getattr(operation, "host_capacity_deadline", None)
-                expired = wait_full and deadline is not None and now >= deadline
                 if (
                     wait_full
                     and not expired
@@ -4682,7 +4711,14 @@ class UnifiedRadixCache(BasePrefixCache):
         if state is not None:
             return state or None
         self._hcs_state = False
-        if not get_memory().hicache_async_ready_sync:
+        ctx = get_context()
+        if not (
+            ctx.is_config_namespace_published("memory")
+            and get_memory().hicache_async_ready_sync
+        ):
+            # No published server config (a CPU fixture, a bare cache in a
+            # two-rank test): nothing opted in, so the plain synchronous path
+            # applies. Production publishes before any cache is built.
             return None
         cc = self.cache_controller
         cp = self.attn_cp_group

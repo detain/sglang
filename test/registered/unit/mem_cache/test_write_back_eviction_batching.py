@@ -62,6 +62,10 @@ class _FencedController(InstantWriteBackController):
         self.submitted = []
         self._pool_names = pool_names
         forward = SimpleNamespace()
+        # The fork's unconditional entry-168 load fence reads this first, ahead
+        # of upstream's opt-in write fence (stack entry 218); in prod both are
+        # the same forward stream, so the double uses the same one.
+        self.load_fence_stream = forward
         self.write_fence_stream = forward
 
         def wait_stream(stream):
@@ -371,11 +375,14 @@ class _WriteBackBatchingSuite:
         controller = cache.cache_controller
         start_writing = controller.start_writing
 
-        def record_submission():
+        def record_submission(*, wait_for_forward: bool = False):
             tokens = sum(len(op.host_indices) for op in controller.write_queue)
             if tokens:
                 submitted.append(tokens)
-            return start_writing()
+            # Forward the keyword: the wait this records is exactly the one
+            # the drain's single fenced start_writing performs (entry 218's
+            # one-fence rule), so swallowing it would measure a weaker fence.
+            return start_writing(wait_for_forward=wait_for_forward)
 
         waits, count_waits = self._count_waits(cache)
         with (
