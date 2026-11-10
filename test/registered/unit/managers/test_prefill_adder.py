@@ -425,6 +425,63 @@ class TestPrefillAdder(CustomTestCase):
                 )
                 self.assertEqual(req.extend_len, expected)
 
+    # Re-homed (merge-#6 B2) from the entry-314-era fork pricing block: a
+    # hybrid-Mamba chunk boundary is pinned to the FULL KV PAGE grid, not the
+    # raw chunk budget -- an off-page end strands an uncacheable tail.
+
+    def test_hybrid_mamba_continuation_ends_on_full_kv_page(self):
+        self.mock_tree_cache.supports_mamba.return_value = True
+        self.mock_token_allocator.available_size.return_value = 10000
+        adder = self.create_adder(
+            self.create_running_batch(), page_size=16, rem_chunk_tokens=123
+        )
+        req = self.create_mock_req("continuation", priority=0, max_new_tokens=0)
+        req.prefix_len = 128
+        req.full_untruncated_fill_ids = list(range(307))
+
+        self.assertIs(adder.add_chunked_req(req), req)
+        self.assertEqual(req.extend_end, 240)
+
+    def test_hybrid_mamba_ignore_eos_prime_ends_on_full_kv_page(self):
+        self.mock_tree_cache.supports_mamba.return_value = True
+        self.mock_token_allocator.available_size.return_value = 10000
+        adder = self.create_adder(
+            self.create_running_batch(), page_size=16, rem_chunk_tokens=123
+        )
+        req = self.create_mock_req("prime", priority=0, max_new_tokens=0)
+        req.sampling_params.ignore_eos = True
+        req.origin_input_ids = list(range(307))
+        req.full_untruncated_fill_ids = list(range(307))
+
+        adder.add_one_req_ignore_eos(req)
+        self.assertEqual(req.extend_end, 112)
+
+    def test_hybrid_mamba_continuation_defers_without_full_page(self):
+        self.mock_tree_cache.supports_mamba.return_value = True
+        self.mock_token_allocator.available_size.return_value = 10000
+        adder = self.create_adder(
+            self.create_running_batch(), page_size=16, rem_chunk_tokens=15
+        )
+        req = self.create_mock_req("continuation", priority=0, max_new_tokens=0)
+        req.full_untruncated_fill_ids = list(range(307))
+
+        self.assertIs(adder.add_chunked_req(req), req)
+        self.assertIsNone(req.extend_end)
+        self.assertEqual(adder.can_run_list, [])
+
+    def test_hybrid_mamba_continuation_keeps_untruncated_tail(self):
+        self.mock_tree_cache.supports_mamba.return_value = True
+        self.mock_token_allocator.available_size.return_value = 10000
+        adder = self.create_adder(
+            self.create_running_batch(), page_size=16, rem_chunk_tokens=123
+        )
+        req = self.create_mock_req("tail", priority=0, max_new_tokens=0)
+        req.prefix_len = 128
+        req.full_untruncated_fill_ids = list(range(143))
+
+        self.assertIsNone(adder.add_chunked_req(req))
+        self.assertEqual(req.extend_end, 143)
+
     def test_encoder_replay_rows_share_the_chunk(self):
         # A hit's replay rows run in the same step as its extend, so both must
         # fit the chunk: the MegaMoE token cap is sized from it.

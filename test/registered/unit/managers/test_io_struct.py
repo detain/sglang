@@ -40,7 +40,6 @@ from sglang.srt.sampling.sampling_params import (
     SamplingParams,
 )
 
-# TODO(merge6) zone=b2 entry=314 -- fork region dropped by merge6 take-upstream resolution (B2); snapshot /tmp/opencode/merge6-dossier/replant/test__registered__unit__managers__test_io_struct.py.ours-dropped.txt
 from sglang.srt.utils.msgpack_utils import _restore_torch_tensor, enc_hook, ext_hook
 from sglang.test.ci.ci_register import (
     register_amd_ci,
