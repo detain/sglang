@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 from bisect import bisect_right
+from copy import copy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
@@ -346,19 +347,30 @@ class DefaultPoolConfigurator(MemoryPoolConfigurator):
                     draft_indexer_size *= dcp_size
                     self._cell_size += draft_kv_size + draft_indexer_size
                 else:
-                    # Under DCP a non-DSA draft pool spans the allocator's widened
-                    # ids (KVCacheConfigurator.loc_space_scale) but keeps its KV
-                    # heads unreplicated (ModelConfig.get_num_kv_heads).
-                    draft_cell_size = (
-                        self._compute_cell_size(kvc, num_layers, dcp_size=1)
-                        if dcp_size > 1
-                        else self._cell_size
-                    )
-                    draft_kv_size = int(
-                        draft_cell_size * draft_num_layers / int(num_layers)
-                    )
-                    self._cell_size += draft_kv_size * draft_loc_space_scale * dcp_size
-        # TODO(merge6) zone=b4 entry=312 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__model_executor__pool_configurator.py.ours-dropped.txt
+                    if is_float4_e2m1fn_x2(kvc.kv_cache_dtype):
+                        # FP4 has a per-worker dequant workspace shared across
+                        # layers. The draft therefore needs its own full
+                        # workspace, not a layer-proportional fraction of the
+                        # target workspace (and not scaled by the HiSparse
+                        # logical-space ratio either: the workspace is fixed).
+                        self._cell_size += self._compute_eagle_fp4_draft_cell_size(
+                            kvc, draft_num_layers
+                        )
+                    else:
+                        # Under DCP a non-DSA draft pool spans the allocator's widened
+                        # ids (KVCacheConfigurator.loc_space_scale) but keeps its KV
+                        # heads unreplicated (ModelConfig.get_num_kv_heads).
+                        draft_cell_size = (
+                            self._compute_cell_size(kvc, num_layers, dcp_size=1)
+                            if dcp_size > 1
+                            else self._cell_size
+                        )
+                        draft_kv_size = int(
+                            draft_cell_size * draft_num_layers / int(num_layers)
+                        )
+                        self._cell_size += (
+                            draft_kv_size * draft_loc_space_scale * dcp_size
+                        )
 
         # DFLASH/DSPARK: the draft's per-token KV cost can differ from the target's
         # (e.g. MLA target, per-head K/V draft), so size from the draft config.
@@ -384,6 +396,44 @@ class DefaultPoolConfigurator(MemoryPoolConfigurator):
                     draft_cell_size_per_token=_dflash_draft_cell_size(kvc) or None,
                 )
 
+    def _compute_eagle_fp4_draft_cell_size(
+        self, kvc: KVCacheConfigurator, num_layers: int
+    ) -> int:
+        """Price the draft's dtype with the allocator's selected FP4 recipe.
+
+        Like the existing EAGLE sizing path, this assumes target/draft attention
+        geometry matches. The allocator selects buffers from shared server_args,
+        including when the draft executes on an overridden backend. An explicit
+        auto dtype is conservatively priced at the draft's compute dtype before
+        the draft model's quant config loads.
+        """
+        draft_dtype = get_spec().speculative_draft_kv_cache_dtype
+        draft_backend = get_spec().speculative_draft_attention_backend
+        if draft_dtype is None or draft_dtype == kvc.kv_cache_dtype_str:
+            return self._compute_cell_size(kvc, num_layers)
+
+        from sglang.srt.mem_cache.kv_cache_dtype import configure_kv_cache_dtype
+
+        draft_model_config = kvc.spec_aux_config.draft_model_config
+        draft_model_dtype = (
+            draft_model_config.dtype
+            if draft_model_config is not None
+            else kvc.model_dtype
+        )
+        dtype_str, dtype = configure_kv_cache_dtype(
+            server_args_kv_cache_dtype=kvc.kv_cache_dtype_str,
+            speculative_draft_kv_cache_dtype=draft_dtype,
+            model=None,
+            model_dtype=draft_model_dtype,
+            is_draft_worker=True,
+            is_dflash=False,
+            speculative_draft_attention_backend=draft_backend,
+        )
+        draft_kvc = copy(kvc)
+        draft_kvc.kv_cache_dtype = dtype
+        draft_kvc.kv_cache_dtype_str = dtype_str or draft_dtype
+        return self._compute_cell_size(draft_kvc, num_layers)
+
     def _compute_cell_size(
         self,
         kvc: KVCacheConfigurator,
@@ -395,7 +445,6 @@ class DefaultPoolConfigurator(MemoryPoolConfigurator):
         ``dcp_size`` is the DCP degree the KV heads replicate over, the runner's by
         default; an EAGLE draft does not replicate its heads and passes 1.
         """
-        # TODO(merge6) zone=b4 entry=312 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__model_executor__pool_configurator.py.ours-dropped.txt
         # args to config cell size
         model_config = kvc.model_config
         kv_cache_dtype = kvc.kv_cache_dtype

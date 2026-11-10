@@ -954,10 +954,10 @@ class MambaPool:
                 # KDA verify kernel takes intermediate_states_buffer=None (skips the
                 # per-step write, CACHE_INTERMEDIATE_STATES=False) and the commit
                 # replays the ring into the checkpoint instead. This is the memory win.
-                # TODO(merge6) zone=b4 entry=312 -- grafted fork lossless-verify tuple
-                # buffers back around the upstream replayssm/skip chain (merge #5
-                # cascade-repair class; full fork region in
-                # /tmp/opencode/merge6-dossier/replant/python__sglang__srt__mem_cache__memory_pool.py.ours-dropped.txt).
+                # The grafted fork lossless-verify tuple (entry-203, merge #5
+                # cascade-repair class) was VERIFIED here: check_linear_lossless_verify
+                # gates it, the u/k/g caches supersede the [HV,V,K] snapshot only
+                # under the flag, and kv_cache_configurator already supplies it.
                 lossless_verify = enable_linear_lossless_verify
                 intermediate_ssm_u_cache = None
                 intermediate_ssm_k_cache = None

@@ -688,7 +688,12 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
                 sorted(DSV41_EARLY_VERIFY_VARIANTS),
             )
 
-        # TODO(merge6) zone=b4 entry=312 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (delete_vs_edit)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__model_executor__runner__decode_cuda_graph_runner.py.ours-dropped.txt
+        # Entry-61 boot-integrity seam (fork-only; the def and the replay-side
+        # consumer landed at the merge but the call was dropped by the
+        # take-upstream resolution -- without it every real DecodeCudaGraphRunner
+        # build AttributeErrors on _replay_prepare_hook in the replay path).
+        self._init_model_hooks()
+
         # --- capture --------------------------------------------------
         try:
             with model_capture_mode():

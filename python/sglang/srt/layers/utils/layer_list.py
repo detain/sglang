@@ -78,9 +78,9 @@ def make_layers(
 
     def build(stack, idx):
         appended = len(stack.appends)
-        # TODO(merge6) zone=b4 entry=312 -- re-homed fork hunk (was utils/common.py make_layers):
-        # release cached blocks between layer builds so SM120-class cards survive deep
-        # stacks; keep next to its sibling now that upstream moved make_layers here.
+        # Re-homed fork hunk (was utils/common.py make_layers): release cached
+        # blocks between layer builds so SM120-class cards survive deep
+        # stacks; kept next to its sibling now that upstream moved make_layers here.
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         layer = layer_fn(idx=idx, prefix=add_prefix(idx, prefix))

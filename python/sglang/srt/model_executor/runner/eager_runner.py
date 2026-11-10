@@ -335,7 +335,6 @@ class EagerRunner(BaseRunner):
                 # prepare_cp_inputs. Other group-sharing models keep owning the
                 # layout in forward().
                 ret = self._execute_extend_cp(forward_batch, kwargs)
-            # TODO(merge6) zone=b4 entry=312 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__model_executor__runner__eager_runner.py.ours-dropped.txt
             else:
                 ret = model_runner.model.forward(
                     forward_batch.input_ids,
