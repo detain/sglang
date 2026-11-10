@@ -102,7 +102,13 @@ from sglang.srt.models.qwen4_exp_ple_rows import PageCacheRowSource, hash_contex
 from sglang.srt.models.qwen4_exp_ple_staging import EagerHashKey, PleHostStaging
 from sglang.srt.models.qwen4_exp_ple_table import (
     allocate_ple_host_table,
-    device_uses_host_page_tables,
+    # merge-#6 B3 C4 mechanical rename: upstream #48421-era restructure renamed
+    # the fork's device_uses_host_page_tables -> device_reads_pageable_memory
+    # (qwen4_exp_ple_table.py:412, body byte-identical; its own b5 marker stands
+    # for that region). The b5 ours-superset import region kept the old name,
+    # so importing this module raised -- the mem_cache battery's sole collection
+    # error (kv/test_ple_state_coordinates).
+    device_reads_pageable_memory,
     make_ple_file_prefetcher,
     make_ple_file_rss_trimmer,
     ple_pinned_mapping,
@@ -1358,7 +1364,7 @@ class Qwen4ExpPinnedHostEmbedding(VocabParallelEmbedding):
         direct = True
         if backend == "file":
             device_index = torch.cuda.current_device()
-            supported = device_uses_host_page_tables(device_index)
+            supported = device_reads_pageable_memory(device_index)
             if supported is None:
                 raise RuntimeError(
                     "--ple-offload-backend file: could not query "

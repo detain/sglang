@@ -275,7 +275,7 @@ def test_file_embedding_selects_staging(tmp_path, direct):
     with (
         mock.patch.object(qwen4, "_PLE_LOGGED_DEVICES", set()),
         mock.patch("torch.cuda.current_device", return_value=2),
-        mock.patch.object(qwen4, "device_uses_host_page_tables", return_value=direct),
+        mock.patch.object(qwen4, "device_reads_pageable_memory", return_value=direct),
         mock.patch.object(qwen4, "make_ple_file_rss_trimmer", return_value=None),
     ):
         if direct is None:

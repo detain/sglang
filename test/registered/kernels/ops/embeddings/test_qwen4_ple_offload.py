@@ -382,7 +382,7 @@ def staged_file_embedding(request):
     dtype = request.param
     with tempfile.TemporaryDirectory() as directory:
         with mock.patch.object(
-            qwen4_exp_module, "device_uses_host_page_tables", return_value=False
+            qwen4_exp_module, "device_reads_pageable_memory", return_value=False
         ):
             embedding = Qwen4ExpPinnedHostEmbedding(
                 _make_source_embedding(
