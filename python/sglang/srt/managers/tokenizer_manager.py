@@ -205,7 +205,10 @@ from sglang.srt.sampling.custom_logit_processor import (
     UOCR_PAGE_GUARD_PROCESSOR,
     supports_sampling_mask,
 )
-from sglang.srt.sampling.sampling_params import SamplingParams
+from sglang.srt.sampling.sampling_params import (
+    SamplingParams,
+    validate_top_logprobs_num,
+)
 from sglang.srt.sampling.watermarking.core import (
     resolve_watermark_request,
 )
@@ -1633,18 +1636,16 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                 )
 
     def _validate_top_logprobs_num(self, obj: GenerateReqInput) -> None:
-        # Invalid counts can corrupt the batch or fail torch.topk past the vocab size.
+        # DEDUPE resolved as a union: #44047's return_logprob gate (a disabled
+        # row never reaches a topk -- its batch counts are zeroed at hand-off,
+        # see test_sampling_mask_validation) with the fork's (entry-157)
+        # delegation to the shared validate_top_logprobs_num, whose message
+        # names the field for the API's 400.
         top_logprobs_num = obj.top_logprobs_num
         if not obj.return_logprob or top_logprobs_num is None:
             return
-        vocab_size = self.model_config.vocab_size
-        if type(top_logprobs_num) is not int or not 0 <= top_logprobs_num <= vocab_size:
-            raise ValueError(
-                f"top_logprobs must be an integer in [0, {vocab_size}], "
-                f"got {top_logprobs_num!r}."
-            )
+        validate_top_logprobs_num(top_logprobs_num, self.model_config.vocab_size)
 
-    # TODO(merge6) zone=b4 entry=312 -- fork region dropped by merge6 take-upstream resolution (DEDUPE candidate: both added _validate_top_logprobs_num (entry-157 vs upstream)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__managers__tokenizer_manager.py.ours-dropped.txt
     def _create_tokenized_object(
         self,
         obj: Union[GenerateReqInput, EmbeddingReqInput],

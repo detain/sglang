@@ -348,7 +348,9 @@ class DetokenizerManager(MultiHttpWorkerDetokenizerMixin):
             s = states[i]
             if s is None:
                 output_strs.append("")
-                # TODO(merge6) zone=b4 entry=312 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__managers__detokenizer_manager.py.ours-dropped.txt
+                # The state was evicted or released; #47338 moved the
+                # streaming arm (incl. the fork's sent_offset anti-retreat
+                # clamp) into DetokenizeState.step.
                 continue
             finished_reason = recv_obj.finished_reasons[i]
             if finished_reason is not None:

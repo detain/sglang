@@ -884,21 +884,34 @@ class TestGenerateReqInputNormalization(CustomTestCase):
         self.assertEqual(req.modalities, ["image", "image", "image"])
 
     def test_parallel_sampling_n_above_max_raises_before_fan_out(self):
-        """A huge n must 400 before text is replicated."""
-        req = GenerateReqInput(
-            text="Hello",
-            sampling_params={"n": MAX_PARALLEL_SAMPLES + 1},
-        )
-        with self.assertRaisesRegex(ValueError, r"n must be an integer in \[1,"):
+        """A huge n must 400 before text is replicated.
+
+        Re-pinned (merge-#6 B4) from the fork's static MAX_PARALLEL_SAMPLES
+        bound onto #44047's env-tunable SGLANG_MAX_BATCH_REQS_PER_HTTP_REQ at
+        its default; the guarded contract -- reject before any copy -- is
+        unchanged.
+        """
+        with envs.SGLANG_MAX_BATCH_REQS_PER_HTTP_REQ.override(4096):
+            req = GenerateReqInput(
+                text="Hello",
+                sampling_params={"n": 4096 + 1},
+            )
+            with self.assertRaisesRegex(ValueError, r"n must be an integer in \[1,"):
+                req.normalize_batch_and_arguments()
+            self.assertEqual(req.text, "Hello")
+
+    def test_explicit_null_n_rejected_before_fan_out(self):
+        """JSON null n fails the bound instead of silently becoming one.
+
+        Re-pinned (merge-#6 B4): #44047 made the normalization boundary
+        strict; the lenient null-means-one mapping lives on at the
+        SamplingParams layer. The fan-out guard's invariant -- the prompt is
+        never replicated for a rejected n -- is what this pins.
+        """
+        req = GenerateReqInput(text="Hello", sampling_params={"n": None})
+        with self.assertRaisesRegex(ValueError, r"n must be an integer"):
             req.normalize_batch_and_arguments()
         self.assertEqual(req.text, "Hello")
-
-    def test_explicit_null_n_stays_a_single_request(self):
-        """JSON null matches a missing n: one sample, no fan-out."""
-        req = GenerateReqInput(text="Hello", sampling_params={"n": None})
-        req.normalize_batch_and_arguments()
-        self.assertEqual(req.text, "Hello")
-        self.assertEqual(req.parallel_sample_num, 1)
 
     def test_beam_n_above_max_parallel_does_not_fan_out(self):
         req = GenerateReqInput(
@@ -922,21 +935,23 @@ class TestGenerateReqInputNormalization(CustomTestCase):
                 text="Hello",
                 sampling_params={"n": n, "beam_width": 4},
             )
-            with self.assertRaisesRegex(ValueError, r"n must be an integer >= 1"):
+            with self.assertRaisesRegex(ValueError, r"n must be an integer"):
                 req.normalize_batch_and_arguments()
             self.assertEqual(req.text, "Hello")
 
     def test_parallel_sampling_validates_every_request_n(self):
         """A later request is bounded on its own, not by the first item.
 
-        The first item is beam search, so its n may exceed MAX_PARALLEL_SAMPLES. The second
-        is not, and the same n must 400 before either prompt is copied.
+        Re-pinned (merge-#6 B4): #44047 dropped the per-item beam exception at
+        this boundary (beam widths are validated where the beam request is
+        rendered). The first item sits at the env cap, the second is above it
+        and must 400 before either prompt is copied.
         """
         req = GenerateReqInput(
             text=["Hello", "World"],
             sampling_params=[
-                {"n": MAX_PARALLEL_SAMPLES + 1, "beam_width": MAX_PARALLEL_SAMPLES + 8},
-                {"n": MAX_PARALLEL_SAMPLES + 1},
+                {"n": 4096, "beam_width": MAX_PARALLEL_SAMPLES + 8},
+                {"n": 4097},
             ],
         )
         with self.assertRaisesRegex(ValueError, r"n must be an integer in \[1,"):
@@ -966,6 +981,7 @@ class TestGenerateReqInputNormalization(CustomTestCase):
         req = GenerateReqInput(
             text="Hello",
             sampling_params={},
+            return_logprob=True,
             top_logprobs_num=vocab_size + 1,
         )
         with self.assertRaisesRegex(ValueError, "top_logprobs_num"):
@@ -974,6 +990,7 @@ class TestGenerateReqInputNormalization(CustomTestCase):
         accepted = GenerateReqInput(
             text="Hello",
             sampling_params={},
+            return_logprob=True,
             top_logprobs_num=vocab_size,
         )
         manager._validate_one_request(accepted, [1])

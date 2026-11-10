@@ -27,10 +27,15 @@ tokenizer download.
 
 import types
 import unittest
+from array import array
 from types import SimpleNamespace
 
-from sglang.srt.managers import detokenizer_manager
+from sglang.srt.managers import incremental_detokenize
 from sglang.srt.managers.detokenizer_manager import DetokenizerManager
+from sglang.srt.managers.incremental_detokenize import (
+    DetokenizeHeader,
+    DetokenizeStateTable,
+)
 from sglang.test.ci.ci_register import register_cpu_ci
 
 register_cpu_ci(est_time=6, suite="base-a-test-cpu")
@@ -81,13 +86,15 @@ def _manager(tokenizer, disable_tokenizer_batch_decode=False):
     stub = SimpleNamespace(
         tokenizer=tokenizer,
         vocab_size=tokenizer.vocab_size,
-        decode_status={},
+        detokenize_state_table=DetokenizeStateTable(capacity=128),
         disable_tokenizer_batch_decode=disable_tokenizer_batch_decode,
     )
     stub.trim_matched_stop = types.MethodType(
         DetokenizerManager.trim_matched_stop, stub
     )
-    stub._clamp_decode_ids = DetokenizerManager._clamp_decode_ids
+    # #47338 moved the state machine (and the fork's _clamp_decode_ids) into
+    # incremental_detokenize.py; the manager methods below are the remaining
+    # class members this driver exercises.
     stub._grouped_batch_decode = types.MethodType(
         DetokenizerManager._grouped_batch_decode, stub
     )
@@ -97,10 +104,10 @@ def _manager(tokenizer, disable_tokenizer_batch_decode=False):
 def _stream(chunks, disable_tokenizer_batch_decode=False, record_clamp=False):
     """Feed one BatchTokenIDOutput per chunk; return (stream, offsets, clamp).
 
-    Follows the server: the first output carries the prompt tail plus the first
-    generated tokens with `read_offset` marking the prompt boundary, and every
-    later output carries only the ids added since (`send_decode_id_offset`).
-    The final output is empty and finished, which materializes the request.
+    Follows the server: the first output carries the DetokenizeHeader with the
+    prompt tail (the state seeds decode_ids from it); every output carries only
+    the ids added since, with completion_tokens counting the generated ids in
+    all. The final output is empty and finished, which materializes the request.
 
     With `record_clamp`, each call to `find_printable_text` records
     `(sent_offset before, decoded_text_len, len(printable))` so a test can tell
@@ -109,41 +116,50 @@ def _stream(chunks, disable_tokenizer_batch_decode=False, record_clamp=False):
     """
     tokenizer = _ByteTokenizer()
     mgr = _manager(tokenizer, disable_tokenizer_batch_decode)
-    ids = [TEXT_TOKEN + b for b in TAIL]
-    read_offset = len(ids)
+    header = DetokenizeHeader(
+        prompt_tail_ids=array("q", [TEXT_TOKEN + b for b in TAIL]),
+        skip_special_tokens=True,
+        spaces_between_special_tokens=True,
+        no_stop_trim=False,
+        http_worker_ipc=None,
+    )
     out, seen, clamp = [], [], []
+    total_gen = 0
 
-    real_find_printable_text = detokenizer_manager.find_printable_text
+    real_find_printable_text = incremental_detokenize.find_printable_text
 
     def spy(text):
         result = real_find_printable_text(text)
-        state = mgr.decode_status.get("r")
+        state = mgr.detokenize_state_table.get("r")
         if state is not None:
             clamp.append((state.sent_offset, state.decoded_text_len, len(result)))
         return result
 
     if record_clamp:
-        detokenizer_manager.find_printable_text = spy
+        incremental_detokenize.find_printable_text = spy
     try:
         for i, chunk in enumerate(list(chunks) + [b""]):
             finished = i == len(chunks)
-            ids = ids + [TEXT_TOKEN + b for b in chunk]
+            new_ids = array("q", [TEXT_TOKEN + b for b in chunk])
+            total_gen += len(new_ids)
             recv = SimpleNamespace(
                 rids=["r"],
-                decode_ids=[list(ids) if i == 0 else [TEXT_TOKEN + b for b in chunk]],
-                read_offsets=[read_offset if i == 0 else 0],
-                decoded_texts=[""],
+                detokenize_headers=[header if i == 0 else None],
+                output_ids_flat=new_ids,
+                output_ids_offsets=[0, len(new_ids)],
+                completion_tokens=[total_gen],
                 finished_reasons=[{} if finished else None],
-                no_stop_trim=[False],
-                skip_special_tokens=[True],
-                spaces_between_special_tokens=[True],
+                beam_search_output=None,
             )
-            out.append(DetokenizerManager._decode_batch_token_id_output(mgr, recv)[0])
-            state = mgr.decode_status.get("r")
+            states = DetokenizerManager._update_detokenize_states(mgr, recv)
+            out.append(
+                DetokenizerManager._decode_batch_token_id_output(mgr, recv, states)[0]
+            )
+            state = mgr.detokenize_state_table.get("r")
             if state is not None:
                 seen.append((state.decoded_text_len, state.sent_offset))
     finally:
-        detokenizer_manager.find_printable_text = real_find_printable_text
+        incremental_detokenize.find_printable_text = real_find_printable_text
     return "".join(out), seen, clamp
 
 

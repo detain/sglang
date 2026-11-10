@@ -270,9 +270,14 @@ class TestSamplingParamsVerify(CustomTestCase):
         self._make(n=200, beam_width=256).verify(self.VOCAB_SIZE)
 
     def test_beam_n_below_one_raises(self):
-        """A non-positive beam n is stored as num_return and slices the sequences."""
+        """A non-positive beam n is stored as num_return and slices the sequences.
+
+        Re-pinned (merge-#6 B4): the n<1 rejection now happens in __post_init__
+        under the env-bounded validator (#44047), whose message form is the
+        general one; the pin is that construction fails, not the wording.
+        """
         for n in (0, -1):
-            with self.assertRaisesRegex(ValueError, r"n must be an integer >= 1"):
+            with self.assertRaisesRegex(ValueError, r"n must be an integer"):
                 self._make(n=n, beam_width=4).verify(self.VOCAB_SIZE)
 
     def test_beam_n_above_beam_width_passes_verify(self):

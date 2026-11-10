@@ -71,7 +71,6 @@ from sglang.srt.observability.req_time_stats import SchedulerOutputTimeStats
 from sglang.srt.sampling.sampling_mask import SamplingMaskChunk
 from sglang.srt.sampling.sampling_params import SamplingParams, validate_n
 
-# TODO(merge6) zone=b4 entry=312 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__managers__io_struct.py.ours-dropped.txt
 from sglang.srt.utils.field_validators import validate_optional_list_i64_1d_2d
 from sglang.srt.utils.msgpack_utils import (
     dec_hook,
@@ -541,9 +540,12 @@ class GenerateReqInput:
             self.parallel_sample_num = 1
             return
         # Validate before inputs are expanded n times; verify() runs too late.
+        # ADOPTED (#44047, b2616cabbf): this env-bounded gate supersedes the
+        # fork's static MAX_PARALLEL_SAMPLES/beam-aware loop (entry-157 era);
+        # the #46272 brp track field never lived in this file -- the id-set
+        # halves are in batch_result_processor/schedule_batch (C3/C2).
         elif isinstance(self.sampling_params, dict):
             self.parallel_sample_num = validate_n(self.sampling_params.get("n", 1))
-        # TODO(merge6) zone=b4 entry=312 -- fork region dropped by merge6 take-upstream resolution (entry-265 brp track field); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__managers__io_struct.py.ours-dropped.txt
         else:  # isinstance(self.sampling_params, list):
             self.parallel_sample_num = validate_n(self.sampling_params[0].get("n", 1))
             for sampling_params in self.sampling_params:
@@ -551,7 +553,6 @@ class GenerateReqInput:
                     raise ValueError(
                         "The parallel_sample_num should be the same for all samples in sample params."
                     )
-        # TODO(merge6) zone=b4 entry=312 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__managers__io_struct.py.ours-dropped.txt
 
         self.parallel_sample_num = self._handle_beam_search_parallel_sampling()
 

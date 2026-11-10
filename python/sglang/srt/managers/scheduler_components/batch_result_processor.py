@@ -512,7 +512,7 @@ class SchedulerBatchResultProcessor:
                         if discard_finish_reason is None:
                             self._maybe_collect_routed_experts(req)
                             self._maybe_collect_indexer_topk(req)
-                        if batch.decoding_reqs and req in batch.decoding_reqs:
+                        if is_decoding_req:
                             kv_ops.append(partial(self._prepare_kv_cache_release, req))
                         kv_ops.append(
                             partial(
@@ -520,14 +520,12 @@ class SchedulerBatchResultProcessor:
                                 req,
                                 checkpoint=discard_finish_reason is None,
                             )
-                            # TODO(merge6) zone=b4 entry=312 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__managers__scheduler_components__batch_result_processor.py.ours-dropped.txt
                         )
                         req.time_stats.set_completion_time()
-                    elif not batch.decoding_reqs or req not in batch.decoding_reqs:
+                    elif not is_decoding_req:
                         kv_ops.append(
                             partial(checkpoint_kv_cache, req, self.tree_cache)
                         )
-                        # TODO(merge6) zone=b4 entry=312 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__managers__scheduler_components__batch_result_processor.py.ours-dropped.txt
                         if get_memory().enable_hisparse:
                             self.leave_prefill_launched([req])
                             kv_ops.append(

@@ -8,6 +8,9 @@ from sglang.srt.layers.logits_processor import LogitsProcessorOutput
 from sglang.srt.managers.scheduler_components.batch_result_processor import (
     SchedulerBatchResultProcessor,
 )
+from sglang.srt.managers.scheduler_components.logprob_result_processor import (
+    SchedulerLogprobResultProcessor,
+)
 from sglang.srt.managers.utils import GenerationBatchResult
 from sglang.srt.runtime_context import get_context
 from sglang.test.ci.ci_register import register_cpu_ci
@@ -38,8 +41,12 @@ def _make_processor(case) -> SchedulerBatchResultProcessor:
     return SchedulerBatchResultProcessor(
         is_generation=True,
         disaggregation_mode=None,
-        enable_overlap=False,
-        enable_overlap_mlx=False,
+        # enable_overlap(_mlx) fields were retired upstream by #49019
+        # (d1d317c64d); the ctor shape follows the merged class: every row
+        # this test decodes is still in the batch, no weight-version churn.
+        still_in_batch=lambda req: True,
+        kv_weight_version_tracker=None,
+        request_retirer=Mock(),
         model_config=SimpleNamespace(think_end_ids=None),
         token_to_kv_pool_allocator=Mock(),
         tree_cache=None,
@@ -50,7 +57,9 @@ def _make_processor(case) -> SchedulerBatchResultProcessor:
         metrics_reporter=metrics_reporter,
         draft_worker=None,
         model_worker=Mock(),
-        logprob_result_processor=None,
+        logprob_result_processor=SchedulerLogprobResultProcessor(
+            model_config=SimpleNamespace(think_end_ids=None),
+        ),
         output_streamer=Mock(),
         beam_coordinator=Mock(),
         abort_request=lambda *args, **kwargs: None,
@@ -103,6 +112,9 @@ def _make_decode_batch(reqs):
         return_logprob=True,
         spec_algorithm=SimpleNamespace(is_none=lambda: True),
         batch_size=lambda: len(reqs),
+        # #49019-era: the result loop folds the relay selection via the batch's
+        # forward iteration id.
+        forward_iter=1,
     )
 
 
@@ -119,6 +131,7 @@ class TestNormalizeDecodeOutputsMixedTokenIdsLogprob(CustomTestCase):
         next_token_ids, next_token_logprobs = processor._normalize_decode_outputs(
             batch=_make_decode_batch([_make_decode_req(token_ids_logprob=[151645])]),
             result=result,
+            still_in_batch_rows=[True, True],
             logits_output=logits_output,
             next_token_ids=torch.tensor([5, 6]),
         )
