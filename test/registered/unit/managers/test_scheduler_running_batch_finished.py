@@ -12,6 +12,11 @@ maybe_stub_sgl_kernel()
 from sglang.srt.disaggregation.mode import DisaggregationMode
 from sglang.srt.managers.schedule_batch import NextBatchPlan
 from sglang.srt.managers.scheduler import Scheduler
+from sglang.srt.managers.scheduler_components.request_list import (
+    IndexedReqList,
+    KeyedReqList,
+    ListKind,
+)
 
 register_cpu_ci(est_time=2, suite="base-a-test-cpu")
 
@@ -56,7 +61,10 @@ class TestRunningBatchFinished(unittest.TestCase):
         s._process_hicache_events = Mock()
         s.enable_fpm = False
         s.dllm_config = None
-        s.chunked_req = None
+        # Upstream (in-window) made chunked_req a property over chunked_reqs.
+        s.chunked_reqs = IndexedReqList(ListKind.CHUNKED, abort=lambda req: None)
+        s.prefill_launched_reqs = KeyedReqList(ListKind.PREFILL_LAUNCHED)
+        s.running_reqs = KeyedReqList(ListKind.DECODING)
         s.enable_hisparse = False
         s.require_mlp_sync = False
         s._should_defer_prefill = Mock(return_value=False)

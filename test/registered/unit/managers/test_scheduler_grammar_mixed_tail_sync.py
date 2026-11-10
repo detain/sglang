@@ -28,7 +28,9 @@ class TestMixedGrammarSyncDecision(unittest.TestCase):
         batch.forward_mode = ForwardMode.MIXED
         batch.has_grammar = prefill_grammar is not None or decode_grammar is not None
         batch.decoding_reqs = [decode_req]
-        batch.spec_algorithm = SimpleNamespace(supports_grammar_overlap=lambda: True)
+        batch.spec_algorithm = SimpleNamespace(
+            is_none=lambda: False, supports_grammar_overlap=lambda: True
+        )
         return batch
 
     def test_syncs_when_decode_tail_has_grammar(self):
@@ -65,19 +67,25 @@ class TestMixedGrammarDecodeTailForcesSync(unittest.TestCase):
     def _scheduler(self, *, require_mlp_sync: bool):
         scheduler = object.__new__(Scheduler)
         scheduler.require_mlp_sync = require_mlp_sync
-        scheduler.result_queue = [object()]
+        scheduler.tree_cache = SimpleNamespace(disable=True)
+        scheduler.result_queue = []
         return scheduler
 
     @patch(
         "sglang.srt.managers.scheduler.envs."
-        "SGLANG_DISABLE_CONSECUTIVE_PREFILL_OVERLAP.get",
+        "SGLANG_DISABLE_OVERLAP_AFTER_PREFILL.get",
         return_value=False,
     )
-    def test_mixed_grammar_decode_tail_forces_sync(self, _disable_consecutive_prefill):
+    def test_mixed_grammar_decode_tail_forces_sync(
+        self, _disable_overlap_after_prefill
+    ):
+        # #47716 folded is_disable_overlap_for_batch's grammar-sync arm into
+        # the pre-schedule early-processing decision; the mixed decode tail
+        # still forces the sync through the batch predicate.
         mixed = self._batch(grammar_needs_sync=True)
         scheduler = self._scheduler(require_mlp_sync=False)
 
-        self.assertTrue(scheduler.is_disable_overlap_for_batch(mixed, None))
+        self.assertTrue(scheduler.should_process_last_batch_early(mixed))
 
 
 if __name__ == "__main__":

@@ -203,6 +203,9 @@ class TestDcpLogicalCapacity(CustomTestCase):
             max_total_num_tokens=256,
             tree_cache=NS(waiting_storage_span=lambda: None),
         )
+        # init_pool_stats_observer now routes through the _observed_storage
+        # helper (in-window extraction); bind the real method onto the stub.
+        state._observed_storage = lambda: Scheduler._observed_storage(state)
         # Pool stats observe capacity through the storage seam (#46970x); the
         # shape's token_capacity must be the logical count, NOT re-widened.
         with patch("sglang.srt.managers.scheduler.kv_storage_of") as storage_of:

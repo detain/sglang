@@ -393,7 +393,13 @@ class TestRunningReqsHooks(CustomTestCase):
         s.request_retirer = None
         s.page_size = 1
         s.tree_cache = SimpleNamespace(buffer_pipeline=None)
-        s.token_to_kv_pool_allocator = SimpleNamespace(state_slots=None)
+        s.token_to_kv_pool_allocator = SimpleNamespace(
+            state_slots=None,
+            # Stack seam: the adder prices prefill_chunk_alignment off the
+            # KV pool; upstream's new stub predates this fork-restored read
+            # (merge-5 B4-5 note (2) pattern).
+            get_kvcache=lambda: SimpleNamespace(prefill_chunk_alignment=1),
+        )
         s.new_token_ratio_tracker = SimpleNamespace(current=0.0)
         s.max_prefill_tokens = 1 << 20
         s.is_mixed_chunk = False

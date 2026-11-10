@@ -343,6 +343,7 @@ from sglang.srt.managers.utils import (
 )
 from sglang.srt.mem_cache import kv_cache_builder
 from sglang.srt.mem_cache.allocator.page_interleave import page_interleave_shard_size
+from sglang.srt.mem_cache.base_prefix_cache import MambaCowAllocError
 from sglang.srt.mem_cache.common import checkpoint_kv_cache, storage_prefetch_end
 from sglang.srt.mem_cache.events import KvEventLoraNames
 from sglang.srt.mem_cache.kv.alloc.demand import window_retirement
@@ -2194,7 +2195,6 @@ class Scheduler(
                 if self.enable_unified_memory:
                     self.token_to_kv_pool_allocator.flush_opportunistic()
 
-            # TODO(merge6) zone=b4 entry=312 -- fork region dropped by merge6 take-upstream resolution (double pop_and_process risk; overlap path (entry-200 pair)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__managers__scheduler.py.ours-dropped.txt
             # Get the next batch to run
             plan = self.get_next_batch_to_run(
                 running_batch=self.running_batch, last_batch=self.last_batch
@@ -2202,7 +2202,6 @@ class Scheduler(
             self.running_batch = plan.running_batch
             batch = plan.batch_to_run
             self.cur_batch_for_debug = batch
-            # TODO(merge6) zone=b4 entry=312 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (delete_vs_edit)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__managers__scheduler.py.ours-dropped.txt
 
             # Launch the current batch
             if batch:
@@ -2217,7 +2216,6 @@ class Scheduler(
             # Process the last batch
             if self.last_batch:
                 if not process_last_batch_early:
-                    # TODO(merge6) zone=b4 entry=312 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__managers__scheduler.py.ours-dropped.txt
                     pop_and_process()
             elif batch is None:
                 # When the server is idle, do self-check and re-init some states
@@ -2233,15 +2231,48 @@ class Scheduler(
 
             self.invariant_checker.run(CheckPhase.BUSY, batch)
 
+    def _has_pending_mamba_cache_update(self) -> bool:
+        if not self.result_queue:
+            return False
+        pending_batch = self.result_queue[0][0]
+        if not pending_batch.forward_mode.is_extend():
+            return False
+        # DP/MLP-sync ranks need a collective decision; retain their overlap path.
+        if (
+            self.require_mlp_sync
+            or getattr(self.tree_cache, "disable", True)
+            or not getattr(self.tree_cache, "enable_mamba_extra_buffer", False)
+        ):
+            return False
+        return any(
+            req.kv.mamba_last_track_seqlen is not None
+            and not req.finished()
+            and not req.is_retracted
+            and not req.skip_radix_cache_insert
+            and (
+                not pending_batch.decoding_reqs
+                or req not in pending_batch.decoding_reqs
+            )
+            for req in pending_batch.reqs
+        )
+
     def should_process_last_batch_early(
         self,
         last_batch: Optional[ScheduleBatch],
-        # TODO(merge6) zone=b4 entry=312 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__managers__scheduler.py.ours-dropped.txt
     ) -> bool:
         """Whether to process the last result before scheduling the next batch,
         not after launching it, so the requests it finishes are never launched."""
         if last_batch is None:
             return False
+
+        # Mamba prefix insertion can replace req_to_token entries with
+        # canonical cached slots and free the duplicate slots. Publish that
+        # mapping before preparing a dependent decode/verify batch (#47716
+        # moved the early-processing decision before scheduling, which is
+        # exactly where this publication must land; the single pop point
+        # removes the fork's double pop_and_process guard).
+        if self._has_pending_mamba_cache_update():
+            return True
 
         # A prefill's result goes early, for its TTFT. Under DP, is_extend_in_batch is
         # synced, so all ranks decide the same (no deadlock).
@@ -2252,12 +2283,9 @@ class Scheduler(
                 last_batch_is_extend = last_batch.forward_mode.is_extend()
             if last_batch_is_extend:
                 return True
-        # TODO(merge6) zone=b4 entry=312 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__managers__scheduler.py.ours-dropped.txt
 
         # The next batch's grammar bitmask needs this result's FSM advance.
         return last_batch.grammar_needs_sync()
-
-    # TODO(merge6) zone=b4 entry=312 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__managers__scheduler.py.ours-dropped.txt
 
     def _advance_pending_grammar(self):
         """Grammar barrier (spec-v2 overlap): advance the FSM over any not-yet
@@ -2710,7 +2738,10 @@ class Scheduler(
     def _observed_storage(self):
         """The sub-pools the pool observers report: a unified pool's own
         storage, else the static pools described by their sizing."""
-        global_tokens = self.max_total_num_tokens * self.kv_shard_widening
+        # The worker already reports logical DCP / page-interleave capacity
+        # (#43527 pair ground: the configurator's widened allocator.size is
+        # logical; re-widening here double-counts it, see test_dcp_logical_capacity).
+        global_tokens = self.max_total_num_tokens
         if is_cp_sharded_padded():
             global_tokens = from_cp_sharded(global_tokens)
         return kv_storage_of(
@@ -2721,7 +2752,6 @@ class Scheduler(
                 has_state=self.is_hybrid_ssm,
                 # Match the allocator and radix counters' logical units.
                 token_capacity=global_tokens,
-                # TODO(merge6) zone=b4 entry=312 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__managers__scheduler.py.ours-dropped.txt
                 full_tokens_per_layer=self.full_tokens_per_layer,
                 swa_tokens_per_layer=self.swa_tokens_per_layer,
                 window=self.sliding_window_size,
@@ -2819,15 +2849,16 @@ class Scheduler(
         self._prev_step: Optional[Tuple[int, float, bool]] = None
         self._prev_prefill_end_ts: Optional[float] = None
         self._sched_idled = False
-        global_tokens = self.max_total_num_tokens * self.kv_shard_widening
+        # The worker already reports logical DCP / page-interleave capacity;
+        # multiplying by kv_shard_widening here re-counts what the widened
+        # allocator.size already includes (#43527 pair, entry 200).
+        global_tokens = self.max_total_num_tokens
         if is_cp_sharded_padded():
             global_tokens = from_cp_sharded(global_tokens)
         self.load_inquirer = SchedulerLoadInquirer(
             disaggregation_mode=self.disaggregation_mode,
             server_args=self.server_args,
-            # The worker reports logical DCP capacity; add KV shard widening.
             max_total_num_tokens=global_tokens,
-            # TODO(merge6) zone=b4 entry=312 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__managers__scheduler.py.ours-dropped.txt
             max_running_requests=self.max_running_requests,
             pool_stats_observer=self.pool_stats_observer,
             tp_worker=self.tp_worker,
@@ -4652,18 +4683,19 @@ class Scheduler(
                     # marks the staged span below once it is surfaced.
                     req.host_hit_is_storage = False
 
-            req.init_next_round_input(self.tree_cache)
-            if adder.should_defer(req):
-                break
-            if self.enable_hicache_storage and (
-                self._prefetch_after_device_hit_loss(req)
-            ):
-                continue
-            if self.enable_hicache_storage and buffer_pipeline is not None:
-                staging_ready = buffer_pipeline.prepare_staged_prefetch(req)
-                req.time_stats.observe_storage_staging_ready(staging_ready)
-                if not staging_ready:
-                    # TODO(merge6) zone=b4 entry=312 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__managers__scheduler.py.ours-dropped.txt
+            try:
+                req.init_next_round_input(self.tree_cache)
+            except MambaCowAllocError:
+                # Mamba capacity can shrink after an earlier refusal (e.g. decode
+                # consumes a shared pool), so a prefix hit may find no slot for
+                # its state copy. Refuse admission and keep the request queued.
+                res = AddReqResult.NO_TOKEN
+            else:
+                if adder.should_defer(req):
+                    break
+                if self.enable_hicache_storage and (
+                    self._prefetch_after_device_hit_loss(req)
+                ):
                     continue
                 if self.enable_hicache_storage and buffer_pipeline is not None:
                     staging_ready = buffer_pipeline.prepare_staged_prefetch(req)
@@ -5052,8 +5084,10 @@ class Scheduler(
             retracted_reqs, new_token_ratio, reqs_to_abort = batch.retract_decode(
                 self.request_retirer
             )
+            # Unclipped max_new_tokens can put the estimate below the floor;
+            # keep the floor that decay_step and reset also keep (#46496).
+            new_token_ratio = max(new_token_ratio, self.new_token_ratio_tracker.min)
             self.running_reqs.leave([*retracted_reqs, *reqs_to_abort])
-            # TODO(merge6) zone=b4 entry=312 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__managers__scheduler.py.ours-dropped.txt
             new_available_tokens = self.token_to_kv_pool_allocator.available_size()
             new_token_gained = new_available_tokens - old_available_tokens
             mamba_num_gained = (

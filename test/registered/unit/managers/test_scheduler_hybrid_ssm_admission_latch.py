@@ -14,6 +14,10 @@ from sglang.test.test_utils import CustomTestCase, maybe_stub_sgl_kernel
 maybe_stub_sgl_kernel()
 
 from sglang.srt.managers.scheduler import Scheduler
+from sglang.srt.managers.scheduler_components.request_list import (
+    IndexedReqList,
+    ListKind,
+)
 
 register_cpu_ci(est_time=3, suite="base-a-test-cpu")
 
@@ -32,7 +36,8 @@ def _scheduler(
     s.is_hybrid_ssm = is_hybrid_ssm
     s.tree_cache = SimpleNamespace(supports_mamba=lambda: supports_mamba)
     s.waiting_queue = []
-    s.chunked_req = None
+    # Upstream (in-window) made chunked_req a property over chunked_reqs.
+    s.chunked_reqs = IndexedReqList(ListKind.CHUNKED, abort=lambda req: None)
     return s
 
 

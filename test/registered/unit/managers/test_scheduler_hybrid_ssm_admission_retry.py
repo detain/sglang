@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from sglang.test.ci.ci_register import register_cpu_ci
+from sglang.test.scheduler_test_utils import empty_request_lists
 from sglang.test.test_utils import CustomTestCase, maybe_stub_sgl_kernel
 
 maybe_stub_sgl_kernel()
@@ -42,12 +43,23 @@ class _RefusingAdder:
         self.rem_mamba_slots = None
         self.rem_chunk_tokens = 4096
         self.page_size = 1
+        self.running_batch = kwargs.get("running_batch") or (
+            args[3] if len(args) > 3 else None
+        )
 
     def budget_state(self):
         return AddReqResult.CONTINUE
 
     def chunk_budget_exhausted(self):
         return False
+
+    def should_defer(self, req):
+        # Upstream #46977-era admission seam: only the real budget defers.
+        return False
+
+    def batch_is_full_after_rejection(self, req):
+        # Upstream #46977 helper the rejection path consults.
+        return bool(self.can_run_list) or not self.running_batch.is_empty()
 
     def add_chunked_req(self, req):
         return req
@@ -81,6 +93,9 @@ def _req():
 
 def _scheduler(*, is_hybrid_ssm: bool) -> Scheduler:
     s = Scheduler.__new__(Scheduler)
+    # Upstream (in-window) moved the scheduler's queues onto IndexedReqList;
+    # the shared fixture builds the empty lists the properties need.
+    empty_request_lists(s)
     s.grammar_manager = MagicMock()
     s.grammar_manager.has_waiting_grammars.return_value = False
     s.enable_lmcache = False
@@ -95,12 +110,14 @@ def _scheduler(*, is_hybrid_ssm: bool) -> Scheduler:
         buffer_pipeline=None,
         req_to_token_pool=SimpleNamespace(),
     )
-    s.waiting_queue = [_req()]
+    s.waiting_queue.join([_req()])
     s.chunked_req = None
-    s.disagg_prefill_bootstrap_queue = None
     s.min_free_slots_delayer = None
+    s.request_retirer = MagicMock()
+    s.invariant_checker = MagicMock()
     s.get_num_allocatable_reqs = lambda *args, **kwargs: 1
     s.policy = MagicMock()
+    s.policy.calc_priority.side_effect = lambda q, *a, **k: list(q)
     s.chunked_prefill_size = 4096
     s.enable_dynamic_chunking = False
     s.tp_worker = SimpleNamespace(
@@ -183,9 +200,10 @@ class TestMambaCowAllocRefusal(CustomTestCase):
         node = SimpleNamespace(id=3)
         locks = []
         # The component reads its slots through the cache's kv_storage seam
-        # (#46970x layout, MERGE-5 B3-5); an empty pool takes every slot.
+        # (#46970x layout, MERGE-5 B3-5; MERGE-#6 B3-era tree_sub_pool gained
+        # the family kwarg); an empty pool takes every slot.
         storage = SimpleNamespace(
-            tree_sub_pool=lambda ct: "mamba",
+            tree_sub_pool=lambda ct, family=None: "mamba",
             take_state_slots=lambda sub_pool, n: None,
         )
         cache = SimpleNamespace(
@@ -220,7 +238,7 @@ class TestMambaCowAllocRefusal(CustomTestCase):
 
     def test_request_stays_queued_until_mamba_capacity_recovers(self):
         s = _scheduler(is_hybrid_ssm=True)
-        req = s.waiting_queue[0]
+        req = next(iter(s.waiting_queue))
         req.token_indices_to_pool = None
         # Round 1: the adder refuses. Round 2: the prefix match can no longer
         # allocate a Mamba slot for the state copy. Round 3: capacity is back.

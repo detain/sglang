@@ -31,6 +31,8 @@ def _ratio_after_kv_full_retract(survivors, current: float) -> float:
     scheduler = Scheduler.__new__(Scheduler)
     scheduler.enable_skip_finishing_decode = False
     scheduler.result_queue = []
+    scheduler.running_reqs = MagicMock()
+    scheduler.request_retirer = MagicMock()
     scheduler.decode_offload_manager = None
     scheduler.token_to_kv_pool_allocator = MagicMock()
     scheduler.token_to_kv_pool_allocator.available_size.return_value = 0

@@ -3,7 +3,6 @@
 import unittest
 from collections import deque
 from types import SimpleNamespace as NS
-from unittest.mock import patch
 
 from sglang.test.ci.ci_register import register_cpu_ci
 from sglang.test.test_utils import maybe_stub_sgl_kernel
@@ -11,6 +10,7 @@ from sglang.test.test_utils import maybe_stub_sgl_kernel
 maybe_stub_sgl_kernel()
 
 from sglang.srt.managers.scheduler import Scheduler
+from sglang.srt.managers.scheduler_components.pause_state import PauseState
 
 register_cpu_ci(est_time=10, suite="base-a-test-cpu")
 
@@ -42,9 +42,10 @@ class OverlapHarness:
             finished=lambda: self.done,
         )
         self.gracefully_exit = False
-        self._engine_paused = False
+        self.pause_state = PauseState()
         self.is_generation = True
         self.enable_unified_memory = False
+        self.invariant_checker = NS(run=lambda *args, **kwargs: None)
         self.last_batch = None
         self.running_batch = None
         self.events = []
@@ -81,8 +82,21 @@ class OverlapHarness:
             self.scheduled += 1
         return NS(batch_to_run=batch, running_batch=running_batch)
 
-    def is_disable_overlap_for_batch(self, batch, *, last_batch):
-        return self.need_overlap_sync and last_batch is not None
+    def increment_scheduler_iterations(self):
+        # Metrics-only loop counter; the harness counts iterations in
+        # ingest_requests (the #47716 loop entry).
+        pass
+
+    def should_process_last_batch_early(self, last_batch):
+        # Re-anchored from the deleted is_disable_overlap_for_batch stub onto
+        # #47716's seam: the sync flag forces early processing once a last
+        # batch exists; the Mamba publication drives the real re-planted
+        # predicate.
+        if last_batch is None:
+            return False
+        if self._has_pending_mamba_cache_update():
+            return True
+        return self.need_overlap_sync
 
     def run_batch(self, batch):
         self.events.append("run:" + batch.name)
@@ -113,14 +127,7 @@ class OverlapHarness:
 
 class TestMambaPrefillCacheBoundary(unittest.TestCase):
     def run_loop(self, harness):
-        with (
-            patch(
-                "sglang.srt.managers.scheduler.envs."
-                "SGLANG_ENABLE_STRICT_MEM_CHECK_DURING_BUSY.get",
-                return_value=False,
-            ),
-            self.assertRaises(StopIteration),
-        ):
+        with self.assertRaises(StopIteration):
             harness.event_loop_overlap()
 
     def test_publish_before_selection_and_process_each_result_once(self):
