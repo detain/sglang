@@ -1,6 +1,6 @@
 # stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
 #
-# STACK: qwennext-stack-321-2026-10-30 (main @ 2a6c204570, MERGE #5 TAKEN + ALL RE-PLANT BATCHES LANDED -- entries 310-315; post-merge port queue 316-318; MERGE-5 CARGO REPAIR 319 (** true rust pin 943P/0F/1-ignored **); TLFIX 320; ** 321 = FIRST POST-MERGE PROD BOOT RECORD (9d, ready 14:23:10) -- LLGUARD needle + armed PCIe-IPC + cold-autotune bargain + L3 survival all OBSERVED, forced-retune lever RETIRED **)
+# STACK: qwennext-stack-321-2026-10-30+merge6-2026-11-10(MERGE #6 @ eb73a50b1d -- 950 commits, 110-file conflict census, 125 TODO(merge6) markers PLANTED, RE-PLANT ERA OPEN; entries 322-323) (main @ 2a6c204570, MERGE #5 TAKEN + ALL RE-PLANT BATCHES LANDED -- entries 310-315; post-merge port queue 316-318; MERGE-5 CARGO REPAIR 319 (** true rust pin 943P/0F/1-ignored **); TLFIX 320; ** 321 = FIRST POST-MERGE PROD BOOT RECORD (9d, ready 14:23:10) -- LLGUARD needle + armed PCIe-IPC + cold-autotune bargain + L3 survival all OBSERVED, forced-retune lever RETIRED **)
 #   ** MERGE-ERA-CLOSED 2026-10-29 (session 3 / B6): B1-B6 ALL CLOSED, B2/B3/B4/B5 marker
 census ZERO, damage driven to env-class + documented survivors; the branch is BOOT-READY
 pending OPERATOR execution of the BOOT_DELTA first-boot choreography (see CAVEATS top
@@ -66,7 +66,7 @@ current-state bullet + entry 315). **
 #    stack-owned, no upstream PR, see entry 320)
 #   +first-boot-record-2026-10-30(BOOT: 9d first post-merge prod boot --
 #    no code, observation + verdicts, see entry 321)
-#   (entries 1-321; *=squash/ported, see commit messages. 10-10 added
+#   (entries 1-323; *=squash/ported, see commit messages. 10-10 added
 #   entries 157-161: parser batch A (Qwen3-Coder tool-call fixes + sampling
 #   upper bounds), on top of upstream merge #3 (see synced). 10-10b added
 #   entries 162-166: SM120 batch B (#42863 PCIe-IPC vocab gathers, #42566
@@ -304,27 +304,33 @@ current-state bullet + entry 315). **
 #   make --enable-mixed-chunk safe and fix the QSA verify ring collision.
 #   * = picked with local modifications, see the entries)
 # branch : qwennext-stack
-# tip    : e9f0ae1838   (TLFIX, entry 320: python/sglang/srt/layers/attention/qsa/mqa.py +12/-0,
-#          ONE pass-config key + its proof as a comment; stack-owned plain pick, no -x;
-#          sits above the cargo-repair tip 065fdcdf33 -- qsa dir verified SET-IDENTICAL
-#          across both (3F/111P/624S/6E at each tip, node-id diff EMPTY), so a compile-
-#          analysis-only change measured as zero behavior delta. Superseded values in
-#          this line's history: 065fdcdf33 (repair), b7c656f69f (pass-4), 5cde7a5ede
-#          (merge era) -- read the synced block for merge history.)
+# tip    : dea2641dc2   (MERGE-6 CASCADE FOLLOW-UP: import retargets, qwen3_moe import
+#          tidy, and the flashinfer wheel/floor pairing REVERTED to the fork's 0.7.2
+#          (entry-228 pairing rule -- the installed wheel is 0.7.2; tension recorded
+#          in entry 322). Sits above the MERGE #6 commit cff688b39e (main @ eb73a50b1d,
+#          +950 commits since 2a6c204570; its own message is the merge ledger), landed
+#          into qwennext-stack by --ff-only 2026-11-10 -- branch merge6-2026-11-10 was
+#          BORN at the stack tip 2d87757bb1 (merge-base verified; stack unchanged).
+#          Superseded values in this line's history: e9f0ae1838 (TLFIX, entry 320 --
+#          qsa/mqa.py pass-config key, absorbed as ancestor), 065fdcdf33 (repair),
+#          b7c656f69f (pass-4), 5cde7a5ede (merge era) -- read the synced block for
+#          merge history.)
 #          commit in the merge era VERIFIED by an actual cargo build -- check/clippy/
 #          fmt/test + the operator's release cdylib command all green; sits above the
 #          pass-4 code tip b7c656f69f, whose stack.txt docs commits sit above it too.
 #          Supersedes the header tip line b7c656f69f and, before it, the merge-era
 #          5cde7a5ede -- read the synced block for merge history and this line for the
 #          live code tip.)
-# HEAD   : ** CODE UNCHANGED AT 065fdcdf33 ** -- the follow-up turn on this same
-#          state is DOCS-ONLY: it MEASURES the repair's python consequences
-#          (mem_cache dir 1892P/153F/2err -> ** 2535P/23F/0 errors **, draft_gate
-#          10P+4F -> 12P/0F, page_interleave 91P/17F -> 108P/0F, budget 17P+1F ->
-#          18P/0F, rust suites 581P/25P/15P/2P all green, all 23 survivors traced
-#          to the DEVICE class) and replaces entry 319's forward note with those
-#          actuals. Header name stays qwennext-stack-319-2026-10-30; entry count
-#          stays 319.
+# HEAD   : ** CODE MOVED AT HEAD -- dea2641dc2 (MERGE #6 + cascade, --ff-only
+#          2026-11-10) ** -- the follow-up turn on this state is DOCS-ONLY: it
+#          records the 2026-11-10 sweep review (entry 322), the MERGE #6 land
+#          (entry 323), the header/tip/synced re-pins, the #44590 PROOF-PASS
+#          retirement and the 11-10 watch-list refresh. Entry count 323; stack
+#          name carries the +merge6-2026-11-10 epoch tag. Superseded HEAD note:
+#          "CODE UNCHANGED AT 065fdcdf33" (the entry-320/321 docs turns, whose
+#          measurements -- 2535P/23F/0err mem_cache pin and the DEVICE-class
+#          survivor census -- stay in the entries and are the BASELINE the
+#          entry-323 post-merge measurements diff against).
 # base   : upstream sgl-project/sglang main @ 7ad55e4386 ([HiCache] TMA-staged
 #          host<->device KV transfer kernel (sm_90+) (#40278), 2026-09-21)
 # synced : upstream main @ f209e67767 (#39643, 2026-09-28) MERGED IN as
@@ -463,6 +469,13 @@ current-state bullet + entry 315). **
 #          does NOT bring it; entry-230's fail-safe layer stays exactly as
 #          entry 303 describes. ** NOT ADOPTED, RE-ASSERTED: #44590 (sgl-
 #          kernel stays 0.4.9 floor + probe coupled, entry 228 rule).
+#          [11-10 PROOF-PASS: **this rule is OBSOLETE** -- ae6ee527ba auto-TOOK
+#          0.4.10 (fork parent had 0.4.9; no re-pin exists in ae6ee527ba..
+#          2d87757bb1), the _load_inline_fragment_probes_available() probe
+#          exists on NEITHER side (attribution error, never merged upstream),
+#          pyproject==0.4.10 + venv wheel 0.4.10 + the 10-30 prod boot are all
+#          CONSISTENT (engine assert is >=0.4.9); RETIRED as standing rule,
+#          re-arm only against an ABSENT wheel.]
 #          INTEGRATION OWED (sessions 2/3): B2 test re-home, B3 mem_cache +
 #          rust re-plant (absorbing the 8 hicache-ctrl re-ports; #46954-vs-
 #          209 subsumption decision lives THERE), B4 scheduler/admission,
@@ -473,6 +486,56 @@ current-state bullet + entry 315). **
 #          the ban itself STAYS until sessions 2B/3 + operator judgment.]
 #          [B4 LANDED -- entry 312; managers+spec damage closed to ENV-class
 #          residue; the ban STAYS (B2/B5/B6 + operator judgment remain).]
+#          ** MERGE #6 TAKEN (2026-11-10) **: main @ ** eb73a50b1d ** (#49004,
+#          +950 commits since 2a6c204570) merged as ** cff688b39e ** + cascade
+#          ** dea2641dc2 **, landed into qwennext-stack --ff-only (branch
+#          merge6-2026-11-10 born at the stack tip 2d87757bb1; merge-base
+#          verified). CONFLICT CENSUS: ** 110 files ** -- classes ** A 7 /
+#          B 36 / C 46 / D 21 **; resolutions ** 69 union / 118 take-upstream /
+#          25 keep-fork / 16 custom **; marker census ** 125 TODO(merge6)
+#          PLANTED (b1 12 / b2 23 / b3 18 / b4 39 / b5 17 / b6 16) ** --
+#          RE-PLANT ERA OPEN; full record entry 323. Dossier
+#          /tmp/opencode/merge6-dossier (317 replant artifacts, MANIFEST.tsv).
+#          NON-ADOPTIONS: **#45520 STILL OPEN (gh-verified + zero "(#45520)"
+#          strings in the window) -- the re-apply rule stays HOLSTERED for
+#          MERGE #7; the entry-230 fail-safe layer CONFIRMED INTACT
+#          post-merge.** #44590 window moved nothing (see the PROOF-PASS
+#          correction above). Flashinfer floor: upstream **#48468 moved
+#          pyproject + the engine assert to 0.7.3 in a NON-conflicting hunk --
+#          REVERTED TO 0.7.2 in the cascade to match the installed wheel
+#          (entry-228 pairing rule; adopt = WHEEL-FIRST-THEN-PIN, and the
+#          JIT-compat tension is recorded in entry 323)**. git cherry vs
+#          origin/main at the new tip: ** 519 '+' / 0 '-' **. Cargo: ** new
+#          pin 966P/0F/1-ignored ** (+23 upstream growth, check exit 0) --
+#          the rust/ workspace now EXCLUDES sglang-radix-tree: RUN CARGO
+#          INSIDE THE CRATE DIR.
+# updated: 2026-11-10 (entries 322-323): ** THE 11-10 SWEEP + MERGE #6 TAKEN
+#          -- 950 COMMITS ABSORBED, 125 MARKERS PLANTED, RE-PLANT ERA OPEN **
+#          SWEEP: merged-window enumeration >= 10-27 (** 1201 **; split @
+#          T_SPLIT 2026-10-29T06:27:59Z = ** 206 in-tree / 995 merged-new, the
+#          995 ARRIVE VIA MERGE #6 **), open window ** 2,594 **, dedupe
+#          against ** 628 tracked numbers **, scored survivors, ** 38
+#          deep-reads ** -> ** 7 PORT-RECOMMEND / 5 WATCH / 23 EXCLUDE **
+#          (record entry 322; artifacts /tmp/opencode/pr-sweep-2026-11-10/).
+#          THE 7: #48250 bit-exact SM120 indexer-decode CUDA kernel, 1.6-2.7x
+#          on 4-row NEXTN verify shapes (subsumes #46631 + most of #48251);
+#          #48295 NVFP4 draft experts, -1GB/+40K KV tokens accept-unchanged;
+#          #48274 prefill indexer scale-fold, 1.26-1.46x bit-identical;
+#          #49518 mamba L3 snapshot interval, -67% checkpoint writes to
+#          file-L3; #45819 acceptance recovery at T>0; #48271 kills one D2H
+#          sync/QSA-layer on eager prefill; #49516 test-only e2e guard for
+#          landed #45435. MERGE: the synced-block paragraph above + entry 323.
+#          CORRECTIONS ISSUED THIS PASS: (1) **#44590 RE-ASSERTION RULE
+#          RETIRED-as-OBSOLETE** (synced-block PROOF-PASS); (2) **#43703
+#          REVERT TRAP** -- original 19cee50c29 + revert 78a9fa1bba (#49118)
+#          BOTH arrive via merge6 = NET-ZERO, DO NOT re-port the "missing"
+#          feature; (3) **NINE watch items PROVEN MERGE-#5 CARGO** with
+#          ancestor shas (watch-list 11-10 block); (4) **THREE issue-vs-PR
+#          MISCLASSIFICATIONS corrected** (#37633/#39685/#40144 are ISSUES).
+#          ** PROD BOOT FORBIDDEN AT THIS TIP ** -- trailing_endpoint gate RED
+#          (the PREDICTED RED, entries 209/218) + ** blake3 ABSENT from the
+#          venv ** (~380 battery error lines, the #47120 hard-dep class).
+#          NOTHING PUSHED.
 # updated: 2026-10-30 (entry 321): ** FIRST POST-MERGE PROD BOOT RECORDED --
 #          NO CODE, ALL OBSERVATION, AND FOUR ERA BETTS TURN OUT TO HAVE
 #          LANDED ** (9d = the NVFP4 arm, launched 14:19:41, ** SERVER READY
@@ -10759,12 +10822,282 @@ STACK, IN BUILD ORDER (bottom first)
       # nothing to see here until an arm boots it), and the whole GPU-window
       # debt list in entries 316-320.
 
+        322. (no code)  REVIEW RECORD  2026-11-10 sweep -- 7 PORT-RECOMMEND / 5 WATCH / 23 EXCLUDE, and the MERGE #6 reconcile map
+      # SCAN PROVENANCE (artifacts /tmp/opencode/pr-sweep-2026-11-10/, index.md
+      # is the manifest): merged-window enumeration >= 2026-10-27 via REST scan
+      # = ** 1,201 PRs **; split @ T_SPLIT = 2026-10-29T06:27:59Z (committer
+      # date of 2a6c204570) = ** 206 already in-tree / 995 merged-new -- THE
+      # 995 ARRIVE VIA MERGE #6 ** (entry 323). Open window = ** 2,594 **.
+      # Dedupe: ** 628 tracked PR numbers ** pruned (stack.txt 1,415 hits +
+      # wanted_stack.txt 412, unique'd); scored survivors (open>=4 -> 636,
+      # merged-new>=2 -> 331) -> top-60 shortlist -> ** 38 deep-reads **
+      # (deep-port.md + deep-reconcile.md, both READ-ONLY passes; venv state
+      # re-checked: flashinfer 0.7.2 MATCHES pin, sglang-kernel 0.4.10
+      # MATCHES, blake3 ABSENT).
+      # ==========================================================================
+      # RECOMMEND -- the 7 PORTs (source deep-port.md; value lines are the
+      # authors' MEASURED numbers, friction is our tree's, gates re-derived):
+      #   #48250 (H) qsa: JIT CUDA indexer-decode scoring -- ** BIT-EXACT on
+      #     SM120 ** (0-mismatch verified on RTX PRO 6000), 1.62-2.68x on
+      #     4-row NEXTN verify shapes (= OUR steps3/topk1/draft4), TPOT -3.9%
+      #     GB200 serving, CUDA-graph-safe, no new flag; ** SUBSUMES #46631
+      #     and most of #48251 ** (take 48250 alone); friction: edits
+      #     mqa.py(+129/-29)/qsa_indexer.py which carry the #39614-fp8-storage
+      #     + host-max_q/entry-212/213 deltas -- MANUAL merge.
+      #   #48295 (H) modelopt: block-FP8 MTP draft experts -> NVFP4 on the
+      #     MIXED_PRECISION route -- ** draft load -1.0..-1.1GB, KV pool
+      #     24,320 -> 64,064 tokens at 0.94/96GB, ACCEPT LENGTH UNCHANGED
+      #     (3.50), GSM8K 97.0 -> 96.5 (noise) **; our exact ckpt+flags;
+      #     friction: sits in the B5-reconciled NVFP4 zone (entries
+      #     205/206/230/231/301/313), draft-step timing needs a RE-A/B;
+      #     sibling #48517 INERT on our launch lines (EXCLUDED).
+      #   #48274 (M) qsa: fold score scale into the prefill-relative kernel --
+      #     ** 1.26-1.46x at our chunk shapes, BIT-IDENTICAL ** (fp32
+      #     reciprocal-mul == torch div_); friction: RE-PIN the entry-320
+      #     TLFIX pass key (InvScale arg changes the kernel signature).
+      #   #49518 (M) hicache: Mamba/KDA L3 snapshot interval -- **-66.7%
+      #     mamba checkpoint writes to file-L3 (trace 9->3) ** keeping
+      #     prompt-end + legal endpoints; the entry-217 write-amp lever's
+      #     upstream twin; friction: PORT UNIT-AWARE vs entries 217/250/254/
+      #     290/318, Python AND Rust TreeCore (sglang-radix-tree rebuild),
+      #     verify the host-cache-mode precondition accepts
+      #     write_through_selective.
+      #   #45819 (M) spec: accept q rounding just above 1 in chain verify --
+      #     ** CONSUMER VERIFIED LIVE: eagle_utils.py:778 sets
+      #     sampling_fn = chain_speculative_sampling_triton, so our T>0
+      #     NEXTN verify runs this kernel **; acceptance recovery at T>0,
+      #     greedy unaffected, one tl.minimum; trivial friction.
+      #   #48271 (L) qsa: drop the per-layer RoPE cache-length check --
+      #     kills one .item() ** D2H SYNC PER QSA LAYER ** whenever the
+      #     indexer runs outside a captured graph = our EAGER prefill every
+      #     chunk x 12 QSA layers; adapt-not-apply (fork guard shape).
+      #   #49516 (L) test-only e2e guard for LANDED #45435 (entry 262) on
+      #     prod's EXACT mixed-chunk + lazy-radix combo, extra_buffer AND
+      #     extra_buffer_lazy, hit==miss logprob parity <=3 nats; cheap CI
+      #     armor for the mamba class.
+      # ==========================================================================
+      # WATCH -- the 5 (gates, not vibes):
+      #   #48376/#48377/#48378/#48379 (H-WATCH) QSA K/V host-offload series
+      #     -- the MOST stack-matched work upstream: measured on RTX PRO
+      #     6000 + Qwen3.8-Flash-Next-NVFP4 + NEXTN 3/1/4; ** 7.9x logical KV
+      #     tokens (307K -> 2.44M @60GB host), 4 -> 11(->20) concurrent 61K
+      #     sessions, +18%/+23% throughput pieces **. ** BLOCKER: the arg
+      #     hook REFUSES HiCache + mixed-chunk -- BOTH ARE ON IN EVERY PROD
+      #     ARM **. Complementary axis to entry-200 (#43527 GPU-side sharding
+      #     vs host-side full K/V) but both edit qsa_kv_pool.py +
+      #     kv_cache_configurator.py = the B3/B5 zones => ** HAND-MERGE
+      #     NOTE **. Atomic unit 1/N+2/N; re-arm = hook relaxes OR a
+      #     deliberate OFF-trade A/B (operator call).
+      #   #49404 (M) exact repetition penalty per draft position -- EAGLE/
+      #     NEXTN spec != non-spec when rep != 1 and generation_config
+      #     applies it SILENTLY. ** GATE: the rep-penalty CENSUS first **
+      #     (checkpoint generation_config.json + client params): never !=1 ->
+      #     EXCLUDE as inert; ever !=1 -> PORT as correctness H. Default-ON
+      #     costs ~2% accept length + 20-40MB table.
+      #   #46211 (M) EAGLE v2 opt-in step CUDA graphs -- credible standalone
+      #     piece for TP4-PCIe = ** collectives 3 -> 1 per verify step **;
+      #     5.1k LOC ** CONFLICTING **, headline numbers megakernel-
+      #     contaminated; gate = upstream landing, then broadcast+relay only.
+      #   #44482 (L) --system-prompt fixed prefix -- 3x mamba concurrency
+      #     (slots 3 -> 1, +30%) for fixed-system-prompt bulk workloads only
+      #     (** NOT established for prod arms **); ** collides head-on with
+      #     the entry-312 admission re-plant ** (schedule_policy +188;
+      #     entries 266/268/269/270).
+      #   #48251 (L) 64-CTA/row TileLang mid-batch decode -- ** REDUNDANT-IF-
+      #     #48250 TAKEN ** (our arm's rows all hit the CUDA path); trivial
+      #     to carry either way; take ONLY if 48250 is declined.
+      # ==========================================================================
+      # RECONCILE-AT-MERGE6 (deep-reconcile.md; ARRIVALS of the 995 -- resolved
+      # structure lives in the merge commit message + entry 323; the obligations
+      # are what the RE-PLANT waves must honor):
+      #   #47928 assembler rewrite -- ** THE HEAVIEST RE-ANCHOR of the zone **
+      #     (+299/-509 hybrid_pool_assembler.py, NEW linker_pool_assembler.py =
+      #     entry-318's HOME; controller construction 8 -> 1; collides entries
+      #     288-295/317/318/219/209 + B3-2/4/6 call sites).
+      #   #47714 QSA host pools as hybrid sidecars -- ** ANCHOR DELETION vs
+      #     entry 317 ** (deletes the _MambaStrategy QSA type-check + qsa_pool
+      #     arg that 317/219 are anchored on); re-anchor _mla_host_kv_fraction
+      #     past the rework KEEPING the fraction-AFTER-219-override ordering
+      #     ("a merge auto-resolves WRONG"); the INDEXER entry-order change
+      #     touches the 209/217 rank-belief payload shape => verify-at-boot.
+      #   #48421 vs ** entry 209 -- DECIDE, DON'T DROP ** -- hybrid partial-
+      #     prefetch now REJECTED at allocation (min_tokens=full hit), so
+      #     209's clamp may go DEAD-INERT on the comp_xfers path while still
+      #     guarding other shortening; recommendation UNION-KEEP (inert-safe)
+      #     + re-run the trailing_endpoint 17P battery.
+      #   #48444 gdn replayssm u-cache -- ** UNION-KEEP, NON-SUPERSEDING **:
+      #     parallel path, SM120 REFUSED at its own gate, refuses HiCache/
+      #     mixed-chunk/--enable-linear-replayssm-spec (we run the last);
+      #     entries 102/120/281-283 + B3/B5 halves stay fork-union; confirm
+      #     the flag defaults False at boot.
+      #   #48522/#48734/#47512/#46214 -- ** VERIFY-AT-BOOT ** (prefetch span
+      #     cap in the 209/217/293/294 deadline neighborhood -- LIVE under
+      #     our policy=timeout; draft out_cache_loc contiguity + write-door
+      #     raises on our MTP-lineage draft; SM100-gated JIT sampler sharing
+      #     spec_utils files with the replayssm folds; flashinfer_backend
+      #     window fix beside fast_prefill_plan/KVLocPlan).
+      #   #48689 PLE file-backend HMM check -- ** INERT-BUT-OPPORTUNITY **
+      #     (we run pinned; makes the 47.7GiB file table VIABLE later).
+      #   #49096/#47653/#48055 -- ** INERT / NET-ZERO ** (megamoe runner
+      #     unused -- but it PROVES FI native caches can bump in a point
+      #     release; the revert pair fully inverts -- confirm NO kimi_k3
+      #     tactic files land).
+      #   RUN-SCRIPT ALERT: ** NONE BOOT-BREAKING ** -- all 12 active prod env
+      #     vars + every prod CLI flag (incl. fork-only --hicache-mamba-size-
+      #     gb) verified present at eb73a50b1d; #48399's env purge misses us.
+      # ==========================================================================
+      # FI-0.7.3 PAIRING CHECKLIST (condensed from deep-reconcile §1/§6) +
+      # ** THE TENSION **:
+      #   1. Upstream #48468 moves pyproject + the engine assert 0.7.2 -> 0.7.3;
+      #      the cascade ** REVERTED both back to 0.7.2 to match the installed
+      #      wheel ** (entry-228 rule: WHEEL-FIRST-THEN-PIN, never split).
+      #   2. ** UNRESOLVED TENSION ON RECORD: the reconcile agent reports
+      #      upstream JIT sampling.cuh (last_valid_index -> DeviceSamplingFrom-
+      #      Prob) COMPILES ONLY against 0.7.3 headers -- while the tree at
+      #      this tip pins 0.7.2. A 0.7.2 wheel under the merged tree was
+      #      REPORTED to crash the scheduler at first EAGLE verify. UNRESOLVED
+      #      UNTIL A GPU BOOT ARBITRATES (boot is FORBIDDEN at this tip --
+      #      entry 323 STATE). If it fails, the answer is WHEEL-THEN-PIN to
+      #      0.7.3, NOT a lone re-pin. **
+      #   3. At adoption: ** 21-arg fast_prefill_plan tail REQUIRED ** (the
+      #      fixed_uniform_q_len slot after uniform_q_len -- entry-228's
+      #      20-element hand-list and its "re-check at >=0.8" note are
+      #      OVERTAKEN by 0.7.3); else first prefill plan silently shifts args.
+      #   4. Expect exactly ** ONE cold autotune retune boot AT ADOPTION time **
+      #      -- caches are VERSION-KEYED under ~/.cache/sglang/flashinfer/
+      #      autotune/ (all six 0.7.2/sm120 dirs + the pcie_ipc ws2.json +
+      #      cached_ops .so reset); 9b-(h)/(e) needles; judge throughput from
+      #      the SECOND boot. Cache KEY format itself unchanged.
+      #   5. Comm surface SAFE: every PcieIpc* name GH-VERIFIED present in
+      #      official 0.7.3 (our pure-Python wheel was indistinguishable);
+      #      the removed MoeAlltoAll pair is NOT our path (a2a=none);
+      #      cutlass-dsl 4.8.0 pin already satisfied; muse_spark Dockerfile
+      #      0.7.0.post1 STAYS (do not "align").
+
+        323. cff688b39e+dea2641dc2  MERGE #6 -- upstream main @ eb73a50b1d absorbed (+950 commits since 2a6c204570) -- 110-file conflict census, 125 TODO(merge6) markers PLANTED, RE-PLANT ERA OPEN
+      # THE MERGE: main @ ** eb73a50b1d ** (tip PR #49004) merged as
+      # ** cff688b39e ** -- its own commit message IS the per-file ledger (the
+      # merge-#5 pattern held) -- + cascade ** dea2641dc2 **. Landed into
+      # qwennext-stack by ** --ff-only ** 2026-11-10: branch merge6-2026-11-10
+      # was BORN at the stack tip 2d87757bb1 (merge-base verified == 2d87757bb1
+      # pre-land). Worktree /home/my/sglang/wt-merge6 + branch KEPT for the
+      # re-plant sessions. git cherry vs origin/main at the new code tip:
+      # ** 519 '+' / 0 '-' **.
+      # CENSUS (recorded BEFORE resolution -- /tmp/opencode/merge6-dossier):
+      # ** 110 conflicted files ** (106 UU / 4 AA / 0 modify-delete; 228
+      # regions); classes ** A 7 / B 36 / C 46 / D 21 **; resolutions ** 69
+      # union / 118 take-upstream / 25 keep-fork / 16 custom **; markers ** 125
+      # TODO(merge6) PLANTED (b1 12 / b2 23 / b3 18 / b4 39 / b5 17 / b6 16;
+      # recounted IN-TREE at the landed tip -- matches) **; replant stock =
+      # dossier replant/ ** 317 artifacts + MANIFEST.tsv ** (fork-hunks +
+      # upstream-side patches for all 110 files; ours-dropped.txt x69 = THE
+      # RE-PLANT SOURCE; theirs-dropped.txt x27 = THE FOLD SOURCE).
+      # ==========================================================================
+      # MEASUREMENTS AT dea2641dc2 (CVD=9 batteries vs the entry-319/321 pins;
+      #   the deltas are NOT regressions to fix -- they are the RE-PLANT TARGET):
+      #   unit/mem_cache    2535P/23F/0err -> ** 894P/96F/117err ** -- storm
+      #     DOMINATED by the NEW ** blake3 hard-dep class (#47120, wheel
+      #     ABSENT from the venv; ~380 error lines across the three batteries)
+      #     ** + device class + replant seams; ** trailing_endpoint gate RED
+      #     (5F + _report_sidecar 3E) = entries 209/218's PREDICTED RED **
+      #     (the #48421 allocation-half rejection above).
+      #   unit/managers     1056P/2F -> 273P/55F/96err -- blake3 134E + device
+      #     43E + detok _clamp_decode_ids 9F (b4 replant seam).
+      #   unit/distributed  156P -> ** 209P/0F -- NEAR-GREEN ** (+53P upstream
+      #     growth; the 1 err = NEW test_pp_comm_overlap PPMissingLayer.weight).
+      #   unit/server_args  461P -> 493P/** 8F ** -- ALL 8F are the B6 field-
+      #     order/exportability tuple pins (watermark_* vs paged_experts_*/
+      #     grpc_*), ** the SAME class merge-#5 B6 closed at entry 315 **; the
+      #     re-pin playbook applies verbatim.
+      #   unit/spec         388P/0F -> 166P/22F/39err -- blake3 57E + device
+      #     15E + dflash/ngram/spec-arg seams (b4).
+      #   LINT GATES: rc=0 + ** ruff F401,F821,F823,UP037 @0.17.1: 0 NEW
+      #     errors across the 3,269 touched .py; the 161 flagged lines
+      #     BYTE-IDENTICAL INHERITED at BOTH parents ** (era gate pattern).
+      #   cargo ** 966P/0F/1-ignored GREEN ** (+23 crate growth, check exit
+      #     0) -- ** the rust/ workspace now EXCLUDES sglang-radix-tree: run
+      #     cargo INSIDE the crate dir ** (new pin rule for the re-plant era).
+      # CASCADE REPAIRS (dea2641dc2, on top of the merge): common.py prune
+      #   re-homes; host_memory_budget_bytes graft; pyo3 signature-reorder
+      #   catch; parallel_executor rebuild; direct-decode + HOST_PAGE_TABLES
+      #   grafts; the flashinfer wheel/floor pairing revert to 0.7.2.
+      # WHEEL DRIFT -- recorded as b6 markers, ** NO boot asserts gate these **,
+      #   operator owed: sgl-deep-gemm tree ==0.2.7 vs venv 0.2.3.post2;
+      #   sgl-flash-mla tree ==1.0.4 vs venv 1.0.0. (sglang-kernel 0.4.10/
+      #   0.4.10 and flashinfer 0.7.2/0.7.2 post-revert are CONSISTENT.)
+      # ==========================================================================
+      # DUAL-IMPLEMENTATION PATTERN -- THE MERGE-#7 SHAPE, RECORD IT NOW: the
+      #   window LANDED UPSTREAM NATIVELY several things the fork hand-carries:
+      #   the fast_file (#4248x hicache-file family), qwen4 varlen/short-conv
+      #   PLE-fusion, and nvfp4-deferred. RE-PLANT RULE: for every zone, diff
+      #   the dossier's ours-dropped.txt against the taken code and ** ADOPT-
+      #   UPSTREAM-WHERE-EQUIVALENT ** instead of re-planting -- two arms were
+      #   already absorbed/verified at resolution time this way: deepseek_v2's
+      #   entry-206 arm and flashinfer_backend's entry-233 arm. Expect the
+      #   marker count to SHRINK as a legitimate outcome of re-planting.
+      # RE-PLANT QUEUE B1..B6: the marker zones map onto MERGE #5's BATCH
+      #   OWNERS -- b1 -> the entry-310 (B1) diffusion/docs class, b2 -> entry
+      #   314's test re-home, b3 -> entry 311's mem_cache+rust re-plant (the
+      #   47928/47714 anchors above), b4 -> entry 312's scheduler/admission,
+      #   b5 -> entry 313's moe/quant/dispatcher, b6 -> entry 315's environ/
+      #   CAVEATS re-pin closeout (incl. the field-order 8F + wheel-drift
+      #   lines). MANIFEST.tsv's zone column + the markers' entry= fields are
+      #   the worklist; entries 311-315 are the process analogues.
+      # ENV NOTES (honesty): pytest-timeout ABSENT from the venv (shell
+      #   timeouts stood in); the ruff gate ran at 0.17.1 (/snap) while
+      #   pre-commit pins 0.15.1 -- 0-new-errors claimed under 0.17.1 only.
+      # STATE: worktree /home/my/sglang/wt-merge6 KEPT; ** PROD BOOT FORBIDDEN
+      #   at this tip until the B-waves close the blake3 (env-side: S-BLAKE3),
+      #   trailing_endpoint and field-order classes AND THE OPERATOR RE-GATES
+      #   (boot gate stays operator-judged per era rule)**; NOTHING PUSHED.
+
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
 ==============================================================================
   # 2026-10-19: the sweep review record for entries 215-227 lives IN
   # ENTRY 227 above (heads that moved but owed nothing, inert-by-gate,
   # deferred-with-condition). The blocks below are the older rounds.
+  # 11-10: same discipline -- full record IN ENTRY 322 above; the grouped
+  # EXCLUDE list below is its audit-trail echo (wanted_stack.txt SECTION R
+  # carries the same 23 with the queue-side phrasing).
+
+  Sweep 2026-11-10 -- evaluated, NOT included (23; reasons from deep-port.md):
+  DSPARK/DFLASH/NGRAM/MULTI-LAYER-EAGLE FAMILY -- the jianc99 4618x
+      adaptive-verify series and its siblings gate EVERY candidate behind
+      DFLASH/DSPARK/NGRAM/multi-layer-EAGLE paths prod never runs: #46185
+      (ring-verify; generic halves subsumed/no-op for us), #46186 (SKIP-
+      NOISE: NEXTN never calls its builder), #46187 (nothing calls the
+      estimator; caller is #46190), #46189 (ragged layouts only PRODUCED by
+      DSPARK/DFLASH), #46385 (needs --enable-multi-layer-eagle + rejection-
+      sampling: both off), #47058 (DFLASH draft architecture entirely),
+      #47671 (NGRAM not run; arg group REJECTS ngram+replayssm), #47694
+      (DSpark-only files), #44588 (DSpark confidence scheduling; NAME-
+      COLLIDES with #46187, mutually exclusive upstream), #35413 (DSpark
+      compact-mode AND its derivation DECLINES hybrid GDN targets -- DOA
+      for qwen4_exp).
+  GATE-NEVER-SATISFIED: #33291 (DVR: needs --enable-deterministic-inference,
+      FlashInfer full-attn unsupported, ReplaySSM INCOMPATIBLE -- direct
+      clash; 21.7k LOC), #43571 (half gated on mixed-chunk OFF = we run ON;
+      rest is a 6065/6053-line scheduler.py WHITESPACE REFLOW -- a conflict
+      magnet with zero behavior), #47773 (deterministic-mode only), #48667
+      (PD-disaggregation not run; labels say hicache, the code path is PD),
+      #48167 (our MTP draft has NO mamba/GDN state; enabling stub alone),
+      #47807 (SWA layers we do not have; layernorm-SP/reject-sampling off;
+      the one good half DUPLICATES landed entry 288).
+  ALREADY-LANDED / DUPLICATE: #49497 (seeded varied warm-up tokens =
+      entries 258/304 minus its cache-key marker + kill-switch; 0.7.3
+      CANARY NOTE -- it cites make_repeating_tensor_initializer, so
+      re-verify tactic picks when the 0.7.3 adoption lands, entry-260
+      precedent).
+  WRONG-ARCH / MODEL / QUANT: #46631 (SM107-only TileLang; #48250 carries
+      the SM120 half), #48759 (gated <(8,9); SM120 never takes the branch),
+      #43008 (DeepSeek-V4.1-only dispatch), #48517 (fires only under
+      EXPLICIT --quantization modelopt_fp4 target override; our arms let
+      the ckpt's MIXED_PRECISION resolve), #46887 (DSA != QSA, AND the
+      whole feature sits in the prefill CUDA GRAPH prod runs eager).
+  WORKLOAD-NEVER-RUN: #48299 (RL weight-update sessions only; recorded as
+      a SILENT-corruption class for our exact runner -- RE-ARM IF EVER any
+      /update_weights_from_* use appears in prod).
 
 
   Merge #4 + apply-b..apply-i evaluation (2026-10-14/15) -- verdicts,
@@ -10962,7 +11295,8 @@ WATCH LIST (re-evaluate before next sync)
     GDN decode backend; base CI red at mining time. Take as its own A/B.
   * #40718  prefill CUDA graph for GDN/Mamba -- only if enabling prefill
     graphs (disabled in both run scripts); conflicts
-    prefill_cuda_graph_runner.py, touches replayssm buffers.
+    prefill_cuda_graph_runner.py, touches replayssm buffers. [11-10:
+    CLOSED UNMERGED @ 038b25ee81 -- RETIRED.]
   * #40223  HiCache pack all MTP draft KV + conv/SSM state into target host
     pools -- #39830 correctness family; conflicts our pool_host/mamba +
     hybrid_pool_assembler + fence work; insert after #39862 once reviewed.
@@ -10978,12 +11312,45 @@ WATCH LIST (re-evaluate before next sync)
     load -- revisit together with #40235).
   * #38642 / #37633 / #37638 -- DFLASH family (carried from watch list;
     #40144/#39685 were skipped in mining because the watch covers them).
+    [11-10: #38642 CLOSED UNMERGED @ b5c3d189fe -- RETIRED, but its fix
+    intent is still cited by issue #39685 -> ISSUE-WATCH; and
+    #37633/#39685/#40144 are GitHub ISSUES, not PRs -- MISCLASSIFICATION
+    CORRECTED. See the 11-10 REFRESH block.]
   * HiCache series by YAMY1234/paulzhang-tm (all overlap our edited files):
     #40576 watermark async write-back, #40512 order-independent host
     reclamation, #39395 write-back usable capacity, #39747 existence-cache
     capacity knob (tiny, file-L3 relevant), #39745 chunk-boundary Mamba
     backup fix, #39856 Full-KV prefetch anchor + host mamba ratio, #39845
     exclusive L2->L3 dedup.
+
+  * 11-10 REFRESH (gh-verified sweep; watch-refresh.tsv + entry 322):
+    ADD (watches WITH GATES): #48376-#48379 QSA K/V host-offload (H-watch;
+      2.75-8x KV capacity RTX-PRO-6000-measured; ** BLOCKER: hook refuses
+      HiCache + mixed-chunk -- BOTH prod ON **; complementary axis to
+      entry-200; HAND-MERGE if ever); #49404 rep-penalty parity (gate = the
+      rep-penalty CENSUS); #46211 EAGLE-v2 step graphs (credible half =
+      collectives 3->1 TP4-PCIe; 5.1k LOC CONFLICTING; gate = upstream
+      landing); #44482 --system-prompt fixed prefix (3x mamba concurrency,
+      fixed-system-prompt bulk only -- never established; collides
+      entry-312); #48251 64-CTA TileLang decode (** REDUNDANT-IF-#48250 **).
+    RETIRE as CLOSED-UNMERGED: #46619 #42525 #40718 #39395 #39082 #38642
+      #38151 -- one caveat kept honest: ** issue #39685 still cites #38642's
+      fix intent, so 38642 moves to ISSUE-WATCH, not the bin **.
+    PROVEN MERGE-#5 CARGO (merged BEFORE the merge-#5 tip; ancestor shas
+      verified in-tree) -- RETIRE AS OPEN-WATCH, PRESENT IN TREE: #41520
+      50be533d09 / #41259 fba3ad4b1f / #41175 67eab57057 / #41173
+      b660100c00 / #40709 eae808903f / #40512 28ec6700da / #40223
+      5ca0695aa6 / #40001 4407a21f3c / #35694 0955169ed2.
+    ARRIVING-VIA-MERGE6: #42790 fe30d1e0fd and #40916 ee83f5a2e4 are in the
+      new tree; **#43703 REVERT TRAP: the ORIGINAL 19cee50c29 AND its
+      revert 78a9fa1bba (#49118) BOTH arrive -- NET-ZERO; DO NOT 're-port
+      the missing feature'**.
+    MISCLASSIFICATION CORRECTION: **#37633 / #39685 / #40144 are GitHub
+      ISSUES, not PRs** -- prior lines mined them as PRs; the intent
+      tracking stands, the object type is fixed.
+    CONFIRMED: **#45520 STILL OPEN**, head moved to e5523f52cd (updated
+      11-09; entries 302/303's reconcile record stays AUTHORITATIVE; re-
+      apply rule HOLSTERED for merge #7); #39978 CONFIRMED abandoned 10-13.
 
 ==============================================================================
 CAVEATS
