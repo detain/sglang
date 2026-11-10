@@ -644,7 +644,6 @@ class FusedMoE(torch.nn.Module):
                 self.quant_method, self.runner_backend
             )
         )
-        # TODO(merge6) zone=b5 entry=313 -- fork region dropped by merge6 take-upstream resolution (DUAL: nvfp4 deferred-finalize clause both sides); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__layers__moe__fused_moe_triton__layer.py.ours-dropped.txt
         global _deferred_finalize_info_logged
         if not _deferred_finalize_info_logged:
             _deferred_finalize_info_logged = True

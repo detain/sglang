@@ -2922,15 +2922,23 @@ class ModelOptNvFp4FusedMoEMethod(FusedMoEMethodBase):
         # AUTO is resolved later in create_moe_runner(); process_weights_after_loading()
         # rebinds the swizzled scales for every backend that reads them.
         skip_swizzled_blockscales = (
-            # TODO(merge6) zone=b5 entry=313 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__layers__quantization__modelopt_quant.py.ours-dropped.txt
             self.enable_flashinfer_trtllm_moe
+            # Fork route: b12x defers its layouts to the post-load pass like
+            # TRTLLM/MegaMoE; swizzling uninitialized scales here doubles scale
+            # storage during construction.
+            or self._use_flashinfer_b12x_w4a16
             or moe_runner_backend.is_flashinfer_megamoe()
             or moe_runner_backend.is_marlin()
             or moe_runner_backend.is_lora_marlin()
             or moe_runner_backend.is_auto()
+            # Serialized CUTLASS checkpoints build the derived layouts after
+            # loading (the fork's entry-296-era deferral).
+            or (
+                self.quant_config.is_checkpoint_nvfp4_serialized
+                and self.enable_flashinfer_cutlass_moe
+            )
         )
         if skip_swizzled_blockscales:
-            # TODO(merge6) zone=b5 entry=313 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__layers__quantization__modelopt_quant.py.ours-dropped.txt
             layer.w13_blockscale_swizzled = None
         else:
             layer.w13_blockscale_swizzled = Parameter(
@@ -2951,7 +2959,6 @@ class ModelOptNvFp4FusedMoEMethod(FusedMoEMethodBase):
         layer.register_parameter("w2_weight_scale", w2_weight_scale)
 
         if skip_swizzled_blockscales:
-            # TODO(merge6) zone=b5 entry=313 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__layers__quantization__modelopt_quant.py.ours-dropped.txt
             layer.w2_blockscale_swizzled = None
         else:
             layer.w2_blockscale_swizzled = Parameter(

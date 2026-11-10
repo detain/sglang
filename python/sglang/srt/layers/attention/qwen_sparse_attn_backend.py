@@ -83,7 +83,6 @@ from sglang.srt.runtime_context import (
     get_stream,
 )
 from sglang.srt.utils import get_device_module, is_hip
-# TODO(merge6) zone=b5 entry=313 -- upstream region dropped at fork-kept seam (fork-owned QSA backend; upstream tweak folded); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__layers__attention__qwen_sparse_attn_backend.py.theirs-dropped.txt
 
 logger = logging.getLogger(__name__)
 

@@ -1968,20 +1968,21 @@ class Fp8MoEMethod(FusedMoEMethodBase):
             scale_init = torch.zeros if scale_dtype == torch.uint8 else torch.ones
             w13_block_n, w13_block_k = weight_block_size
             w2_block_n, w2_block_k = w2_weight_block_size
-            # A blockwise tail keeps one merged w13 grid of ceil(2 * I / block_n) rows.
+            # A blockwise tail keeps one merged w13 grid of ceil(2 * I / block_n)
+            # rows; the fork's TP-refined block sizes key the w13 grid, not the
+            # (w13-n, w2-k) pair the divisibility checks use.
             w13_scale_rows = (
-                (w13_num_shards * intermediate_size_per_partition + block_n - 1)
-                // block_n
+                (w13_num_shards * intermediate_size_per_partition + w13_block_n - 1)
+                // w13_block_n
                 if allow_fp8_blockwise_tail
                 else w13_num_shards
-                * ((intermediate_size_per_partition + block_n - 1) // block_n)
+                * ((intermediate_size_per_partition + w13_block_n - 1) // w13_block_n)
             )
             w13_weight_scale = torch.nn.Parameter(
                 scale_init(
                     num_experts,
                     w13_scale_rows,
-                    (hidden_size + block_k - 1) // block_k,
-                    # TODO(merge6) zone=b5 entry=313 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__layers__quantization__fp8.py.ours-dropped.txt
+                    (hidden_size + w13_block_k - 1) // w13_block_k,
                     dtype=scale_dtype,
                 ),
                 requires_grad=False,

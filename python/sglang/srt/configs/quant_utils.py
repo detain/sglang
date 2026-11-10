@@ -109,8 +109,6 @@ def has_fp8_weights_in_checkpoint(model_path: str) -> bool:
         return False
 
 
-# TODO(merge6) zone=b5 entry=313 -- re-homed fork helper (was utils/common.py; upstream moved
-# its siblings get_quantization_config/has_fp8_weights_in_checkpoint into this module):
 # quant_algo values ModelOpt MIXED_PRECISION assigns to `*.experts` layers.
 def get_mixed_precision_moe_quant_algos(hf_config) -> set:
     """quant_algo values ModelOpt MIXED_PRECISION assigns to `*.experts` layers."""
