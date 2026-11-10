@@ -130,6 +130,17 @@ def _fuses_routed_scaling_factor_in_topk(quant_method, runner_backend) -> bool:
     )
 
 
+def _validate_gluon_quant_method(layer, quant_method) -> None:
+    if not get_moe_runner_backend().is_gluon():
+        return
+
+    from sglang.srt.layers.moe.glm_mxfp4_gluon import (
+        validate_gluon_quant_method,
+    )
+
+    validate_gluon_quant_method(layer, quant_method)
+
+
 def _copy_weight_view_before_h2d(loaded_weight: torch.Tensor) -> torch.Tensor:
     """Copy a CPU tensor view into independent contiguous storage."""
     if loaded_weight.device.type != "cpu":
@@ -400,6 +411,7 @@ class FusedMoE(torch.nn.Module):
         enable_qwen35_fp8_deferred_finalize: bool = False,
         quant_method: Optional[FusedMoEMethodBase] = None,
         uses_expert_location: bool = True,
+        allow_fp8_blockwise_tail: bool = False,
     ):
         super().__init__()
         if params_dtype is None:
@@ -419,6 +431,7 @@ class FusedMoE(torch.nn.Module):
         self.num_experts = num_experts
         self.with_bias = with_bias
         self.num_fused_shared_experts = num_fused_shared_experts
+        self.allow_fp8_blockwise_tail = allow_fp8_blockwise_tail
 
         self.enable_flashinfer_cutlass_moe = (
             get_moe_runner_backend().is_flashinfer_cutlass()
@@ -609,6 +622,7 @@ class FusedMoE(torch.nn.Module):
             moe_intermediate_size=intermediate_size,
         )
 
+        _validate_gluon_quant_method(self, self.quant_method)
         self.quant_method.create_moe_runner(self, self.moe_runner_config)
         self.runner_backend = self.quant_method.get_moe_runner_backend(self)
         self.moe_runner_config.runner_backend = self.runner_backend
@@ -618,10 +632,8 @@ class FusedMoE(torch.nn.Module):
             and self.runner_backend.is_flashinfer_trtllm()
             and (nvfp4_deferred or qwen35_fp8_deferred or qwen4_bf16_deferred)
         ) or packed_nvfp4_routed_deferred
-        # Entry-206 fork arm, re-planted: the routed kernel defers the same
-        # way; the standard dispatcher passes the deferred triple through, an
-        # A2A combine cannot. Upstream's packed_nvfp4_routed_deferred covers
-        # the TRTLLM runner only -- trtllm_routed stays fork contract.
+        # The routed kernel defers the same way; the standard dispatcher passes
+        # the deferred triple through, an A2A combine cannot.
         self.supports_routed_deferred_finalize = (
             self.runner_backend is not None
             and self.runner_backend.is_flashinfer_trtllm_routed()
@@ -632,6 +644,7 @@ class FusedMoE(torch.nn.Module):
                 self.quant_method, self.runner_backend
             )
         )
+        # TODO(merge6) zone=b5 entry=313 -- fork region dropped by merge6 take-upstream resolution (DUAL: nvfp4 deferred-finalize clause both sides); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__layers__moe__fused_moe_triton__layer.py.ours-dropped.txt
         global _deferred_finalize_info_logged
         if not _deferred_finalize_info_logged:
             _deferred_finalize_info_logged = True
@@ -1248,6 +1261,17 @@ class FusedMoE(torch.nn.Module):
                 param.data[:, :dim1, :dim2].copy_(loaded_weight)
             return
 
+        for local_expert_id in self._weight_loader_expert_ids(param, expert_id):
+            self._weight_loader_impl(
+                param=param,
+                loaded_weight=loaded_weight,
+                weight_name=weight_name,
+                shard_id=shard_id,
+                expert_id=local_expert_id,
+            )
+
+    def _weight_loader_expert_ids(self, param: torch.nn.Parameter, expert_id: int):
+        """Resolve destinations before online loaders allocate a source tensor."""
         global_expert_location_metadata = (
             get_global_expert_location_metadata() if self.uses_expert_location else None
         )
@@ -1256,14 +1280,7 @@ class FusedMoE(torch.nn.Module):
                 expert_id = self._map_global_expert_id_to_local_expert_id(expert_id)
                 if expert_id == -1:
                     return
-
-            self._weight_loader_impl(
-                param=param,
-                loaded_weight=loaded_weight,
-                weight_name=weight_name,
-                shard_id=shard_id,
-                expert_id=expert_id,
-            )
+            yield expert_id
             return
 
         require_global_experts = getattr(param, "_sglang_require_global_experts", False)
@@ -1295,44 +1312,18 @@ class FusedMoE(torch.nn.Module):
                 # routed slot can lie past _num_global_routed and map to the shared slot.
                 physical_expert_ids = self._local_routed_expert_ids(physical_expert_ids)
 
-        for physical_expert_id in physical_expert_ids:
-            self._weight_loader_physical(
-                param=param,
-                loaded_weight=loaded_weight,
-                weight_name=weight_name,
-                shard_id=shard_id,
-                expert_id=physical_expert_id,
-            )
-
-    def _weight_loader_physical(
-        self,
-        param: torch.nn.Parameter,
-        loaded_weight: torch.Tensor,
-        weight_name: str,
-        shard_id: str,
-        expert_id: int,
-    ) -> None:
-        # WARN: This makes the `expert_id` mean "local" and "global" in different cases
-        if not getattr(param, "_sglang_require_global_experts", False):
-            expert_id = self._map_global_expert_id_to_local_expert_id(expert_id)
-            if expert_id < 0 or expert_id >= self.num_local_experts:
-                return
-
-        if isinstance(
-            self.quant_method,
-            KTEPWrapperMethod,
-        ):
-            if self.quant_method.num_gpu_experts != -1:
-                if expert_id >= self.quant_method.num_gpu_experts:
-                    return
-
-        self._weight_loader_impl(
-            param=param,
-            loaded_weight=loaded_weight,
-            weight_name=weight_name,
-            shard_id=shard_id,
-            expert_id=expert_id,
-        )
+        for expert_id in physical_expert_ids:
+            # Expert IDs are local unless this parameter explicitly requires
+            # global expert storage. Preserve EPLB replicas and shared slots.
+            if not getattr(param, "_sglang_require_global_experts", False):
+                expert_id = self._map_global_expert_id_to_local_expert_id(expert_id)
+                if expert_id < 0 or expert_id >= self.num_local_experts:
+                    continue
+            if isinstance(self.quant_method, KTEPWrapperMethod):
+                if self.quant_method.num_gpu_experts != -1:
+                    if expert_id >= self.quant_method.num_gpu_experts:
+                        continue
+            yield expert_id
 
     def _load_gguf_weight(
         self,

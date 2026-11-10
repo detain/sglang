@@ -32,7 +32,6 @@ from sglang.kernels.ops.attention.flash_attn.cute.seqlen_info import SeqlenInfoQ
 from sglang.kernels.ops.attention.flash_attn.cute.softmax import SoftmaxSm100
 from sglang.kernels.ops.attention.flash_attn.cute.tile_scheduler import (
     ClcState,
-    ParamsBase,
     SchedulingMode,
     SingleTileLPTScheduler,
     SingleTileScheduler,
@@ -40,6 +39,7 @@ from sglang.kernels.ops.attention.flash_attn.cute.tile_scheduler import (
     TileSchedulerArguments,
     TileSchedulerProtocol,
 )
+from quack.cute_dsl_utils import ParamsBase
 from sglang.kernels.ops.attention.flash_attn.cute.topk_gather_kv import (
     CpasyncGatherKVManager,
 )
@@ -182,9 +182,7 @@ class FlashAttentionMLAForwardSm100:
             or self.cluster_tile_m % qhead_per_kvhead == 0
             or qhead_per_kvhead % self.cluster_tile_m == 0
         )
-        self.num_hdimv_splits = (
-            2  # split hdimv in half for our Qv @ V^T and P @ V mmas.
-        )
+        self.num_hdimv_splits = 2  # split hdimv in half for our Qv @ V^T and P @ V mmas.
         assert hdimv % 32 == 0
         assert self.topk_length % self.tile_n == 0 or not self.is_topk_gather
         self.epi_tile = (self.cta_tile_m, self.hdimv // self.num_hdimv_splits)
@@ -244,9 +242,9 @@ class FlashAttentionMLAForwardSm100:
         self.tmem_offset_O1 = self.tmem_offset_O0 + self.tmem_cols_Oi
         self.tmem_offsets_O = [self.tmem_offset_O0, self.tmem_offset_O1]
         self.total_tmem = self.tmem_offset_O1 + self.tmem_cols_Oi
-        assert (
-            self.total_tmem <= self.tmem_alloc_cols
-        ), f"Total TMEM columns allocated {self.total_tmem} exceeds capacity {self.tmem_alloc_cols}"
+        assert self.total_tmem <= self.tmem_alloc_cols, (
+            f"Total TMEM columns allocated {self.total_tmem} exceeds capacity {self.tmem_alloc_cols}"
+        )
 
     def _get_shared_storage_cls(self):
         self.buffer_align_bytes = 1024
@@ -274,9 +272,7 @@ class FlashAttentionMLAForwardSm100:
         )
         sStats_struct = cute.struct.MemRange[Float32, cute.cosize(self.sStats_layout)]
         sScale_struct = cute.struct.MemRange[Float32, cute.cosize(self.sScale_layout)]
-        sBitmask_struct = cute.struct.MemRange[
-            Uint32, cute.cosize(self.sBitmask_layout)
-        ]
+        sBitmask_struct = cute.struct.MemRange[Uint32, cute.cosize(self.sBitmask_layout)]
 
         (
             mbar_ptr_Q_struct,
@@ -361,10 +357,19 @@ class FlashAttentionMLAForwardSm100:
         stream: cuda.CUstream = None,
     ):
         self(
-            None, mQ, None, mK, mO, mLSE, softmax_scale,
-            mCuSeqlensQ=mCuSeqlensQ, mCuSeqlensK=mCuSeqlensK,
-            mSeqUsedK=mSeqUsedK, mPageTable=mPageTable,
-            stream=stream, mValue=mValue,
+            None,
+            mQ,
+            None,
+            mK,
+            mO,
+            mLSE,
+            softmax_scale,
+            mCuSeqlensQ=mCuSeqlensQ,
+            mCuSeqlensK=mCuSeqlensK,
+            mSeqUsedK=mSeqUsedK,
+            mPageTable=mPageTable,
+            stream=stream,
+            mValue=mValue,
         )
 
     # fmt: off

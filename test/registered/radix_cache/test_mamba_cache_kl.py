@@ -4,6 +4,7 @@ Keep each scenario in its own class so server configurations and cache-pressure
 requirements remain explicit.
 """
 
+import random
 import unittest
 
 import numpy as np
@@ -14,7 +15,7 @@ from transformers import AutoConfig, AutoTokenizer
 from sglang.test.ci.ci_register import register_cuda_ci
 from sglang.test.server_fixtures.default_fixture import DefaultServerBase
 
-register_cuda_ci(est_time=112, stage="extra-a", runner_config="1-gpu-large")
+register_cuda_ci(est_time=112, stage="extra-a", runner_config="1-gpu-small")
 
 
 class MambaCacheKLMixin:
@@ -74,11 +75,13 @@ class TestMambaLazyInplaceKL(MambaCacheKLMixin, DefaultServerBase):
     and a stale 192-token cache hit; with the fix KL=0 and the safe hit is 128 tokens.
     """
 
+    # TODO(merge6) zone=b2 entry=314 -- upstream region dropped at fork-kept seam (fork KL trio (entry-196/198 era)); snapshot /tmp/opencode/merge6-dossier/replant/test__registered__radix_cache__test_mamba_cache_kl.py.theirs-dropped.txt
+
     ignore_eos = True
     model = "Qwen/Qwen3.5-0.8B"
     server_env = {
         "SGLANG_OPT_MAMBA_SKIP_DECODE_LOCK": "0",
-        "SGLANG_TEST_MAMBA_LAZY_ALLOC_FAIL": "0",
+        "SGLANG_TEST_MAMBA_LAZY_POOL_FULL": "0",
     }
     other_args = [
         "--skip-tokenizer-init",
@@ -110,10 +113,15 @@ class TestMambaLazyInplaceKL(MambaCacheKLMixin, DefaultServerBase):
         "42",
     ]
 
-    def _warm_prefixes(self):
+    def _resume_at_192(self, prompt, other_prefix, seed_len, seed_new_tokens):
         self._flush_cache()
-        self._generate([44] * 128, 1)
-        self._generate([42] * 128, 1)
+        self._generate(other_prefix, 1)
+        self._generate(prompt[:128], 1)
+        seed = self._generate(prompt[:seed_len], seed_new_tokens)
+        self.assertEqual(seed["meta_info"]["cached_tokens"], 128)
+        result = self._generate(prompt, 1, score=True)
+        self.assertEqual(result["meta_info"]["cached_tokens"], 192)
+        return self._distribution(result)
 
     def test_lazy_donation_with_four_slots_and_one_request(self):
         """A prefix-hit request must finish without a fifth Mamba slot under overlap."""
@@ -128,35 +136,29 @@ class TestMambaLazyInplaceKL(MambaCacheKLMixin, DefaultServerBase):
         self.assertEqual(len(logprobs), 32)
         self.assertTrue(np.isfinite([row[0] for row in logprobs]).all())
 
-    def test_reuse_distribution_after_inplace_tracking(self):
+    def test_reuse_distribution_after_boundary_decode(self):
         config = AutoConfig.from_pretrained(self.model)
         self.vocab_ids = list(range(config.get_text_config().vocab_size))
-        prompt = [42] * 128 + [43] * 127
+        rng = random.Random(0)
+        # Not a repeated token: it saturates the state, hiding a checkpoint 32 tokens off.
+        prompt = [rng.randrange(1000, 100000) for _ in range(255)]
+        other_prefix = [rng.randrange(1000, 100000) for _ in range(128)]
 
-        # A single output token does not launch the boundary-crossing decode.
-        self._warm_prefixes()
-        reference = self._generate(prompt, 1, score=True)
-        self.assertEqual(reference["meta_info"]["cached_tokens"], 128)
-        reference_logprobs = self._distribution(reference)
+        reused = self._resume_at_192(prompt, other_prefix, 255, 32)
+        # One output token launches no boundary decode; the prefill writes 192.
+        same_split = self._resume_at_192(prompt, other_prefix, 255, 1)
+        split = self._resume_at_192(prompt, other_prefix, 192, 1)
 
-        self._warm_prefixes()
-        seed = self._generate(prompt, 32)
-        self.assertEqual(seed["meta_info"]["cached_tokens"], 128)
-        reused = self._generate(prompt, 1, score=True)
-        self.assertGreaterEqual(reused["meta_info"]["cached_tokens"], 128)
-        reused_logprobs = self._distribution(reused)
-
-        kl = float(
-            np.sum(np.exp(reference_logprobs) * (reference_logprobs - reused_logprobs))
+        np.testing.assert_array_equal(
+            reused,
+            same_split,
+            "The boundary decode changed the reused 192-token checkpoint",
         )
-        print(
-            f"lazy in-place checkpoint KL(reference || reuse)={kl:.9g}, "
-            f"cached_tokens={reused['meta_info']['cached_tokens']}",
-            flush=True,
-        )
+        kl = float(np.sum(np.exp(split) * (split - reused)))
+        print(f"lazy boundary checkpoint KL(split || reuse)={kl:.9g}", flush=True)
         self.assertGreaterEqual(kl, -1e-12)
-        # Leave room for numerical noise while staying far below the broken run.
-        self.assertLess(kl, 1e-4, "Cache reuse changed the next-token distribution")
+        # Above the split noise (up to 8.2e-4), below a checkpoint 16 tokens off.
+        self.assertLess(kl, 3e-3, "Cache reuse changed the next-token distribution")
 
 
 @unittest.skipUnless(

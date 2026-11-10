@@ -10,7 +10,7 @@ import torch
 
 from sglang.test.ci.ci_register import register_npu_ci
 
-register_npu_ci(est_time=4, suite="stage-a-unit-test-npu")
+register_npu_ci(est_time=4, suite="base-a-test-npu")
 
 from sglang.srt.hardware_backend.npu.attention.mla_preprocess import (
     is_fia_nz,
@@ -175,6 +175,7 @@ class TestIsFiaNz(unittest.TestCase):
         # assertion against a missing SGLANG_NPU_USE_MLAPO was deliberately
         # dropped (see the is_fia_nz docstring) so FIA NZ works on the
         # ordinary MLA path too.
+        # TODO(merge6) zone=b2 entry=314 -- upstream region dropped at fork-kept seam (fork stub keep; upstream 1-line fold); snapshot /tmp/opencode/merge6-dossier/replant/test__registered__unit__npu__attention__test_npu_mla_preprocess.py.theirs-dropped.txt
         with patch.dict(os.environ):
             os.environ.pop("SGLANG_NPU_USE_MLAPO", None)
             os.environ["SGLANG_USE_FIA_NZ"] = "1"

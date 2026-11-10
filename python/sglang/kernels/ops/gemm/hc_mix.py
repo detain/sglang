@@ -19,6 +19,7 @@ import torch
 import triton
 import triton.language as tl
 
+
 _FUSED_MIX_MAX_ROWS = 16
 # 16, not 64: on 188-SM SM120 parts (RTX PRO 6000 Blackwell Max-Q) the 17-64
 # row config below ran with num_ctas = min(80, sm_count) = 80, idling 57% of
@@ -299,6 +300,7 @@ def fused_hc_mix(
     if config is None:
         raise ValueError(f"unsupported HC mix row count: {rows}")
     t_raw = torch.empty((config.rows_pad, lowrank), dtype=torch.float32, device=device)
+    # TODO(merge6) zone=b5 entry=313 -- upstream region dropped at fork-kept seam (fork config-table restructure; upstream num_ctas tweak N/A); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__kernels__ops__gemm__hc_mix.py.theirs-dropped.txt
     out = torch.empty((rows, hs), dtype=hyper_input_normed.dtype, device=device)
     if rows == 0:
         return out

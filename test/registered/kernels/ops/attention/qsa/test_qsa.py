@@ -61,6 +61,8 @@ from sglang.srt.mem_cache.qsa_kv_pool import (
 )
 from sglang.srt.model_executor.forward_batch_info import ForwardMode
 from sglang.srt.server_args import ServerArgs
+
+# TODO(merge6) zone=b2 entry=314 -- upstream region dropped at fork-kept seam (fork-owned QSA suite); snapshot /tmp/opencode/merge6-dossier/replant/test__registered__kernels__ops__attention__qsa__test_qsa.py.theirs-dropped.txt
 from sglang.test.ci.ci_register import register_cuda_ci
 from sglang.test.mem_cache_utils import routed
 
@@ -1514,16 +1516,16 @@ def test_qsa_chunk_prefill_accepts_fp8_cached_prefix():
     [((12, 0), True), ((12, 1), False), ((10, 0), False)],
 )
 def test_is_sm120_matches_exact_capability(monkeypatch, capability, expected):
-    from sglang.srt.utils import common
+    from sglang.srt.utils import device as device_utils
 
-    common.is_sm120.cache_clear()
-    monkeypatch.setattr(common, "is_cuda", lambda: True)
+    device_utils.is_sm120.cache_clear()
+    monkeypatch.setattr(device_utils, "is_cuda", lambda: True)
     monkeypatch.setattr(torch.cuda, "get_device_capability", lambda: capability)
 
     try:
-        assert common.is_sm120() is expected
+        assert device_utils.is_sm120() is expected
     finally:
-        common.is_sm120.cache_clear()
+        device_utils.is_sm120.cache_clear()
 
 
 @pytest.mark.parametrize(
@@ -1531,16 +1533,16 @@ def test_is_sm120_matches_exact_capability(monkeypatch, capability, expected):
     [((12, 1), True), ((12, 0), False), ((10, 0), False)],
 )
 def test_is_sm121_matches_exact_capability(monkeypatch, capability, expected):
-    from sglang.srt.utils import common
+    from sglang.srt.utils import device as device_utils
 
-    common.is_sm121.cache_clear()
-    monkeypatch.setattr(common, "is_cuda", lambda: True)
+    device_utils.is_sm121.cache_clear()
+    monkeypatch.setattr(device_utils, "is_cuda", lambda: True)
     monkeypatch.setattr(torch.cuda, "get_device_capability", lambda: capability)
 
     try:
-        assert common.is_sm121() is expected
+        assert device_utils.is_sm121() is expected
     finally:
-        common.is_sm121.cache_clear()
+        device_utils.is_sm121.cache_clear()
 
 
 @pytest.mark.parametrize(

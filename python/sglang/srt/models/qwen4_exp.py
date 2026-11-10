@@ -69,16 +69,13 @@ from sglang.srt.layers.utils import PPMissingLayer, get_layer_id
 from sglang.srt.layers.vocab_parallel_embedding import VocabParallelEmbedding
 from sglang.srt.model_executor.cuda_graph_config import Backend
 from sglang.srt.mem_cache.ple_state_pool import NGRAM_PART, SHORT_CONV_PART
-from sglang.srt.model_executor.forward_batch_info import (
-    ForwardBatch,
-    ForwardMode,
-    PPProxyTensors,
-)
+from sglang.srt.model_executor.forward_batch_info import ForwardBatch, PPProxyTensors
 from sglang.srt.model_executor.forward_context import (
     get_attn_backend,
     get_req_to_token_pool,
     get_token_to_kv_pool,
 )
+from sglang.srt.model_executor.forward_mode import ForwardMode
 from sglang.srt.model_executor.runner import get_is_capture_mode
 from sglang.srt.model_executor.runner_backend_utils.breakable_cuda_graph import (
     eager_on_graph,
@@ -129,6 +126,7 @@ from sglang.srt.utils import (
 if TYPE_CHECKING:
     from sglang.srt.model_executor.runner.base_runner import BaseRunner
 
+_is_cuda = is_cuda()
 _use_aiter = get_bool_env_var("SGLANG_USE_AITER") and is_hip()
 
 # Decode/verify-sized batches only: at prefill sizes both chains are compute
@@ -333,6 +331,14 @@ def _prepare_ple_batch(
 ) -> Optional[_PLEBatch]:
     """Prepare the token layout and the shared N-gram history once per forward."""
 
+    # FIXME: this runs inside the model forward and reads the request pool's
+    # Mamba indices and the state slots' virtual-to-physical map after the
+    # decode graph's declared shared-read end (`in_graph_metadata_prep_done`).
+    # The scheduler's write-after-read barrier releases the schedule stream at
+    # that end, so a request row or state slot reused while this forward runs
+    # can be rewritten before it is read here. Declare a later read end, or move
+    # these reads into metadata preparation.
+
     if forward_batch.tbo_parent_token_range is not None:
         raise NotImplementedError("Qwen4 PLE is not compatible with two-batch overlap")
     spec_algorithm = forward_batch.spec_algorithm
@@ -432,6 +438,11 @@ def _prepare_ple_batch(
         get_req_to_token_pool()
         .get_mamba_indices(forward_batch.req_pool_indices[:sequence_count])
         .long()
+    )
+
+    pool = get_req_to_token_pool()
+    state_indices = (
+        get_attn_backend().runner_ids.state_ids(pool.state_sub_pool).ids(state_indices)
     )
 
     # CUDA graph padding uses request slot 0, which may belong to a real request.
@@ -602,9 +613,17 @@ def _ple_track_targets(
     Masked-off rows route to reserved slot 0, so the shape stays graph-capturable.
     None when tracking is inactive or its metadata is absent.
     """
-    track_indices = forward_batch.mamba_track_indices
+    if (
+        forward_batch.mamba_track_indices is None
+        or forward_batch.mamba_track_mask is None
+    ):
+        return None
+    # Metadata owns physical tracking destinations in eager and graph execution.
+    # The batch field is already translated in eager mode but stays virtual on
+    # decode graph replay; consuming it here would mix the two address domains.
+    track_indices = get_attn_backend().linear_attn_backend.state_tracking_indices
     track_mask = forward_batch.mamba_track_mask
-    if track_indices is None or track_mask is None:
+    if track_indices is None:
         return None
 
     rows = batch.lengths.shape[0]
@@ -641,7 +660,6 @@ def _use_qwen4_varlen_prefill(
     req_indices: torch.Tensor,
     token_offsets: torch.Tensor,
     dilation: int,
-    residual: torch.Tensor | None = None,
 ) -> bool:
     if (
         not envs.SGLANG_ENABLE_QWEN4_PLE_FUSION.get()
@@ -650,7 +668,6 @@ def _use_qwen4_varlen_prefill(
         not in (
             ForwardMode.EXTEND,
             ForwardMode.MIXED,
-            ForwardMode.SPLIT_PREFILL,
         )
         or query_start_loc is None
     ):
@@ -668,10 +685,13 @@ def _use_qwen4_varlen_prefill(
         req_indices,
         token_offsets,
         dilation,
-        residual,
     )
 
 
+# TODO(merge6) zone=b5 entry=313 -- fork region dropped by merge6 take-upstream resolution (DUAL IMPL: varlen-prefill predicate (fork residual/SPLIT arms vs upstream native)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__models__qwen4_exp.py.ours-dropped.txt
+# TODO(merge6) zone=b5 entry=313 -- grafted back fork predicate dropped by the
+# take-upstream varlen resolution (its kernel helpers survived in
+# kernels/ops/mamba/qwen4_short_conv.py; merge #5 cascade-repair class).
 def _use_qwen4_direct_decode(
     mode: ForwardMode,
     x: torch.Tensor,
@@ -1558,7 +1578,7 @@ class Qwen4ExpPLELayer(nn.Module):
         )
         nn.init.zeros_(self.conv1d.weight)
         self._prefetch_stream = (
-            torch.cuda.Stream() if config.ple_offload_embedding else None
+            torch.get_device_module().Stream() if config.ple_offload_embedding else None
         )
         self._graph_prefetch_buffer = None
         self._graph_prefetch_buffers = {}
@@ -1593,7 +1613,6 @@ class Qwen4ExpPLELayer(nn.Module):
             batch.req_indices,
             batch.token_offsets,
             self.short_conv_dilation,
-            residual,
         ):
             from sglang.kernels.ops.mamba.qwen4_short_conv import (
                 fused_qwen4_varlen_conv,
@@ -1610,12 +1629,12 @@ class Qwen4ExpPLELayer(nn.Module):
                 batch.req_indices,
                 batch.token_offsets,
                 self.short_conv_dilation,
-                residual=residual,
                 track_indices=track_indices,
                 track_offsets=track_offsets,
             )
-            return conv_output if residual is not None else F.silu(conv_output)
+            return F.silu(conv_output)
 
+        # TODO(merge6) zone=b5 entry=313 -- fork region dropped by merge6 take-upstream resolution (DUAL IMPL: varlen-prefill call site); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__models__qwen4_exp.py.ours-dropped.txt
         if batch.use_decode_fast_path:
             # With row_width=1 the padded/transpose path is x.unsqueeze(-1),
             # and each state boundary is a one-column shift; conv and SiLU stay native.
@@ -1938,25 +1957,11 @@ class Qwen4ExpPLELayer(nn.Module):
         offloaded_embedding = self.ple_embedding.ngram_embedding
 
         stream = self._prefetch_stream
-        stream.wait_stream(torch.cuda.current_stream())
-        if lookup_ids is not None:
-            lookup_ids.record_stream(stream)
-        if not self._is_capturing():
-            # The eager buffer is written by the side stream but allocated and
-            # freed on the current one, so the allocator would otherwise hand
-            # its block straight back when a larger buffer replaces it. Graph
-            # buffers are excluded: they are held for the life of the process
-            # and record_stream is not defined for graph-pool blocks.
-            prefetched.record_stream(stream)
-        with torch.cuda.stream(stream):
-            if self.ple_embedding.uses_host_staging:
-                offloaded_embedding.gather_staged(
-                    lookup_tokens * self.ple_embedding.ngram_heads,
-                    forward_batch.input_ids.device,
-                    out=output_view,
-                )
-            else:
-                offloaded_embedding.gather(lookup_ids, out=output_view)
+        stream.wait_stream(torch.get_device_module().current_stream())
+        lookup_ids.record_stream(stream)
+        with torch.get_device_module().stream(stream):
+            offloaded_embedding.gather(lookup_ids, out=output_view)
+        # TODO(merge6) zone=b5 entry=313 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__models__qwen4_exp.py.ours-dropped.txt
         self._prefetch_state = prefetched, semantic_tokens, physical_tokens
 
     def _consume_prefetched_embeddings(
@@ -1965,7 +1970,7 @@ class Qwen4ExpPLELayer(nn.Module):
         if self._prefetch_state is None:
             raise RuntimeError("PLE prefetch state is missing")
         embeddings, semantic_tokens, physical_tokens = self._prefetch_state
-        torch.cuda.current_stream().wait_stream(self._prefetch_stream)
+        torch.get_device_module().current_stream().wait_stream(self._prefetch_stream)
         embeddings = self.ple_embedding.ngram_embedding.reduce(embeddings)
         embeddings = embeddings * self.ple_embedding.ngram_embedding.weight_scale
         embeddings = self.ple_embedding._finish_embedding_lookup(
@@ -2190,6 +2195,16 @@ def _build_qwen4_exp_stages(config, layer_id, residual, *, linear_attention=Fals
     return append_stages((attn, None), (ffn, None))
 
 
+def _prepare_decode_moe_comm(mlp):
+    # qwen4_decode pulls in CUDA-only communication kernels (tvm_ffi), so
+    # only import it where its Blackwell decode path can be enabled.
+    if not (_is_cuda and isinstance(mlp, Qwen2MoeSparseMoeBlock)):
+        return None
+    from sglang.srt.layers.moe.qwen4_decode import prepare_qwen4_decode_comm
+
+    return prepare_qwen4_decode_comm(mlp)
+
+
 class Qwen4ExpLayerExtensionMixin:
     stage_facts = staticmethod(_qwen4_exp_stage_facts)
 
@@ -2263,13 +2278,7 @@ class Qwen4ExpLayerExtensionMixin:
             linear_attention=linear_attention,
         )
 
-        from sglang.srt.layers.moe.qwen4_decode import prepare_qwen4_decode_comm
-
-        self._decode_moe_comm = (
-            prepare_qwen4_decode_comm(self.mlp)
-            if isinstance(self.mlp, Qwen2MoeSparseMoeBlock)
-            else None
-        )
+        self._decode_moe_comm = _prepare_decode_moe_comm(self.mlp)
 
     @contextmanager
     def hc_norms(self, normalized_input, next_norm):
@@ -3318,6 +3327,9 @@ class Qwen4ExpForConditionalGeneration(Qwen3VLForConditionalGeneration):
 
         # A self-reference in the helper would keep params_dict (and pre-repack
         # Parameters) alive until cyclic GC runs.
+        ple_warned_downcast = False
+
+        # Print warning once per load_weights() call
         ple_warned_downcast = False
 
         def load_qwen4_exp_ple_shard(name: str, loaded_weight: torch.Tensor) -> bool:

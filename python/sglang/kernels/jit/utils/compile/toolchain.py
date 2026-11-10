@@ -24,7 +24,7 @@ from typing import List, Tuple
 
 import torch
 
-from sglang.kernels.jit.utils.arch import get_jit_cuda_arch
+from sglang.kernels.jit.utils.arch import get_compile_arch
 from sglang.kernels.jit.utils.common import cache_once, is_hip_runtime, is_sail_runtime
 from sglang.srt.environ import envs
 
@@ -108,9 +108,7 @@ def _pip_cuda_home() -> str | None:
 def cuda_home() -> str:
     """CUDA install root, resolved the way tvm-ffi resolves it.
 
-    `arch._jit_cuda_version` resolves nvcc the same way for its own purposes;
-    the two must stay in agreement, since one picks the target and the other
-    compiles for it.
+    `arch._jit_cuda_version` probes this nvcc to pick the compile target.
 
     One departure from tvm-ffi: if the toolkit we would otherwise pick cannot
     compile against this host's libc (see ``_rsqrt_safe``), fall back to a
@@ -309,7 +307,7 @@ def gpu_arch_name() -> str:
     gfx942 onto a single ``9.4``, which are three different compile targets.
     """
     if not is_hip_runtime():
-        return get_jit_cuda_arch().target_name
+        return get_compile_arch().target_name
     try:
         device = torch.cuda.current_device()
         return str(torch.cuda.get_device_properties(device).gcnArchName)
@@ -338,7 +336,7 @@ def tvm_ffi_paths() -> Tuple[Tuple[str, ...], str, str]:
     return includes, str(lib.parent), lib.stem.removeprefix("lib")
 
 
-def target_flags() -> List[str]:
+def target_flags(kernel_name: str = "") -> List[str]:
     """The device flags that pin the build to this GPU.
 
     Emitted from the architecture sglang already detected, rather than left to
@@ -355,7 +353,7 @@ def target_flags() -> List[str]:
         return [f"--gpu-architecture={arch}"]
     if is_hip_runtime():
         return [f"--offload-arch={gpu_arch_name()}"]
-    arch = get_jit_cuda_arch()
+    arch = get_compile_arch(kernel_name)
     target = f"{arch.major}{arch.minor}{arch.suffix}"
     return [f"-gencode=arch=compute_{target},code=sm_{target}"]
 

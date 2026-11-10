@@ -49,6 +49,7 @@ from sglang.kernels.ops.diffusion import (
     unmount_nvfp4_bias_gelu,
     unmount_qwen_image_added_qkv,
     unmount_sana_video_linear_attention,
+    # TODO(merge6) zone=b1 entry=310-B1 -- upstream region dropped at fork-kept seam (fork-owned stage; upstream fold); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__multimodal_gen__runtime__pipelines_core__stages__denoising.py.theirs-dropped.txt
 )
 from sglang.multimodal_gen import envs
 from sglang.multimodal_gen.configs.pipeline_configs.base import (
@@ -56,6 +57,8 @@ from sglang.multimodal_gen.configs.pipeline_configs.base import (
     PipelineConfig,
     STA_Mode,
 )
+
+# TODO(merge6) zone=b1 entry=310-B1 -- upstream region dropped at fork-kept seam (fold); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__multimodal_gen__runtime__pipelines_core__stages__denoising.py.theirs-dropped.txt
 from sglang.multimodal_gen.configs.pipeline_configs.flux import (
     Flux2PipelineConfig,
     FluxPipelineConfig,
@@ -65,7 +68,7 @@ from sglang.multimodal_gen.configs.sample.sampling_params import (
     quality_allows,
     resolve_skip_softmax_params,
 )
-from sglang.multimodal_gen.configs.task_type import get_request_task_type
+from sglang.multimodal_gen.configs.task_type import ModelTaskType, get_request_task_type
 from sglang.multimodal_gen.runtime.breakable_cuda_graph import (
     prompt_padding as bcg_utils,
 )
@@ -282,6 +285,7 @@ _QUALITY_FUSION_HANDLERS: tuple[
         mount_sana_video_linear_attention,
         unmount_sana_video_linear_attention,
     ),
+    # TODO(merge6) zone=b1 entry=310-B1 -- upstream region dropped at fork-kept seam (fold); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__multimodal_gen__runtime__pipelines_core__stages__denoising.py.theirs-dropped.txt
 )
 
 
@@ -3704,6 +3708,7 @@ class DenoisingStage(PipelineStage, RolloutDenoisingMixin):
                         if collect_trajectory:
                             self._record_trajectory(ctx, step, batch, server_args)
 
+                        self.check_cancelled(batch)
                         if step_index == num_timesteps - 1 or (
                             (step_index + 1) > ctx.num_warmup_steps
                             and (step_index + 1) % progress_step_interval == 0
@@ -3799,6 +3804,7 @@ class DenoisingStage(PipelineStage, RolloutDenoisingMixin):
                 current_timestep=timestep_index,
                 attn_metadata=attn_metadata,
                 forward_batch=batch,
+                quality=batch.sampling_params.quality,
             ):
                 raw = self._predict_noise(
                     current_model=current_model,

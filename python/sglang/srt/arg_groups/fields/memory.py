@@ -32,7 +32,9 @@ class Memory(msgspec.Struct):
                 "lower-priority requests first, and 'tlru' stands for "
                 "Tail-Optimized LRU (arXiv:2510.15152), which evicts the part of "
                 "a conversation that cannot affect tail TTFT before falling back "
-                "to LRU. See "
+                "to LRU. 'joint_lru' evicts full-attention and SWA KV in one "
+                "shared least-recently-used order on a full/SWA hybrid model with "
+                "--enable-unified-memory, and acts as 'lru' elsewhere. See "
                 "https://docs.sglang.io/docs/advanced_features/radix_eviction_policy "
                 "for what each policy optimizes for."
             ),
@@ -162,7 +164,8 @@ class Memory(msgspec.Struct):
     hicache_storage_backend: A[
         Optional[str],
         Arg(
-            help="The storage backend for hierarchical KV cache. Built-in backends: file (minimal reference), fast_file (local disk with direct host-buffer I/O, parallel reads, and background eviction), mooncake, npu_memcache, hf3fs, nixl, aibrix, tensorcast, seaweedfs. For dynamic backend, use --hicache-storage-backend-extra-config to specify: backend_name (custom name), module_path (Python module path), class_name (backend class name).",
+            help="The storage backend for hierarchical KV cache. Built-in backends: file, fast_file, mooncake, npu_memcache, hf3fs, nixl, aibrix, tensorcast, seaweedfs. For dynamic backend, use --hicache-storage-backend-extra-config to specify: backend_name (custom name), module_path (Python module path), class_name (backend class name).",
+            # TODO(merge6) zone=b6 entry=315 -- fork region dropped by merge6 take-upstream resolution (fork fast_file help wording -> B6 re-pin); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__arg_groups__fields__memory.py.ours-dropped.txt
             choices=[
                 "file",
                 "fast_file",
@@ -295,7 +298,10 @@ class Memory(msgspec.Struct):
         Optional[Dict[str, Any]],
         Arg(
             help=(
-                "JSON configuration for the selected linker backend. Built-in "
+                "JSON configuration for the selected linker backend. Common "
+                "options include load_mode (layer_wise or prefetch) and "
+                "prefetch_policy (best_effort, wait_complete, or timeout). "
+                "Defaults are layer_wise and timeout. Built-in "
                 "backends accept storage options directly. The dynamic backend "
                 "requires linker (class name), linker_module_path (Python "
                 "module), and optional linker_extra_config (object). May be "

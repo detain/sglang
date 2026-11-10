@@ -660,6 +660,7 @@ class MiniCPMSparseBackend(AttentionBackend):
                 logical_batch_size=forward_batch.batch_size,
                 kv_head_num=layer.tp_k_head_num,
                 is_prefill=True,
+                ver=self.flash_attn_backend.fa_impl_ver,
             )
         )
         page_table = metadata.base.page_table
@@ -793,6 +794,7 @@ class MiniCPMSparseBackend(AttentionBackend):
                 logical_batch_size=bs,
                 kv_head_num=layer.tp_k_head_num,
                 is_prefill=False,
+                ver=self.flash_attn_backend.fa_impl_ver,
             )
         )
         key_cache, value_cache = self.flash_attn_backend.get_paged_mha_kv_cache(

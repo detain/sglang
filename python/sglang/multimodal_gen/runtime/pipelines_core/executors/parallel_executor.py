@@ -14,6 +14,7 @@ from sglang.multimodal_gen.runtime.distributed.parallel_state import (
     use_sequence_parallel_group,
 )
 from sglang.multimodal_gen.runtime.distributed.utils import broadcast_pyobj
+from sglang.multimodal_gen.runtime.managers.request_cancel import raise_if_cancelled
 from sglang.multimodal_gen.runtime.pipelines_core import Req
 from sglang.multimodal_gen.runtime.pipelines_core.executors.pipeline_executor import (
     PipelineExecutor,
@@ -66,6 +67,7 @@ class ParallelExecutor(PipelineExecutor):
         group = get_world_group()
 
         use_nvtx = self._should_use_stage_nvtx(batch, server_args)
+        requests = batch if isinstance(batch, list) else [batch]
         levels = self.group_stages_into_execution_levels(stages)
         # component offload moves modules between stages under shared
         # residency state, which concurrent members would race; resident
@@ -88,6 +90,8 @@ class ParallelExecutor(PipelineExecutor):
         with self._component_residency_request(stages, batch, server_args):
             stage_index = 0
             for level in levels:
+                # all ranks must check before entering rank-selective stage branches
+                raise_if_cancelled(requests)
                 if (
                     len(level) > 1
                     and allow_concurrency
@@ -118,6 +122,7 @@ class ParallelExecutor(PipelineExecutor):
                             group=group,
                         )
                 stage_index += len(level)
+            raise_if_cancelled(requests)
         return batch
 
     @staticmethod
@@ -427,5 +432,6 @@ class ParallelExecutor(PipelineExecutor):
             server_args,
             lambda stage, current: stage.run_grouped_requests(current, server_args),
         )
+
 
 # TODO(merge5): fold upstream changes dropped here (entries 140 own this file; batch B1)

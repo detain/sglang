@@ -11,7 +11,6 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import inspect
-import json
 import logging
 import pickle
 import queue
@@ -44,7 +43,6 @@ from sglang.multimodal_gen.runtime.disaggregation.transport.manager import (
     DiffusionTransferManager,
 )
 from sglang.multimodal_gen.runtime.disaggregation.transport.protocol import (
-    TRANSFER_MAGIC,
     TransferAllocatedMsg,
     TransferDoneMsg,
     TransferMsgType,
@@ -60,9 +58,14 @@ from sglang.multimodal_gen.runtime.distributed.ipc_cuda import (
     detach_cuda_tensors,
 )
 from sglang.multimodal_gen.runtime.entrypoints.utils import expand_request_outputs
+
+# TODO(merge6) zone=b1 entry=310-B1 -- upstream region dropped at fork-kept seam (fork-owned mixin); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__multimodal_gen__runtime__disaggregation__scheduler_mixin.py.theirs-dropped.txt
 from sglang.multimodal_gen.runtime.pipelines_core import Req
 from sglang.multimodal_gen.runtime.pipelines_core.diffusion_scheduler_utils import (
     clone_scheduler_runtime,
+)
+from sglang.multimodal_gen.runtime.pipelines_core.request_utils import (
+    expand_request_outputs,
 )
 from sglang.multimodal_gen.runtime.platforms import current_platform
 from sglang.multimodal_gen.runtime.utils.common import get_zmq_socket
@@ -597,6 +600,7 @@ class SchedulerDisaggMixin:
         preallocated_slot_info = []
         if self._is_receiver_node:
             capacity = getattr(sa, "disagg_prealloc_slots", 2)
+            # TODO(merge6) zone=b1 entry=310-B1 -- upstream region dropped at fork-kept seam (fork-owned mixin); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__multimodal_gen__runtime__disaggregation__scheduler_mixin.py.theirs-dropped.txt
             typical_size = 64 * 1024 * 1024  # 64 MiB per slot
             for i in range(capacity):
                 slot = buffer.allocate(typical_size, f"prealloc_{i}")

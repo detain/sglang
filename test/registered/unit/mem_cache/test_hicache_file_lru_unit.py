@@ -41,7 +41,6 @@ from sglang.srt.mem_cache.hicache_storage import (
     PoolHitPolicy,
     PoolName,
     PoolTransfer,
-    count_pool_hits,
 )
 from sglang.srt.mem_cache.hybrid_cache.hybrid_cache_controller import (
     HybridCacheController,
@@ -867,6 +866,8 @@ class TestDcpStorage(unittest.TestCase):
             cc.storage_backend = backend
             cc.page_size = 128
             cc.prefetch_hits_sync_groups = []
+            cc.mem_pool_host = SimpleNamespace(entry_map={})
+            cc._host_pool_schemas = []
             op = PrefetchOperation(
                 CacheRequestHandle("test", 0), tokens, pool_transfers=[transfer]
             )
@@ -892,6 +893,7 @@ class TestDcpStorage(unittest.TestCase):
 
             def reduce(tensor, op, groups, peer=peer, other=other):
                 self.assertEqual(tensor.numel(), 1 + len(PoolName) + peer.numel())
+                # TODO(merge6) zone=b2 entry=314 -- upstream region dropped at fork-kept seam (fork-owned suite; upstream 9-line fold); snapshot /tmp/opencode/merge6-dossier/replant/test__registered__unit__mem_cache__test_hicache_file_lru_unit.py.theirs-dropped.txt
                 self.assertEqual(op, torch.distributed.ReduceOp.MIN)
                 # The folded hits MIN too: the cancelled rank votes 0 below.
                 tensor[0] = min(

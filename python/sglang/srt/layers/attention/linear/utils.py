@@ -7,7 +7,7 @@ import msgspec
 
 from sglang.srt.environ import envs
 from sglang.srt.runtime_context import get_exec
-from sglang.srt.utils.common import rank0_log
+from sglang.srt.utils.log_utils import rank0_log
 
 if TYPE_CHECKING:
     pass
@@ -128,16 +128,18 @@ def build_verify_intermediate_state_indices(pool_size: int, device):
     target_verify path: request slot i owns scratch row i.
 
     The scratch is allocated with one extra padding row (the `+1` in
-    MambaPool.SpeculativeState, index `pool_size`). Eager and CUDA graph
-    batches can be padded past the pool capacity. Graph alignment can exceed
-    eager alignment even without MLP-sync. The verify kernels index this
-    table positionally up to the padded batch size, so cover both maxima
-    and clamp every out-of-pool row onto the padding row. Pad rows share
-    one discard row whose value is irrelevant, as in ragged verify.
+    MambaPool.SpeculativeState, index `pool_size`). Eager warmup, MLP-sync,
+    and CUDA graph batches can be padded past the pool capacity. Graph CP
+    alignment applies even when the model skips MLP-sync, so the graph
+    maximum can exceed the eager maximum. Verify kernels index this table
+    positionally up to the padded batch size. Cover both maxima and clamp
+    every out-of-pool row onto the padding row: pad rows race onto one
+    discard row, which is value-irrelevant (same convention as the
+    ragged-verify ghost row).
     """
     import torch
 
-    from sglang.srt.utils.common import (
+    from sglang.srt.layers.dp_attention import (
         get_cuda_graph_max_batch_size,
         get_eager_max_batch_size,
     )

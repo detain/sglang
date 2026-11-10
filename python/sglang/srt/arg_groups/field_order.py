@@ -445,9 +445,6 @@ POSITIONAL_FIELD_ORDER = (
     "encoder_bootstrap_port",
     "encoder_register_urls",
     "enable_adaptive_dispatch_to_encoder",
-    "enable_pdmux",
-    "pdmux_config_path",
-    "sm_group_num",
     "startup_weight_load_mode",
     "custom_weight_loader",
     "weight_loader_disable_mmap",
@@ -566,5 +563,14 @@ POSITIONAL_FIELD_ORDER = (
     # elements" once upstream's own appended block grew past them).
     "qsa_cache_sharding_size",
     "hicache_mamba_size_gb",
+    "cp_kv_layout",
+    "enable_prefill_weight_versions",
+    "uocr_doc_split",
+    "uocr_doc_page_window",
+    "uocr_max_page_tokens",
+    "enable_fp4_indexer",
+    "paged_experts_enable_disk",
+    "disable_normalize_embedding",
+    "log_schedule_decisions",
 )
 # fmt: on

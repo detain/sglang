@@ -198,6 +198,8 @@ class DiffusionServer:
     def plan(self) -> ExecutionPlan:
         return self._plan
 
+    # TODO(merge6) zone=b1 entry=310-B1 -- upstream region dropped at fork-kept seam (fork-owned restructure; upstream 3-line folded); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__multimodal_gen__runtime__disaggregation__orchestrator.py.theirs-dropped.txt
+
     def start(self) -> None:
         if self._running:
             return

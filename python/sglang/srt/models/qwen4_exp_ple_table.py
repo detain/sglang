@@ -9,9 +9,22 @@
     bf16 table 128 GiB) of host memory.
 
 ``file``
-    A shared mmap of a sparse file under ``--ple-offload-dir``. GPUs with
-    host-page-table access read it directly; other CUDA GPUs stage rows
-    through pinned buffers. ``PleFileRssTrimmer`` bounds mapping residency.
+    A file-backed, shared ``mmap`` of a sparse file under
+    ``--ple-offload-dir``. Meant for unified-memory parts (GB10 / DGX Spark and
+    similar), where pinned host memory comes out of the *same* pool as the
+    model weights and ``pinned`` therefore frees nothing: Qwen3.8-Flash-Next is
+    126.0 GiB of weights on a 121.63 GiB box and does not boot with ``pinned``.
+    The kernel dereferences the pageable pointer directly, which only works on
+    devices that report ``cudaDevAttrPageableMemoryAccess`` (GB10 through the
+    host page tables, a discrete GPU on the open kernel modules through HMM);
+    rows are paged in from storage on demand, the file is sparse, deterministic
+    in name and reused across restarts, and gathers of prefill size hint the
+    page cache (``posix_fadvise(WILLNEED)``) so page faults are served
+    concurrently instead of one at a time. A background trimmer keeps the
+    mapping's resident set under a budget, because faulting rows in maps whole
+    page-cache folios and the table would otherwise creep towards full
+    residency (see ``PleFileRssTrimmer``).
+# TODO(merge6) zone=b5 entry=313 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__models__qwen4_exp_ple_table.py.ours-dropped.txt
 
 This module has no Triton or CUDA-kernel imports so that its allocator and
 prefetcher can be unit-tested on CPU.
@@ -46,7 +59,7 @@ _SMAPS_RSS = re.compile(r"^Rss:\s+(\d+) kB")
 PLE_OFFLOAD_BACKENDS = ("pinned", "file")
 
 # cudaDeviceAttr enum values (cuda_runtime_api.h).
-_CUDA_DEV_ATTR_PAGEABLE_MEMORY_ACCESS_USES_HOST_PAGE_TABLES = 100
+_CUDA_DEV_ATTR_PAGEABLE_MEMORY_ACCESS = 88
 _MADV_RANDOM = 1
 _MADV_DONTNEED = 4
 _PAGE_SHIFT = 12
@@ -343,6 +356,31 @@ def make_ple_file_rss_trimmer(table: torch.Tensor) -> Optional[PleFileRssTrimmer
     return trimmer
 
 
+def check_file_backend_supported(device_index: int = 0) -> None:
+    """Fail fast at load time instead of silently reading garbage in the kernel."""
+    if envs.SGLANG_QWEN4_PLE_FILE_SKIP_DEVICE_CHECK.get():
+        logger.warning(
+            "PLE table: file backend device check skipped by "
+            "SGLANG_QWEN4_PLE_FILE_SKIP_DEVICE_CHECK"
+        )
+        return
+    supported = device_reads_pageable_memory(device_index)
+    if supported is None:
+        raise RuntimeError(
+            "--ple-offload-backend file: could not query "
+            "cudaDevAttrPageableMemoryAccess. Set "
+            "SGLANG_QWEN4_PLE_FILE_SKIP_DEVICE_CHECK=1 only if you know the "
+            "device reads pageable host memory."
+        )
+    if not supported:
+        raise ValueError(
+            "--ple-offload-backend file needs a device that reads pageable "
+            "host memory (GB10, or a discrete GPU with HMM on the open kernel "
+            "modules). This device reports it does not; use "
+            "--ple-offload-backend pinned."
+        )
+
+
 def default_ple_table_dir(model_path: str) -> str:
     """``$SGLANG_QWEN4_PLE_FILE_DIR/<model path>``, one directory per checkpoint."""
     safe = re.sub(r"[^A-Za-z0-9._-]+", "_", str(model_path).rstrip("/")).strip("_")
@@ -366,10 +404,13 @@ def ple_table_file_name(
     return f"ple_table_{dims}_{str(dtype).replace('torch.', '')}_{numel * elem}B{suffix}.bin"
 
 
+# TODO(merge6) zone=b5 entry=313 -- grafted back fork memo dict (its region was
+# dropped by the take-upstream import resolution; merge #5 cascade-repair class).
 _HOST_PAGE_TABLES: dict[int, Optional[bool]] = {}
 
 
-def device_uses_host_page_tables(device_index: int = 0) -> Optional[bool]:
+def device_reads_pageable_memory(device_index: int = 0) -> Optional[bool]:
+    # TODO(merge6) zone=b5 entry=313 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__models__qwen4_exp_ple_table.py.ours-dropped.txt
     """Whether pageable host memory is directly addressable by the GPU.
 
     Returns None when the CUDA runtime library cannot be queried.
@@ -402,9 +443,7 @@ def device_uses_host_page_tables(device_index: int = 0) -> Optional[bool]:
             value = ctypes.c_int()
             rc = cudart.cudaDeviceGetAttribute(
                 ctypes.byref(value),
-                ctypes.c_int(
-                    _CUDA_DEV_ATTR_PAGEABLE_MEMORY_ACCESS_USES_HOST_PAGE_TABLES
-                ),
+                ctypes.c_int(_CUDA_DEV_ATTR_PAGEABLE_MEMORY_ACCESS),
                 ctypes.c_int(device_index),
             )
             if rc == 0:

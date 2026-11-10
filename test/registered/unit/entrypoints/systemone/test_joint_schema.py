@@ -33,6 +33,7 @@ from sglang.srt.layers.pointer_head import PointerPooler
 from sglang.srt.managers.io_struct import EmbeddingReqInput, GenerateReqInput
 from sglang.srt.managers.preprocess_executor import PreprocessExecutor
 from sglang.srt.managers.tokenizer_manager import TokenizerManager
+from sglang.srt.multimodal.media_io import ImageData
 from sglang.srt.runtime_context import (
     get_context,
     get_schedule,
@@ -41,7 +42,6 @@ from sglang.srt.runtime_context import (
     snapshot_context,
 )
 from sglang.srt.server_args import ServerArgs
-from sglang.srt.utils import ImageData
 from sglang.test.ci.ci_register import register_cpu_ci
 from sglang.test.test_utils import CustomTestCase
 

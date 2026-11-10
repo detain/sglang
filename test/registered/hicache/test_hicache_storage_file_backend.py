@@ -30,8 +30,8 @@ from sglang.test.test_utils import (
 )
 from sglang.utils import wait_for_http_ready
 
-register_cuda_ci(est_time=287, stage="base-b", runner_config="2-gpu-large")
-register_amd_ci(est_time=789, suite="stage-b-test-2-gpu-large-amd")
+register_cuda_ci(est_time=160, stage="extra-a", runner_config="2-gpu-large")
+register_amd_ci(est_time=1100, suite="extra-a-test-2-gpu-large-amd")
 
 
 class HiCacheStorageBaseMixin:
@@ -246,6 +246,46 @@ class TestHiCacheStoragePageFirstDirectIO(HiCacheStorageBaseMixin, CustomTestCas
             "--tp-size": 2,
         }
         return server_args, {}
+
+
+class TestHiCacheStorageFastFilePageFirstDirectIO(
+    HiCacheStorageBaseMixin, CustomTestCase
+):
+    """Page first direct tests for the fast_file storage backend (direct I/O path)."""
+
+    @classmethod
+    def _get_storage_backend(cls):
+        return "fast_file"
+
+    @classmethod
+    def _get_storage_backend_extra_config(cls):
+        return {"file_storage_path": cls.temp_dir, "read_workers": 2}
+
+    @classmethod
+    def _get_additional_server_args_and_env(cls):
+        server_args = {
+            "--hicache-mem-layout": "page_first_direct",
+            "--hicache-io-backend": "direct",
+            "--tp-size": 2,
+        }
+        return server_args, {}
+
+    def test_generation_is_identical_after_storage_reload(self):
+        """Pages read back through vectored I/O must be byte-identical to the
+        pages written, so deterministic generation cannot change after an L3
+        reload."""
+        prompt = self.gen_prompt(768)
+        initial = self.send_request(prompt, max_tokens=128)
+
+        self.trigger_offloading_and_flush()
+
+        cached = self.send_request(prompt, max_tokens=128)
+        self.assertEqual(initial["text"], cached["text"])
+        self.assertGreater(
+            self.get_cached_tokens(cached),
+            700,
+            "Expected the deterministic comparison to reload from L3 storage",
+        )
 
 
 class TestHiCacheStorageRandomDelay(HiCacheStorageBaseMixin, CustomTestCase):

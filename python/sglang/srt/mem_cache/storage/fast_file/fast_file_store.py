@@ -17,15 +17,15 @@ NVMe or filesystem tier needs to keep up with serving:
 
 Pages live in an exact per-model/per-layout namespace directory under the
 storage root, so the startup scan, eviction and ``clear()`` cannot touch a
-different deployment's files. The storage root comes from the ``storage_dir``
-extra-config key, then the ``file`` backend's
-``SGLANG_HICACHE_FILE_BACKEND_STORAGE_DIR``, then ``/tmp/hicache``; the
-namespace directory keeps ``fast_file`` pages apart from ``file`` pages that
-share the root.
+different deployment's files. The storage root resolves exactly like the
+``file`` backend's: ``SGLANG_HICACHE_FILE_BACKEND_STORAGE_DIR``, then the
+``file_storage_path`` extra-config key (``--file-storage-path``), then
+``/tmp/hicache``; the namespace directory keeps ``fast_file`` pages apart from
+``file`` pages that share the root.
 
 Extra-config keys (``--hicache-storage-backend-extra-config``):
 
-  storage_dir            root directory (default: see above)
+  file_storage_path      root directory, shared with ``file`` (default: see above)
   read_workers           parallel read threads (default 1)
   enable_metadata_cache  cache positive existence checks (default false)
   metadata_ttl           positive-cache lifetime in seconds, -1 = forever (5.0)
@@ -98,23 +98,18 @@ class HiCacheFastFile(HiCacheFile):
         file_path: str = _DEFAULT_STORAGE_DIR,
     ):
         # HiCacheFile.__init__ is intentionally not called: it wires the
-        # reference backend's evictor and metadata cache. Only its key helpers
-        # and storage-dir env var are shared.
+        # reference backend's evictor and metadata cache. The key scheme and
+        # the storage-root settings are shared.
         extra_config = storage_config.extra_config or {}
-        self.config_suffix = self._build_config_suffix(storage_config)
-        # Keep the flat, pre-unified-layout key format (stack entry 249): the
-        # reference backend's #39727/#44849-era unified-suffix fields and the
-        # DCP-split tp suffix are neutralized here so the inherited key
-        # helpers (_get_suffixed_key, _get_component_keys, _file_exists) keep
-        # reading and writing the one on-disk format this backend shares with
-        # HiCacheFile via _build_config_suffix.
-        self.tp_config_suffix = self.config_suffix
-        self._unified_suffixes = None
-        self._unified_chunk_sizes = {}
-        self._unified_chunk_spans = None
+        self._init_config_suffix(storage_config)
+        if self._unified_suffixes is not None:
+            raise ValueError(
+                "HiCacheFastFile stores whole pages and does not support the "
+                "unified storage key scheme; use the file backend."
+            )
         self.storage_root = (
-            extra_config.get("storage_dir")
-            or envs.SGLANG_HICACHE_FILE_BACKEND_STORAGE_DIR.get()
+            envs.SGLANG_HICACHE_FILE_BACKEND_STORAGE_DIR.get()
+            or extra_config.get("file_storage_path")
             or file_path
         )
         self.file_path = os.path.join(
@@ -833,3 +828,6 @@ class HiCacheFastFile(HiCacheFile):
         if executor is not None:
             executor.shutdown(wait=True)
         self._evictor.close()
+
+
+# TODO(merge6) zone=b3 entry=311 -- fork region dropped by merge6 take-upstream resolution (DUAL IMPL: fork hicache-file port vs upstream merged family (42482/42488/44422 era)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__mem_cache__storage__fast_file__fast_file_store.py.ours-dropped.txt

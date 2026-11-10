@@ -18,7 +18,7 @@ from sglang.kernels.ops.attention.qsa.mqa import (
 )
 from sglang.srt.environ import envs
 from sglang.srt.utils import is_sm120_supported, is_sm121
-from sglang.srt.utils.common import is_hip
+from sglang.srt.utils.device import is_hip
 
 logger = logging.getLogger(__name__)
 

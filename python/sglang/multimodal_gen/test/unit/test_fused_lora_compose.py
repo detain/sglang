@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Fused-layer LoRA groups: stack-vs-compose decision, loader wiring, IPC resolution."""
 
+import os
+import tempfile
 from collections import defaultdict
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -8,6 +10,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 import torch.distributed as dist
+from safetensors.torch import save_file
+# TODO(merge6) zone=b1 entry=310-B1 -- fork region dropped by merge6 take-upstream resolution (B1 test fold); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__multimodal_gen__test__unit__test_fused_lora_compose.py.ours-dropped.txt
 
 from sglang.multimodal_gen.runtime.layers.linear import (
     MergedColumnParallelLinear,
@@ -298,6 +302,9 @@ def _make_loader_pipeline() -> _TestLoRAPipeline:
     pipeline = object.__new__(_TestLoRAPipeline)
     pipeline.lora_adapters = defaultdict(dict)
     pipeline.loaded_adapter_paths = {}
+    pipeline.loaded_adapter_files = {}
+    pipeline.loaded_adapter_configs = {}
+    pipeline.loaded_adapter_fingerprints = {}
     pipeline.loaded_adapter_alphas = {}
     pipeline.device = "cpu"
     pipeline.modules = {"transformer": torch.nn.Module()}
@@ -320,12 +327,18 @@ def _make_loader_pipeline() -> _TestLoRAPipeline:
 
 def _load_adapter(pipeline, state_dict, lora_alpha=None):
     loader_mod = "sglang.multimodal_gen.runtime.pipelines_core.lora.pipeline"
-    with (
-        patch(f"{loader_mod}.maybe_download_lora", return_value="/adapter"),
-        patch(f"{loader_mod}.load_file", return_value=state_dict),
-        patch(f"{loader_mod}.dist.is_initialized", return_value=False),
-    ):
-        pipeline.load_lora_adapter("/adapter", "adapter", rank=0, lora_alpha=lora_alpha)
+    # The loader stats the adapter file, so it must exist on disk.
+    with tempfile.TemporaryDirectory() as tmp:
+        adapter_file = os.path.join(tmp, "adapter.safetensors")
+        save_file({"placeholder": torch.zeros(1)}, adapter_file)
+        with (
+            patch(f"{loader_mod}.maybe_download_lora", return_value=adapter_file),
+            patch(f"{loader_mod}.load_file", return_value=state_dict),
+            patch(f"{loader_mod}.dist.is_initialized", return_value=False),
+        ):
+            pipeline.load_lora_adapter(
+                "/adapter", "adapter", rank=0, lora_alpha=lora_alpha
+            )
 
 
 def _qkv_state_dict(rank=2):
@@ -350,6 +363,54 @@ def test_loader_composes_unequal_fused_sections():
         "attn.to_qkv.lora_B",
         "attn.to_qkv.alpha",
     }
+
+
+def test_alpha_override_reloads_fused_sections(tmp_path):
+    pipeline = _make_loader_pipeline()
+    adapter_file = str(tmp_path / "adapter.safetensors")
+    save_file(_qkv_state_dict(), adapter_file)
+    pipeline.lora_initialized = True
+    for attr in (
+        "cur_adapter_name",
+        "cur_adapter_path",
+        "cur_adapter_strength",
+        "cur_adapter_config",
+        "lora_layers",
+        "lora_layers_critic",
+        "lora_layers_transformer_2",
+        "is_lora_merged",
+        "auto_merge_rounding_loss",
+    ):
+        setattr(pipeline, attr, {})
+    loader_mod = "sglang.multimodal_gen.runtime.pipelines_core.lora.pipeline"
+    with (
+        patch(f"{loader_mod}.maybe_download_lora", return_value=adapter_file),
+        patch(f"{loader_mod}.dist.is_initialized", return_value=False),
+        patch(f"{loader_mod}.dist.get_rank", return_value=0),
+    ):
+        pipeline.load_lora_adapter(adapter_file, "adapter", rank=0, lora_alpha=8)
+        expected = pipeline.lora_adapters["adapter"]["attn.to_qkv.lora_B"].clone()
+        pipeline.load_lora_adapter(adapter_file, "adapter", rank=0, lora_alpha=4)
+        assert not torch.equal(
+            pipeline.lora_adapters["adapter"]["attn.to_qkv.lora_B"], expected
+        )
+        # only alpha changes; the same file stays available for the reload
+        with patch.object(
+            pipeline, "load_lora_adapter", wraps=pipeline.load_lora_adapter
+        ) as reload_adapter:
+            pipeline.set_lora(
+                "adapter",
+                None,
+                target="transformer",
+                merge_mode="dynamic",
+                lora_alpha=8,
+            )
+        reload_adapter.assert_called_once_with(adapter_file, "adapter", 0, lora_alpha=8)
+
+    # the GQA composition bakes alpha into lora_B, so an override must reload
+    torch.testing.assert_close(
+        pipeline.lora_adapters["adapter"]["attn.to_qkv.lora_B"], expected
+    )
 
 
 def test_loader_stacks_equal_fused_sections():
