@@ -215,17 +215,25 @@ class PrefillBudget:
         )
 
     def available_chunk_tokens(self, chunk_limit: int) -> int | None:
+        # #46643 fix(1) re-plant (merge-#6 B3, stack entry 311): a continuing
+        # chunk caps at the KV alloc_extend can really get (it over-asks one
+        # page) and DEFERS (None) instead of forcing a full chunk; upstream's
+        # CP-shard clamp rides the same ceiling.
+        free = self._available_and_evictable() - self.current_offset - self.page_size
+        free = free // self.page_size * self.page_size
         available_tokens = int(self.remaining_total)
         if is_cp_sharded_padded():
             available_tokens = get_cp_sharded_padded_available_tokens(available_tokens)
-        available = min(
-            chunk_limit,
-            available_tokens,
-        )
-        # Single-pool continuation must make progress to release its KV.
-        return available if available > 0 else chunk_limit
+        available = min(chunk_limit, available_tokens, free)
+        if available > 0:
+            return available
+        # Decode headroom is an estimate: progress with the free KV, else defer.
+        available = min(chunk_limit, free)
+        return available if available > 0 else None
 
-    # TODO(merge6) zone=b3 entry=311 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__mem_cache__prefill_budget.py.ours-dropped.txt
+    # merge-#6 B3 marker consumed above: the fork region@218 (entry-268
+    # #46643 fix(1), open upstream -- never landed) is RE-PLANTED here onto
+    # the merged base (upstream's CP-shard arm folded into the min()).
 
     def fit_chunk(
         self,

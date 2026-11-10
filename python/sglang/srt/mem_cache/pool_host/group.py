@@ -14,7 +14,9 @@ from sglang.srt.mem_cache.hicache_storage import (
     merge_source_transfers,
 )
 
-# TODO(merge6) zone=b3 entry=311 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__mem_cache__pool_host__group.py.ours-dropped.txt
+# merge-#6 B3 marker consumed (stack entry 311): the fork region@10 import
+# survived the take-upstream rename PoolName -> HostPoolName (+host_pool_name);
+# merge_source_transfers (entries 90/122) still rides in the same block.
 from sglang.srt.mem_cache.kv.memory.views import MHAKVView
 from sglang.srt.mem_cache.pool_host.base import HostKVCache, shared_host_layout_domains
 
@@ -304,6 +306,12 @@ class HostPoolGroup:
                         transfer.device_indices = primary_device_indices
                     continue
 
+                # merge_source_transfers() covers every independent transfer of
+                # the source pool (one Mamba load-back restores a checkpoint
+                # into both a radix slot and a live request row; the sidecar
+                # must follow all destinations -- the mirror of the
+                # destination fix, entry 90; merge-#6 B3 re-plant of the
+                # dropped rationale comment, the call itself survived).
                 source = merge_source_transfers(transfers, transfer.indices_from_pool)
                 if source is None:
                     rollback()
@@ -315,7 +323,10 @@ class HostPoolGroup:
             # Allocation/reclaim callbacks may raise instead of returning None.
             # Nothing has been submitted to DMA at this transaction boundary.
             try:
-                # TODO(merge6) zone=b3 entry=311 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__mem_cache__pool_host__group.py.ours-dropped.txt
+                # merge-#6 B3 (stack entry 311, region@321): the dropped fork
+                # content here was the merge_source_transfers rationale comment
+                # -- re-planted at the call site above; the rollback arm itself
+                # is the merged shape.
                 rollback()
             except BaseException as cleanup_error:
                 raise error from cleanup_error

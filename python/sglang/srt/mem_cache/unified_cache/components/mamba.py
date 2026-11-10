@@ -719,8 +719,14 @@ class MambaComponent(TreeComponent):
     def _try_alloc_mamba_slot(
         self, req: Optional[Req] = None
     ) -> Optional[torch.Tensor]:
-        """Allocate a slot after eviction, or return None if all states are locked."""
-        # TODO(merge6) zone=b3 entry=311 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__mem_cache__unified_cache__components__mamba.py.ours-dropped.txt
+        """One mamba slot, evicting if needed; None when every slot is pinned
+        (stack entries 197/216: the donation caller SKIPS the boundary
+        checkpoint and retries at the next one; the match-path COW caller
+        raises MambaCowAllocError for admission to re-queue).
+
+        Merge-#6 B3 re-plant of this contract docstring; the body (including
+        the lazy extra-buffer lock-narrowing) survived the take-upstream.
+        """
         storage, sub_pool = self._state()
         slot = storage.take_state_slots(sub_pool, 1)
         if slot is None:
@@ -903,12 +909,16 @@ class MambaComponent(TreeComponent):
                     return 0
                 self._stash_host_checkpoint_source(insert_params, src_slot)
                 return cache_len
-            # Donate the mamba index to the radix cache instead of copying.
-            # TODO(merge6) zone=b3 entry=311 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__mem_cache__unified_cache__components__mamba.py.ours-dropped.txt
+            # Donate the mamba index to the radix cache instead of copying. All
+            # strategies but int8 no_buffer need a fresh slot before donating;
+            # a pinned pool skips this boundary's checkpoint and the next one
+            # retries (stack entry 197, #37943; merge-#6 B3 re-plant -- the
+            # upstream form lost the skip recorder at these three arms).
             if self.quantizes_checkpoints:
                 if self.cache.enable_mamba_extra_buffer:
                     new_slot = self._try_alloc_mamba_slot(req)
                     if new_slot is None:
+                        self._record_skipped_checkpoint(req)
                         return 0
                     storage, sub_pool = self._state()
                     src_active = storage.donate_tracking_slot(sub_pool, req, new_slot)
@@ -921,6 +931,7 @@ class MambaComponent(TreeComponent):
             elif self.cache.enable_mamba_extra_buffer:
                 new_slot = self._try_alloc_mamba_slot(req)
                 if new_slot is None:
+                    self._record_skipped_checkpoint(req)
                     return 0
                 storage, sub_pool = self._state()
                 mamba_value_donated = storage.donate_tracking_slot(
@@ -929,8 +940,12 @@ class MambaComponent(TreeComponent):
             else:
                 mamba_value_donated = self._try_alloc_mamba_slot(req)
                 if mamba_value_donated is None:
+                    self._record_skipped_checkpoint(req)
                     return 0
-                # TODO(merge6) zone=b3 entry=311 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__mem_cache__unified_cache__components__mamba.py.ours-dropped.txt
+                # merge-#6 B3 (stack entry 311): the fork's region@982
+                # (`mamba_value_donated = new_slot`) is this same fresh slot in
+                # the merged structure -- `needs_new_slot` was re-expanded into
+                # the per-branch arms, so the assignment is already here.
                 storage, sub_pool = self._state()
                 storage.copy_state(
                     sub_pool, req.kv.mamba_pool_idx.unsqueeze(0), mamba_value_donated

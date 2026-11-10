@@ -96,7 +96,10 @@ class TestExplicitHostMemoryBudget(CustomTestCase):
             patch.object(torch.distributed, "all_reduce") as all_reduce,
             base.explicit_host_memory_budget(enabled=True),
         ):
-            self.assertEqual(base._host_memory_budget.get(), 12345)
+            # merge-#6 B3: upstream's scope stores a (plain-RAM, hugetlb) pair;
+            # a bare int normalizes to (int, 0) -- the "left exactly as it is"
+            # contract is unchanged.
+            self.assertEqual(base._host_memory_budget.get(), (12345, 0))
         all_reduce.assert_not_called()
 
     def test_every_rank_takes_the_smallest_budget_any_rank_sampled(self):
@@ -116,7 +119,9 @@ class TestExplicitHostMemoryBudget(CustomTestCase):
             patch.object(base, "get_parallel"),
             base.explicit_host_memory_budget(enabled=True),
         ):
-            self.assertEqual(base._host_memory_budget.get(), 1)
+            # (1, 0): the scope books the MIN as plain RAM (merge-#6 B3 tuple
+            # snapshot; the "every rank books the minimum" contract is kept).
+            self.assertEqual(base._host_memory_budget.get(), (1, 0))
             with self.assertRaisesRegex(ValueError, "Not enough host memory"):
                 _host_pool(self.pool)
         self.assertEqual(calls, [(torch.int64, torch.distributed.ReduceOp.MIN)])

@@ -1500,15 +1500,19 @@ class TestHybridMambaDeclaredIndexer(CustomTestCase):
                         return_value="default",
                     ),
                 ):
+                    # merge-#6 B3 retarget: build_hybrid_mamba_stack now takes
+                    # the root pool (prepare_host_pool_config derives the
+                    # declared sidecars via _host_pool_infos) and the MLA
+                    # fraction rides _kv_budget_index_bytes(config); the fork's
+                    # decls= / use_mla= kwargs are gone.
                     group, _, _ = hybrid_pool_assembler.build_hybrid_mamba_stack(
                         params=params,
-                        decls=kv_pool.host_pool_decls(),
+                        kv_pool=kv_pool,
                         mamba_pool=mamba_pool,
                         full_layer_mapping={0: 0, 2: 1, 4: 2},
                         start_layer=0,
                         load_cache_event=None,
                         storage_backend=None,
-                        use_mla=True,
                     )
                 kv = group.entry_map[PoolName.KV].host_pool
                 indexer = group.entry_map[PoolName.INDEXER].host_pool

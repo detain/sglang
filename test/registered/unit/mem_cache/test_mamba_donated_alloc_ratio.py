@@ -427,6 +427,10 @@ class TestMambaDonatedAllocRatio(CustomTestCase):
                 )
                 cache.enable_mamba_extra_buffer = extra_buffer
                 req = SimpleNamespace(
+                    # merge-#6 B3: the skip recorder (entry 197) names the
+                    # request; the union merge dropped this field with the
+                    # donation arm that calls it.
+                    rid="r0",
                     kv=SimpleNamespace(
                         mamba_last_track_seqlen=8, mamba_pool_idx=owned[0]
                     ),

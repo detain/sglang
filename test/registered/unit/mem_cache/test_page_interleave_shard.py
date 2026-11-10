@@ -2425,7 +2425,9 @@ def test_kv_cache_configurator_selects_page_interleave_allocator_for_sharded_qsa
     allocator = subject._build_token_to_kv_pool_allocator(
         sizes=sizes,
         token_to_kv_pool=pool,
-        is_dsv4_model=False,
+        # merge-#6 B3 rename chase: upstream #46970x-era kwarg is_dsv4_model ->
+        # is_compressed_kv_model (kv_cache_configurator.py:2850).
+        is_compressed_kv_model=False,
         req_to_token_pool=SimpleNamespace(),
         token_to_kv_pool_allocator=None,
     )

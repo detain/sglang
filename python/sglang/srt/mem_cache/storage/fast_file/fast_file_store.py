@@ -830,4 +830,12 @@ class HiCacheFastFile(HiCacheFile):
         self._evictor.close()
 
 
-# TODO(merge6) zone=b3 entry=311 -- fork region dropped by merge6 take-upstream resolution (DUAL IMPL: fork hicache-file port vs upstream merged family (42482/42488/44422 era)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__mem_cache__storage__fast_file__fast_file_store.py.ours-dropped.txt
+# merge-#6 B3 marker consumed (stack entry 311): DUAL IMPL closed as
+# ADOPTED-UPSTREAM. The fork's whole-module hicache-file port was subsumed by
+# upstream's merged fast_file family (#42482/#42488/#44422 era, extended since
+# by #46934); every fork-specific behaviour that mattered lives on in the
+# shared base it builds on -- HiCacheFile._build_config_suffix (hicache_
+# storage.py:852, merge-#5 B3-1's revival, present), batch_exists_v2's
+# restorable_prefix_pages reporting (hicache_storage.py:296, entry-209's
+# contract, present), and the fast-file unit suite is green (54P/13sub,
+# entry-311's pin).

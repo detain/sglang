@@ -354,10 +354,10 @@ def host_memory_preflight(
 def host_memory_budget_bytes(
     requested_bytes: int = 0, *, auto_size: bool = False
 ) -> int:
-    # TODO(merge6) zone=b3 entry=311 -- grafted back: upstream restructure of
-    # pool_host/base.py silently dropped this fork helper (entry #44462 era)
-    # while explicit_host_memory_budget below still calls it. Full fork region:
-    # /tmp/opencode/merge6-dossier/replant/python__sglang__srt__mem_cache__pool_host__base.py.fork-hunks.patch
+    # merge-#6 B3 marker consumed (stack entry 311): the graft below is the
+    # fork helper (entry-#44462 era) upstream's restructure had dropped while
+    # explicit_host_memory_budget still called it; its in-scope branch is now
+    # adapted to upstream's (plain, hugetlb) tuple snapshot.
     """Host RAM this rank may claim for a HiCache pool.
 
     Bound machine availability by the visible cgroup limits before splitting
@@ -367,13 +367,23 @@ def host_memory_budget_bytes(
     can fall back to checking host availability when discovery fails.
 
     Inside host_memory_budget_scope, requested_bytes is booked against the
-    snapshot when it fits; the allowance before booking is returned.
+    snapshot when it fits; the allowance before booking is returned. The
+    snapshot is upstream's (plain-RAM, hugetlb-pool) pair (merge-#6 B3: the
+    fork's int form was grafted back before that restructure landed -- the
+    booking now drains plain first and spills into the pool bucket; the
+    per-pool preflight that consumes this scope is HostMemoryPreflight
+    above).
     """
     available = _host_memory_budget.get()
     if available is not None:
-        if requested_bytes <= available:
-            _host_memory_budget.set(available - requested_bytes)
-        return available
+        plain_rem, pool_rem = available
+        total = plain_rem + pool_rem
+        if requested_bytes <= total:
+            plain_part = min(requested_bytes, plain_rem)
+            _host_memory_budget.set(
+                (plain_rem - plain_part, pool_rem - (requested_bytes - plain_part))
+            )
+        return total
 
     free = (
         available_host_memory_bytes(allow_cgroup_fallback=not auto_size)

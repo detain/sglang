@@ -1374,9 +1374,29 @@ def build_hybrid_mamba_stack(
         kv_host_size, mamba_host_size = _split_hicache_size(
             get_memory().hicache_size, (kv_pool, mamba_pool)
         )
+        # merge-#6 B3 re-plant (stack entry 311, region@1377): the
+        # --hicache-mamba-size-gb knob override survived only in the SWA-group
+        # builder below; this simple stack lost it, so a mamba knob on a plain
+        # KV+Mamba boot was silently ignored (entry 219's configurable sizing).
+        mamba_size_knob = parse_mamba_host_size(get_memory().hicache_mamba_size_gb)
+        if mamba_size_knob is not None:
+            (kv_host_size,), mamba_host_size, mamba_host_split = (
+                _resolve_hicache_mamba_split(
+                    knob=mamba_size_knob,
+                    kv_pools=(kv_pool,),
+                    mamba_pool=mamba_pool,
+                    params=params,
+                    draft_mamba_pools=params.mtp_draft_mamba_pools,
+                )
+            )
     index_bytes = _kv_budget_index_bytes(config)
     if index_bytes and kv_host_size is not None:
-        # TODO(merge6) zone=b3 entry=311 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__mem_cache__hybrid_cache__hybrid_pool_assembler.py.ours-dropped.txt
+        # merge-#6 B3 (region@1377, entry-219 deviation): the fork's `if
+        # use_mla: kv_host_size *= _mla_host_kv_fraction(config)` arm is
+        # ADOPTED-UPSTREAM here -- _kv_budget_index_bytes generalizes the DSA/
+        # QSA index reservation to every declared sidecar, and it runs AFTER
+        # the knob re-plant above, so the reservation still covers both the
+        # proportional split and the knob.
         kv_bytes = sum(kv_pool.get_kv_size_bytes())
         kv_host_size *= kv_bytes / (kv_bytes + index_bytes)
     kv_host_pool = build_kv_host_pool(
@@ -1384,19 +1404,30 @@ def build_hybrid_mamba_stack(
         page_size=params.page_size,
         host_size=kv_host_size,
         mtp_draft_device_pools=config.packed_draft_device_pools,
-        # TODO(merge6) zone=b3 entry=311 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__mem_cache__hybrid_cache__hybrid_pool_assembler.py.ours-dropped.txt
+    )
+    mamba_entry = _mamba_entry(
+        params=params,
+        mamba_pool=mamba_pool,
+        info=mamba_info,
+        layer_mapping=mamba_layer_mapping,
+        transfer_layer_id_max=transfer_layer_id_max,
+        host_size=mamba_host_size,
+        host_evict_fn=host_mamba_evict_fn,
+        device_evict_fn=device_mamba_evict_fn,
+    )
+    # merge-#6 B3 re-plant (stack entry 311, region@1409): the fork's explicit
+    # build_mamba_host_pool + with_packed_draft_layer_mapping calls were
+    # ABSORBED into _mamba_entry (it builds both, 1315/1323); what the take
+    # dropped WITHOUT a replacement is the coverage boot line -- "the silent
+    # paths talk" (entry-219's observability half), restored here.
+    _log_mamba_host_coverage(
+        kv_host_pool=kv_host_pool,
+        mamba_host_pool=mamba_entry.host_pool,
+        params=params,
+        split=mamba_host_split,
     )
     entries = _build_pool_entries(config=config, root_host_pool=kv_host_pool) + [
-        _mamba_entry(
-            params=params,
-            mamba_pool=mamba_pool,
-            info=mamba_info,
-            layer_mapping=mamba_layer_mapping,
-            transfer_layer_id_max=transfer_layer_id_max,
-            host_size=mamba_host_size,
-            host_evict_fn=host_mamba_evict_fn,
-            device_evict_fn=device_mamba_evict_fn,
-        ),
+        mamba_entry,
     ]
     host_pool_group = HostPoolGroup(entries)
     cache_controller = _build_cache_controller(
@@ -1477,18 +1508,26 @@ def build_hybrid_mamba_swa_stack(
         mtp_swa_full_device_pools=_mtp_swa_device_pools(params, full_indices=True),
         transfer_layer_id_max=transfer_layer_id_max,
     )
-    # TODO(merge6) zone=b3 entry=311 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (delete_vs_edit)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__mem_cache__hybrid_cache__hybrid_pool_assembler.py.ours-dropped.txt
-    host_pool_group.add_entry(
-        _mamba_entry(
-            params=params,
-            mamba_pool=mamba_pool,
-            info=mamba_info,
-            layer_mapping=mamba_layer_mapping,
-            transfer_layer_id_max=transfer_layer_id_max,
-            host_size=mamba_host_size,
-            host_evict_fn=host_mamba_evict_fn,
-            device_evict_fn=device_mamba_evict_fn,
-        ),
+    # merge-#6 B3 re-plant (stack entry 311, region@1540 delete_vs_edit): the
+    # fork's build_mamba_host_pool + with_packed_draft_layer_mapping lines are
+    # ABSORBED into _mamba_entry below; only the coverage boot line had no
+    # replacement -- restored here (entry-219's "silent paths talk" half).
+    mamba_entry = _mamba_entry(
+        params=params,
+        mamba_pool=mamba_pool,
+        info=mamba_info,
+        layer_mapping=mamba_layer_mapping,
+        transfer_layer_id_max=transfer_layer_id_max,
+        host_size=mamba_host_size,
+        host_evict_fn=host_mamba_evict_fn,
+        device_evict_fn=device_mamba_evict_fn,
+    )
+    host_pool_group.add_entry(mamba_entry)
+    _log_mamba_host_coverage(
+        kv_host_pool=host_pool_group.get_pool(PoolName.KV),
+        mamba_host_pool=mamba_entry.host_pool,
+        params=params,
+        split=mamba_host_split,
     )
     cache_controller = _build_cache_controller(
         params=params,

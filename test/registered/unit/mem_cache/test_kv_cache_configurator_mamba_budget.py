@@ -73,6 +73,10 @@ class TestMambaSpeculativeBudget(CustomTestCase):
         planner.hybrid_gdn_config = planner.mambaish_config
         planner.hybrid_kda_config = None
         planner.extra_mamba_cache_bytes_per_req = 0
+        # Upstream #46970x-era clause in _handle_max_mamba_cache reads this;
+        # the real dataclass default is True (kv_cache_configurator.py:450),
+        # and the __new__ stub skips __init__ (merge-#6 B3 cascade).
+        planner.allocate_intermediate_ssm = True
         # Post-#4697x the budget path consults the fused-draft plan; these
         # stubs carry no draft placement (empty aux config short-circuits the
         # decision to "not fused"), which is the pre-fusion arithmetic the

@@ -389,7 +389,18 @@ class StaticKVStorage:
             # Per-call per-req C128 table for the last_loc lookup.
             if batch is not None:
                 extra_alloc_kwargs["req_to_token_pool"] = batch.req_to_token_pool
-        # TODO(merge6) zone=b3 entry=311 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__mem_cache__static_kv_storage.py.ours-dropped.txt
+        if batch is not None and page_interleave_shard_size(allocator) > 1:
+            # Entry-200 forward, re-planted by B2 onto the #46970x storage seam
+            # and AGAIN by merge-#6 B3 (this region was take-upstream dropped a
+            # second time; take_extend still carries the twin): a sharded
+            # decode pops the chain's rotation class, so alloc_decode demands
+            # one base per request -- the kv_rotation_base stamped at chain
+            # creation (the extend path stamps it post-alloc). Without it the
+            # allocator raises on its own assert: sharded-QSA decode was dead
+            # on arrival at the merge.
+            extra_alloc_kwargs["rotation_bases"] = [
+                req.kv_rotation_base for req in batch.reqs
+            ]
 
         out = allocator.alloc_decode(
             seq_lens, seq_lens_cpu, last_loc, **extra_alloc_kwargs
