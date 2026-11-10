@@ -348,8 +348,6 @@ def get_rope(
     rope_scaling: Optional[Dict[str, Any]] = None,
     dtype: Optional[torch.dtype] = None,
     partial_rotary_factor: float = 1.0,
-    # TODO(merge6) zone=b5 entry=313 -- fork param restored (the take-upstream
-    # signature below dropped it while the canonicalization block kept it).
     dual_chunk_attention_config: Optional[Dict[str, Any]] = None,
 ) -> RotaryEmbedding:
     if dtype is None:
@@ -379,6 +377,7 @@ def get_rope(
         base,
         is_neox_style,
         rope_scaling_args,
+        dual_chunk_attention_args,
         dtype,
         geometry,
         _ambient_device_tag(),
