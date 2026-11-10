@@ -72,8 +72,7 @@ class TestMixedGrammarDecodeTailForcesSync(unittest.TestCase):
         return scheduler
 
     @patch(
-        "sglang.srt.managers.scheduler.envs."
-        "SGLANG_DISABLE_OVERLAP_AFTER_PREFILL.get",
+        "sglang.srt.managers.scheduler.envs.SGLANG_DISABLE_OVERLAP_AFTER_PREFILL.get",
         return_value=False,
     )
     def test_mixed_grammar_decode_tail_forces_sync(

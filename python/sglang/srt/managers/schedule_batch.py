@@ -2223,13 +2223,14 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
     def grammar_needs_sync(self) -> bool:
         """Whether a spec algorithm that cannot advance the grammar FSM inside
         verify() needs this batch's result processed before the next schedule."""
-        return (
-            self.has_grammar
-            and not self.spec_algorithm.is_none()
-            and not self.spec_algorithm.supports_grammar_overlap()
-        )
+        if not self.has_grammar or self.spec_algorithm.is_none():
+            return False
 
-    # TODO(merge6) zone=b4 entry=312 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__managers__schedule_batch.py.ours-dropped.txt
+        # Mixed batches skip verify(), so sync grammar before building the next mask.
+        if self.forward_mode.is_mixed():
+            return any(req.grammar is not None for req in self.decoding_reqs or ())
+
+        return not self.spec_algorithm.supports_grammar_overlap()
 
     def prepare_encoder_info_extend(
         self, input_ids: List[array[int]], seq_lens: List[int]

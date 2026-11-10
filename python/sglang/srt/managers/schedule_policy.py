@@ -1063,7 +1063,7 @@ class PrefillAdder:
         max_new_tokens: int,
         retracted_stain: bool,
         state_slots: int = 0,
-        # TODO(merge6) zone=b4 entry=312 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__managers__schedule_policy.py.ours-dropped.txt
+        state_slots_charge: int = 0,
         request_slot_reserve: int = 0,
         is_chunked_continuation: bool = False,
         replay_len: int = 0,
@@ -1117,6 +1117,11 @@ class PrefillAdder:
             admitted_chunk_limit=admitted_chunk_limit,
             cached_tokens=prefix_len if cached_tokens is None else cached_tokens,
         )
+        # MAMBA-ADMIT-FIX (#43484): the classic pool debits in slot units; the
+        # unified chain's byte-space debit above is the identical count
+        # (factor 1), so callers pass both from one resolver.
+        if state_slots_charge and self.rem_mamba_slots is not None:
+            self.rem_mamba_slots -= state_slots_charge
         self.rem_input_tokens -= compute_charge
 
         if self.dllm_config is not None:
@@ -1237,7 +1242,7 @@ class PrefillAdder:
             0,
             req.retracted_stain,
             state_slots=self._state_slots_for_req(req),
-            # TODO(merge6) zone=b4 entry=312 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__managers__schedule_policy.py.ours-dropped.txt
+            state_slots_charge=self._mamba_slot_charge_for_req(req),
             replay_len=self._replay_len(req, prefix_len),
         )
         self._account_prefill_cache_admission(req, prefix_len)
@@ -1316,7 +1321,7 @@ class PrefillAdder:
             max_new_tokens,
             req.retracted_stain,
             state_slots=self._state_slots_for_req(req),
-            # TODO(merge6) zone=b4 entry=312 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__managers__schedule_policy.py.ours-dropped.txt
+            state_slots_charge=self._mamba_slot_charge_for_req(req),
         )
 
         # Return based on remaining token availability
@@ -1326,16 +1331,15 @@ class PrefillAdder:
             else AddReqResult.CONTINUE
         )
 
-    def add_chunked_req(self, req: Req):
+    def add_chunked_req(self, req: Req, *, truncation_align_size: Optional[int] = None):
         """Add the unfinished chunked request's next chunk; returns it while it is
         unfinished. Returned but not added, it waits and closes this pass."""
-        result = self._add_chunked_req(req)
+        result = self._add_chunked_req(req, truncation_align_size=truncation_align_size)
         if result is req and not any(r is req for r in self.can_run_list):
             self.chunked_req_waits = True
         return result
 
-    def _add_chunked_req(self, req: Req):
-        # TODO(merge6) zone=b4 entry=312 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__managers__schedule_policy.py.ours-dropped.txt
+    def _add_chunked_req(self, req: Req, truncation_align_size: Optional[int] = None):
         if self.dllm_config is not None:
             _rem_tokens = self._get_dllm_remain_tokens(req)
         else:
@@ -1396,6 +1400,14 @@ class PrefillAdder:
             new_len = self._align_truncated_hybrid_chunk(req.prefix_len, new_len)
             if new_len <= 0:
                 return req
+        fork_split_len = self._mamba_fork_split_len(
+            req,
+            prefix_len=req.prefix_len,
+            truncation_align_size=truncation_align_size,
+        )
+        if fork_split_len is not None and fork_split_len < new_len:
+            new_len = fork_split_len
+            truncated = True
         request_slot_reserve = self._request_slot_reserve_for_req(
             req, extend_input_len=new_len
         )
@@ -1439,7 +1451,7 @@ class PrefillAdder:
             ),
             req.retracted_stain,
             state_slots=self._state_slots_for_req(req),
-            # TODO(merge6) zone=b4 entry=312 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__managers__schedule_policy.py.ours-dropped.txt
+            state_slots_charge=self._mamba_slot_charge_for_req(req),
             request_slot_reserve=request_slot_reserve,
             is_chunked_continuation=True,
             # Its window rows behind the chunk are held, as its shape check
@@ -1614,7 +1626,7 @@ class PrefillAdder:
                 min(req.sampling_params.max_new_tokens, CLIP_MAX_NEW_TOKENS),
                 req.retracted_stain,
                 state_slots=self._state_slots_for_req(req),
-                # TODO(merge6) zone=b4 entry=312 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__managers__schedule_policy.py.ours-dropped.txt
+                state_slots_charge=self._mamba_slot_charge_for_req(req),
                 request_slot_reserve=self._request_slot_reserve_for_req(req),
                 admitted_chunk_limit=chunk_limit,
                 cached_tokens=req.prefix_len,
@@ -1625,7 +1637,12 @@ class PrefillAdder:
 
             # Chunked prefill
             trunc_len = self.floor_chunked_tokens(chunk_limit, cand_extend_input_len)
-            # TODO(merge6) zone=b4 entry=312 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__managers__schedule_policy.py.ours-dropped.txt
+            # Page-align first, then the cache-alignment LCM (entry 269/177
+            # composition): both only shrink the cut toward a coarser multiple.
+            trunc_len = self._align_truncated_hybrid_chunk(req.prefix_len, trunc_len)
+            trunc_len = self._align_prefill_chunk(req.prefix_len, trunc_len)
+            if trunc_len <= 0:
+                return AddReqResult.OTHER
 
             if (tile_stop := self._check_prefill_tile_budget(trunc_len)) is not None:
                 return tile_stop
@@ -1644,7 +1661,7 @@ class PrefillAdder:
                 0,
                 req.retracted_stain,
                 state_slots=self._state_slots_for_req(req),
-                # TODO(merge6) zone=b4 entry=312 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__managers__schedule_policy.py.ours-dropped.txt
+                state_slots_charge=self._mamba_slot_charge_for_req(req),
                 request_slot_reserve=self._request_slot_reserve_for_req(
                     req, extend_input_len=trunc_len
                 ),
@@ -1708,8 +1725,16 @@ class PrefillAdder:
         # Reserve request and load-back state slots before init_load_back binds
         # the request slot. Once loaded, only unallocated state remains pending.
         state_slots = self._state_slots_for_req(req, include_host_hit=True)
-        if not self.memory_budget.state_slots_fit(state_slots):
-            # TODO(merge6) zone=b4 entry=312 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__managers__schedule_policy.py.ours-dropped.txt
+        # #43484 (entry 266): the unified chain gates in byte space on the
+        # budget; the classic pool's ledger is in slot units.
+        required_state_slots = self._mamba_slot_charge_for_req(
+            req, include_host_hit=True
+        )
+        if not self.memory_budget.state_slots_fit(
+            state_slots
+        ) or required_state_slots > (
+            self.rem_mamba_slots if self.rem_mamba_slots is not None else 0
+        ):
             if (
                 isinstance(self.tree_cache, UnifiedRadixCache)
                 and self.tree_cache.buffer_pipeline is not None
@@ -1886,9 +1911,14 @@ class PrefillAdder:
                 ):
                     return AddReqResult.OTHER
 
-            self._commit_prefill_admission(req, admission, state_slots)
-        # TODO(merge6) zone=b4 entry=312 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__managers__schedule_policy.py.ours-dropped.txt
+            self._commit_prefill_admission(
+                req, admission, state_slots, required_state_slots
+            )
 
+            if admission.is_chunked and self.split_prefill_at_mamba_fork:
+                # A chunk cut short at the fork, or by a larger host load-back,
+                # leaves budget behind; no other prefill may take its slot.
+                return AddReqResult.OTHER
         # This verdict controls the next candidate, not the committed request.
         return self.budget_state()
 
@@ -1954,9 +1984,9 @@ class PrefillAdder:
             max_new_tokens = 0
         elif chunk_tokens_limit is not None and chunk_fit_tokens > chunk_tokens_limit:
             if has_chunked_req:
-                # Only one unfinished chunked request can be tracked; a
-                # continuation cut short by memory leaves chunk budget to spare.
-                # TODO(merge6) zone=b4 entry=312 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__managers__schedule_policy.py.ours-dropped.txt
+                # Only one unfinished chunked request can be tracked. (#46643
+                # guards every policy, which subsumes #45789's opt-in: a fork
+                # cut that leaves budget behind also keeps this latch shut.)
                 return AddReqResult.OTHER
             if self.exact_chunk_fill:
                 # Take the remainder verbatim so the batch hits exactly
@@ -2008,7 +2038,22 @@ class PrefillAdder:
         ):
             return AddReqResult.NO_TOKEN
 
-        # TODO(merge6) zone=b4 entry=312 -- fork region dropped by merge6 take-upstream resolution (entry-266 mamba slot charge dropped (helper renamed upstream)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__managers__schedule_policy.py.ours-dropped.txt
+        if (
+            chunk_tokens_limit is not None
+            and not has_chunked_req
+            and self.new_chunked_req is None
+        ):
+            fork_split_len = self._mamba_fork_split_len(
+                req,
+                prefix_len=prefix_len,
+                truncation_align_size=truncation_align_size,
+            )
+            if fork_split_len is not None and fork_split_len < extend_len:
+                extend_len = fork_split_len
+                is_chunked = True
+                max_new_tokens = 0
+                tile_tokens = extend_len
+
         if (verdict := self._check_prefill_tile_budget(tile_tokens)) is not None:
             return verdict
 
@@ -2026,7 +2071,7 @@ class PrefillAdder:
         req: Req,
         admission: _PrefillAdmission,
         state_slots: int,
-        # TODO(merge6) zone=b4 entry=312 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__managers__schedule_policy.py.ours-dropped.txt
+        state_slots_charge: int = 0,
     ) -> None:
         assert req.prefix_len == admission.prefix_len
         req.extend_end = admission.prefix_len + admission.extend_len
@@ -2040,7 +2085,7 @@ class PrefillAdder:
             admission.max_new_tokens,
             req.retracted_stain,
             state_slots=state_slots,
-            # TODO(merge6) zone=b4 entry=312 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__managers__schedule_policy.py.ours-dropped.txt
+            state_slots_charge=state_slots_charge,
             request_slot_reserve=self._request_slot_reserve_for_req(
                 req, extend_input_len=admission.extend_len
             ),

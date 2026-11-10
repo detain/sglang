@@ -151,6 +151,9 @@ class _Lifecycle:
         backend.device = "cpu"
         backend._mamba_chunk_size = CHUNK
         backend.req_to_token_pool = self.req_to_token_pool
+        # __init__ binds the state view off the pool router (#48013-era); the
+        # classic single-pool build's STATE view is the mamba pool itself.
+        backend.state_pool = self.req_to_token_pool.mamba_pool
         backend.conv_states_shape = tuple(self.conv_states.shape[-2:])
         backend.kernel_dispatcher = SimpleNamespace(extend_uses_state_checkpoints=False)
         backend.enable_unified_memory = False
@@ -422,9 +425,9 @@ class TestMixedChunkMambaTracking(CustomTestCase):
         """Spec decode prepares the running rows' track indices inside the
         forward, so the running batch reaches the mix without them. Upstream
         #45435 (superseding the entry-119 rebuild-from-reqs): the mixed batch
-        pads every decode tail as an untracked row (-1 index, mask False), so
-        the mixed forward writes no decode checkpoint; the extend rows keep
-        their tracking."""
+        pads every decode tail as an untracked row (reserved-slot index, mask
+        False since #48328), so the mixed forward writes no decode checkpoint;
+        the extend rows keep their tracking."""
         self._publish("extra_buffer")
         lc = _Lifecycle(extra_buffer=True)
         decoding, running = self._running_decode_batch(
@@ -442,12 +445,13 @@ class TestMixedChunkMambaTracking(CustomTestCase):
         self.assertEqual(mixed.mamba_track_seqlens_cpu, [8, -1])
         self.assertEqual(
             mixed.mamba_track_indices.tolist(),
-            [slot_at(extend, extend.kv.mamba_last_track_idx), -1],
+            # #48328: an untracked mixed tail's index is the reserved slot 0
+            # (writes there are discarded), no longer the -1 sentinel.
+            [slot_at(extend, extend.kv.mamba_last_track_idx), 0],
         )
         # Non-lazy: nothing to undo, the decode req's own bookkeeping is
         # untouched by the mixed step.
         self.assertNotEqual(slot_at(decoding, 0), -1)
-        self.assertIsNone(decoding.kv.mamba_untracked_decode_batch_idx)
 
     def test_lazy_strategy_mixes_with_a_preallocated_boundary_slot(self):
         """extra_buffer_lazy holds one slot per request and allocates the
@@ -485,15 +489,18 @@ class TestMixedChunkMambaTracking(CustomTestCase):
         self.assertEqual(mixed.mamba_track_seqlens.tolist(), [10, -1])
         self.assertEqual(mixed.mamba_prefill_track_mask_cpu, [True, False])
         self.assertEqual(mixed.mamba_track_seqlens_cpu, [10, -1])
-        self.assertEqual(mixed.mamba_track_indices.tolist(), [extend_slot, -1])
+        self.assertEqual(
+            mixed.mamba_track_indices.tolist(),
+            # #48328: untracked tails carry the reserved slot 0 index.
+            [extend_slot, 0],
+        )
         # The boundary slot is given back and next_idx points at the empty
-        # entry again; the batch is recorded as untracked for the finish path.
+        # entry again. #48328 removed the fork-era mamba_untracked_decode_
+        # batch_idx recording with the redesign that gives each lazy boundary
+        # snapshot its own slot, so the finish path needs no marker anymore.
         self.assertEqual(slot_at(decoding, 1), -1)
         self.assertNotEqual(slot_at(decoding, 0), -1)
         self.assertEqual(decoding.kv.mamba_next_track_idx, 0)
-        self.assertEqual(
-            decoding.kv.mamba_untracked_decode_batch_idx, decoding.decode_batch_idx
-        )
 
         lc.run_extend_forward(mixed, tag=1)
         checkpoint_kv_cache(extend, lc.tree)

@@ -2908,7 +2908,7 @@ class TestPrefillAdder(CustomTestCase):
             req,
             total_tokens=20000,
             host_hit_length=1024,
-            swa_host_hit_length=0,
+            window_host_hit_lengths={},
             truncation_align_size=None,
         )
         self.assertEqual(admission.prefix_len, 1024)
