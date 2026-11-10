@@ -1775,22 +1775,27 @@ class HybridCacheController(BaseHiCacheController):
         property of the operation's pool transfers (identical component config
         on every rank), so the packed shape stays rank-invariant even where a
         rank skipped its query (terminated operation) or failed outright; a
-        non-trailing span keeps the pre-existing 1 + len(PoolName) payload.
+        non-trailing span keeps the pre-existing 1 + len(pool schema) payload.
 
         Merge-#6 decision (zone=b3): upstream #48421 landed a sibling here
         whose payload LEADS with the mask and collapses the returned hit to the
         deepest agreed endpoint (that builder is byte-equivalent to
         `local_restorable_mask` minus the terminated-query all-zero vote). The
-        fork keeps its own layout: the folded count stays the hit, the agreed
-        endpoint SET rides back on the operation, and the host-capacity clamp in
-        `allocate_storage_hit` stops a shortened span on the deepest VERIFIED
-        endpoint it can reach or declines the launch (stack entries 209/218;
-        the serving contract recorded by merge-#5 B3-2 -- a query-time collapse
-        cannot express the decline, and an interior cut forfeits the whole
-        prefix through `_check_hybrid_prefetch_result`'s all-or-nothing rule).
-        `test_hicache_trailing_endpoint.py` pins this layout's return.
+        fork keeps its own layout -- the folded count stays the hit, the agreed
+        endpoint SET rides back on the operation, and the host-capacity clamp
+        in `allocate_storage_hit` stops a shortened span on the deepest
+        VERIFIED endpoint it can reach or declines the launch (stack entries
+        209/218; the serving contract recorded by merge-#5 B3-2 -- a
+        query-time collapse cannot express the decline, and an interior cut
+        forfeits the whole prefix through `_check_hybrid_prefetch_result`'s
+        all-or-nothing rule). `test_hicache_trailing_endpoint.py` and
+        `test_pp_prefetch_ticket.py` pin this layout's return and payload.
+        The per-pool slots DO adopt #48421's `_host_pool_schema` source: a PP
+        stage reduces exactly the host pools some rank registers, and the
+        ticket suite pins `1 + len(schema)` -- the fork's fixed PoolName list
+        was the pre-#48421 shape, not a load-bearing choice.
         """
-        pools = list(PoolName)
+        pools = self._host_pool_schema(self.prefetch_hits_sync_groups)
         local = operation.query_pool_hit_pages
         restorable_mask = (
             local_restorable_mask(operation, self.page_size, storage_hit_count)

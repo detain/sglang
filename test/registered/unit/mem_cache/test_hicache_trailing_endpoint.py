@@ -297,6 +297,13 @@ def _sync_endpoints_on_two_ranks(rank, rendezvous):
         cc = HybridCacheController.__new__(HybridCacheController)
         cc.page_size = _PAGE
         cc.prefetch_hits_sync_groups = [None]
+        # Pool slots come from the agreed host-pool schema (#48421 source;
+        # merge-#6 B3): both simulated ranks register KV+Mamba, so the schema
+        # resolves to the same sorted names everywhere.
+        cc._host_pool_schemas = []
+        cc.mem_pool_host = SimpleNamespace(
+            entry_map={PoolName.KV: object(), PoolName.MAMBA: object()}
+        )
         # Liveness state the worker-thread collective wrapper reads (#44342);
         # the real method comes from the class -- a healthy reduce only needs
         # the flag off.

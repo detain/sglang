@@ -866,7 +866,12 @@ class TestDcpStorage(unittest.TestCase):
             cc.storage_backend = backend
             cc.page_size = 128
             cc.prefetch_hits_sync_groups = []
-            cc.mem_pool_host = SimpleNamespace(entry_map={})
+            # merge-#6 B3: the collective's per-pool slots are the agreed
+            # host-pool schema (#48421); this case pins the full-enum width,
+            # so the stub registers every pool name.
+            cc.mem_pool_host = SimpleNamespace(
+                entry_map={pool: object() for pool in PoolName}
+            )
             cc._host_pool_schemas = []
             op = PrefetchOperation(
                 CacheRequestHandle("test", 0), tokens, pool_transfers=[transfer]

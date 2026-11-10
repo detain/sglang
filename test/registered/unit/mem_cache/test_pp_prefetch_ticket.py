@@ -577,7 +577,9 @@ class TestPPPrefetchTicket(unittest.TestCase):
         # instead of forfeiting the span (entries 290/293 decline-and-retry).
         vote = votes[0]
         self.assertEqual(vote[0], free_pages * 4)
-        self.assertEqual(vote[1 + len(PoolName) :], [0] + [1] * stored_pages)
+        # merge-#6 B3: the per-pool slots are the agreed host-pool schema now
+        # (this file's other cases pin 1 + len(_SCHEMA); #48421).
+        self.assertEqual(vote[1 + len(_SCHEMA) :], [0] + [1] * stored_pages)
         self.assertEqual(operation.host_indices.numel(), free_pages * 4)
         self.assertEqual(operation.storage_hit_count, free_pages * 4)
         self.assertEqual(len(operation.hash_value), free_pages)

@@ -13,7 +13,7 @@ count), so the upstream assertions encode a payload this design does not have.
 import unittest
 from array import array
 from queue import Queue
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 from unittest.mock import Mock, patch
 
 import torch
@@ -75,9 +75,18 @@ def _operation(*, trailing=True, checkpoints=(16, 32), assume_stored=False):
 def _controller(capacity_pages):
     controller = HybridCacheController.__new__(HybridCacheController)
     controller.page_size = _PAGE_SIZE
+    # merge-#6 B3: the pool slots come from the agreed host-pool schema
+    # (#48421). Registering every PoolName here keeps this suite's
+    # `1 + len(PoolName)` payload arithmetic exact (schema == the full enum,
+    # sorted by name); production stages carry a subset.
     controller.mem_pool_host = SimpleNamespace(
         anchor_entry=SimpleNamespace(host_pool=object()),
         available_size=Mock(return_value=capacity_pages * _PAGE_SIZE),
+        entry_map={pool: object() for pool in PoolName},
+    )
+    controller._host_pool_schemas = []
+    controller._host_pool_schema = MethodType(
+        HybridCacheController._host_pool_schema, controller
     )
     # Model only host capacity. Selection and retry order are the production method.
     controller.alloc_prefetch_host_buffers = Mock(
