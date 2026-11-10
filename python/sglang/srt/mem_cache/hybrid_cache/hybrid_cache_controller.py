@@ -1765,36 +1765,32 @@ class HybridCacheController(BaseHiCacheController):
         )
 
     def _sync_prefetch_hit_query(self, operation, storage_hit_count: int) -> int:
-        """One MIN collective for the folded hit count and every host pool's
-        own boundary, named windows included (`_host_pool_schema`), so
-        per-pool beliefs stay rank-identical. A pool omitted by any rank
-        heals from the folded cut without learning presence."""
-        if any(
-            transfer.hit_policy == PoolHitPolicy.TRAILING_PAGES
-            for transfer in operation.pool_transfers or []
-        ):
-            # A trailing state can exist at 512 and 1024 but not at 768. Taking
-            # MIN of each rank's longest hit would choose a missing checkpoint,
-            # so reduce one restorable flag per prefix length instead. Use the
-            # request span (identical on every rank) for the collective shape,
-            # including when one rank skipped its query due to cancellation.
-            hits = [0] * (len(operation.token_ids) // self.page_size + 1)
-            hits[0] = 1
-            if storage_hit_count > 0:
-                pages = operation.pool_storage_result.restorable_prefix_pages
-                if pages is None:
-                    # Backends without sparse-boundary results keep their
-                    # contiguous-prefix contract. File and Mooncake return a set.
-                    pages = range(1, storage_hit_count // self.page_size + 1)
-                # Callers may cap the hit to allocated host space after the
-                # query; a checkpoint past that cap has nowhere to load.
-                for page in pages:
-                    if 0 < page <= storage_hit_count // self.page_size:
-                        hits[page] = 1
-        else:
-            hits = [storage_hit_count]
-        pools = self._host_pool_schema(self.prefetch_hits_sync_groups)
-        # TODO(merge6) zone=b3 entry=311 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__mem_cache__hybrid_cache__hybrid_cache_controller.py.ours-dropped.txt
+        """One MIN collective for the folded hit count, every pool's own
+        boundary, and -- for a span with a trailing-sidecar pool -- the
+        restorable-prefix mask, so per-pool beliefs and the endpoints a partial
+        span may stop at stay rank-identical. A pool omitted by any rank heals
+        from the folded cut without learning presence.
+
+        The mask's length is pinned to the request span and trailing-ness is a
+        property of the operation's pool transfers (identical component config
+        on every rank), so the packed shape stays rank-invariant even where a
+        rank skipped its query (terminated operation) or failed outright; a
+        non-trailing span keeps the pre-existing 1 + len(PoolName) payload.
+
+        Merge-#6 decision (zone=b3): upstream #48421 landed a sibling here
+        whose payload LEADS with the mask and collapses the returned hit to the
+        deepest agreed endpoint (that builder is byte-equivalent to
+        `local_restorable_mask` minus the terminated-query all-zero vote). The
+        fork keeps its own layout: the folded count stays the hit, the agreed
+        endpoint SET rides back on the operation, and the host-capacity clamp in
+        `allocate_storage_hit` stops a shortened span on the deepest VERIFIED
+        endpoint it can reach or declines the launch (stack entries 209/218;
+        the serving contract recorded by merge-#5 B3-2 -- a query-time collapse
+        cannot express the decline, and an interior cut forfeits the whole
+        prefix through `_check_hybrid_prefetch_result`'s all-or-nothing rule).
+        `test_hicache_trailing_endpoint.py` pins this layout's return.
+        """
+        pools = list(PoolName)
         local = operation.query_pool_hit_pages
         restorable_mask = (
             local_restorable_mask(operation, self.page_size, storage_hit_count)
@@ -1828,12 +1824,77 @@ class HybridCacheController(BaseHiCacheController):
             for pool, pages in zip(pools, reduced[1 : 1 + len(pools)], strict=True)
             if pages != _NO_POOL_VERDICT
         }
-        if len(hits) == 1:
-            return storage_hit_count
-        restorable = reduced[: len(hits)]
-        return max(i for i, ok in enumerate(restorable) if ok) * self.page_size
+        if restorable_mask:
+            # Page 0 is never restorable, so the surviving indices are the page
+            # counts themselves, ascending.
+            operation.restorable_prefix_pages = [
+                pages
+                for pages, common in enumerate(reduced[1 + len(pools) :])
+                if common
+            ]
+        return storage_hit_count
 
-    # TODO(merge6) zone=b3 entry=311 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__mem_cache__hybrid_cache__hybrid_cache_controller.py.ours-dropped.txt
+    def _trailing_endpoint_tokens(
+        self, operation: StorageOperation, allocatable_tokens: int
+    ) -> int:
+        """Longest prefix that both fits ``allocatable_tokens`` and ends on a
+        page whose trailing sidecars every rank verified, or 0 when the
+        allocation cannot reach one.
+
+        Reading the sidecar at an unverified interior page always misses, and
+        ``_check_hybrid_prefetch_result`` then forfeits the KV prefix it did
+        fetch, so a shortened span has to stop on a verified endpoint instead.
+        ``allocatable_tokens`` comes from this rank's host arena, which is
+        rank-symmetric by construction (identical pools, identical eviction), so
+        every rank picks the same endpoint out of the intersected candidate set.
+        """
+        has_trailing = any(
+            transfer.hit_policy == PoolHitPolicy.TRAILING_PAGES
+            and transfer.indices_from_pool is None
+            for transfer in operation.pool_transfers or ()
+        )
+        if not has_trailing or operation.restorable_prefix_pages is None:
+            # Nothing to align with: either no pool is tail-anchored, or this
+            # operation never went through the rank-agreed query (buffer-mode
+            # staging), so keep the previous endpoint choice.
+            return allocatable_tokens
+        if operation.sidecar_hash_values is not None:
+            # A head trim already pinned the sidecar endpoint at the untrimmed
+            # query boundary (which the query did verify), and the allocation is
+            # counted in the trimmed domain: leave the endpoint alone.
+            return allocatable_tokens
+        for pages in reversed(operation.restorable_prefix_pages):
+            tokens = pages * self.page_size
+            if tokens <= allocatable_tokens:
+                return tokens
+        return 0
+
+    def _report_sidecar(self, message: str, *args) -> None:
+        if self._sidecar_reports < _SIDECAR_REPORT_WARN_BUDGET:
+            self._sidecar_reports += 1
+            logger.warning(message, *args)
+        else:
+            logger.debug(message, *args)
+
+    def _report_no_restorable_endpoint(
+        self, operation: StorageOperation, allocatable_tokens: int, min_tokens: int
+    ) -> None:
+        self.sidecar_endpoint_clamps += 1
+        endpoints = list(operation.restorable_prefix_pages or ())
+        shown = ", ".join(str(pages) for pages in endpoints[-5:])
+        self._report_sidecar(
+            "HiCache prefetch deferred req=%s reason=no_restorable_endpoint: "
+            "host capacity reaches %d tokens but this span's trailing sidecar is "
+            "only stored at pages [%s%s] (threshold %d tokens); launching the read "
+            "anywhere else would forfeit the KV prefix, so nothing is fetched "
+            "(%d such deferrals so far)",
+            operation.request_id,
+            allocatable_tokens,
+            shown,
+            ", …" if len(endpoints) > 5 else "",
+            min_tokens,
+            self.sidecar_endpoint_clamps,
+        )
 
     def _move_pool_indices(
         self, host_pool, host_indices, device_indices, *, write_back_jit: bool
@@ -2436,7 +2497,12 @@ class HybridCacheController(BaseHiCacheController):
         torch.distributed.all_gather_object(gathered, obj, group=group)
         return gathered
 
-    # TODO(merge6) zone=b3 entry=311 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__mem_cache__hybrid_cache__hybrid_cache_controller.py.ours-dropped.txt
+    # merge-#6 B3 seam closed (stack entry 311): the dropped fork ack loop
+    # (`for i, pool in enumerate(PoolName): ack.pool_hits[pool.value] = ...`)
+    # is subsumed by upstream #48421's schema version just above -- PoolName is
+    # a str-Enum so `pool.value` and the gathered schema strings are the same
+    # dict keys, the MIN fold and the zero-on-sync-failure arm are byte-for-byte
+    # the fork's, and the schema additionally carries PP stages' named windows.
 
     def prefetch_sync_thread_func(self) -> None:
         """Synchronize progressive ACKs and publish PP ticket completion."""
