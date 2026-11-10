@@ -71,9 +71,6 @@ from sglang.srt.speculative.spec_info import (
 from sglang.srt.utils import (
     empty_context,
     log_info_on_rank0,
-    require_attn_tp_gather,
-    require_gathered_buffer,
-    require_mlp_tp_gather,
 )
 
 if TYPE_CHECKING:
