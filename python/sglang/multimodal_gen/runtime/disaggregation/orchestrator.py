@@ -198,7 +198,14 @@ class DiffusionServer:
     def plan(self) -> ExecutionPlan:
         return self._plan
 
-    # TODO(merge6) zone=b1 entry=310-B1 -- upstream region dropped at fork-kept seam (fork-owned restructure; upstream 3-line folded); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__multimodal_gen__runtime__disaggregation__orchestrator.py.theirs-dropped.txt
+    # Re-planted at merge-#6 B1 (stack entry 310-B1): upstream's liveness property
+    # was dropped at the fork-owned restructure seam (the fork had removed it),
+    # while the merged http_server._backend_failure still consumes
+    # ``disagg_server.is_alive`` -- without this the disagg health check raises
+    # AttributeError.
+    @property
+    def is_alive(self) -> bool:
+        return self._running and self._thread is not None and self._thread.is_alive()
 
     def start(self) -> None:
         if self._running:

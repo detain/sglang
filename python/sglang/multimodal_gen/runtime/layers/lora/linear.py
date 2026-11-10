@@ -1076,7 +1076,11 @@ class LinearWithLoRA(BaseLayerWithLoRA):
             return output
 
         # TODO: Support multiple LoRA adapters when use not merged mode
-        # TODO(merge6) zone=b1 entry=310-B1 -- upstream region dropped at fork-kept seam (fork lora-compose arm); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__multimodal_gen__runtime__layers__lora__linear.py.theirs-dropped.txt
+        # merge-#6 B1 seam closed (stack entry 310-B1): upstream's forward
+        # signature line lost to the kept fork lora-compose arm, whose body is
+        # byte-identical to the fork tip and semantically equivalent (same
+        # scale/no-op/delta/offset flow); #44955's multi-adapter work elsewhere
+        # in the file auto-merged.
         runtime_lora_scale = self._runtime_lora_scale()
         if runtime_lora_scale == 0.0:
             # LoRA is a no-op at scale 0 and the base forward is already in `output`.

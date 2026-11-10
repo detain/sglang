@@ -10,6 +10,7 @@ from sglang.multimodal_gen.configs.sample.sampling_params import SamplingParams
 from sglang.multimodal_gen.configs.sample.teacache import TeaCacheParams
 from sglang.multimodal_gen.configs.utils import optional_positive_finite_float
 from sglang.multimodal_gen.runtime.pipelines_core.stages.model_specific_stages.minimax_h3.constants import (
+    MINIMAX_H3_DEFAULT_REFERENCE_RESIZE_MODE,
     MINIMAX_H3_REFERENCE_RESIZE_MODES,
 )
 
@@ -78,9 +79,13 @@ class MiniMaxH3SamplingParams(SamplingParams):
         default=None,
         metadata={"batch_sig_exclude": True},
     )
-    reference_resize_mode: str = field(default="diffusers")
+    reference_resize_mode: str = MINIMAX_H3_DEFAULT_REFERENCE_RESIZE_MODE
     teacache_params: TeaCacheParams = field(default_factory=_minimax_h3_teacache_params)
-    # TODO(merge6) zone=b1 entry=310-B1 -- upstream region dropped at fork-kept seam (fork sample-config note); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__multimodal_gen__configs__sample__minimax_h3.py.theirs-dropped.txt
+    # Re-planted at merge-#6 B1 (stack entry 310-B1): upstream 92a6910ef2 (#47907)
+    # moved the base default from "diffusers" to MINIMAX_H3_DEFAULT_REFERENCE_RESIZE_MODE
+    # ("max"); the fork-kept seam only carried the stale literal (all fork hunks in
+    # this file are TeaCache work). FastH3Omni's explicit "diffusers" pin below
+    # matches upstream and is untouched.
 
     @classmethod
     def video_request_extra_fields(cls) -> frozenset[str]:

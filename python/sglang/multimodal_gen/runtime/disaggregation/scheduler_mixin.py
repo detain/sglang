@@ -57,9 +57,13 @@ from sglang.multimodal_gen.runtime.distributed.ipc_cuda import (
     attach_cuda_tensors,
     detach_cuda_tensors,
 )
-from sglang.multimodal_gen.runtime.entrypoints.utils import expand_request_outputs
 
-# TODO(merge6) zone=b1 entry=310-B1 -- upstream region dropped at fork-kept seam (fork-owned mixin); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__multimodal_gen__runtime__disaggregation__scheduler_mixin.py.theirs-dropped.txt
+# merge-#6 B1 cascade repair (stack entry 310-B1): the fork's
+# ``entrypoints.utils import expand_request_outputs`` line is removed --
+# upstream deleted that re-export in-window (base entrypoints/utils.py:45;
+# clean auto-merge, no marker). The canonical request_utils import below
+# (:69-71) supplies the name; upstream's dropped theirs region (the
+# broadcast_pyobj import) was already carried by the kept fork block.
 from sglang.multimodal_gen.runtime.pipelines_core import Req
 from sglang.multimodal_gen.runtime.pipelines_core.diffusion_scheduler_utils import (
     clone_scheduler_runtime,
@@ -600,7 +604,10 @@ class SchedulerDisaggMixin:
         preallocated_slot_info = []
         if self._is_receiver_node:
             capacity = getattr(sa, "disagg_prealloc_slots", 2)
-            # TODO(merge6) zone=b1 entry=310-B1 -- upstream region dropped at fork-kept seam (fork-owned mixin); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__multimodal_gen__runtime__disaggregation__scheduler_mixin.py.theirs-dropped.txt
+            # merge-#6 B1 seam closed (stack entry 310-B1): upstream's
+            # role-gated ``capacity = 2`` is subsumed by this fork arm --
+            # _is_receiver_node generalizes is_transfer_receiver (DAG in-degree)
+            # and disagg_prealloc_slots defaults to the same 2.
             typical_size = 64 * 1024 * 1024  # 64 MiB per slot
             for i in range(capacity):
                 slot = buffer.allocate(typical_size, f"prealloc_{i}")

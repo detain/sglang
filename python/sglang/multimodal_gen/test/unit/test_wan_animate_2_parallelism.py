@@ -1082,7 +1082,10 @@ def test_dit_work_of_a_clip_runs_inside_one_declared_transformer_use():
 
 
 @pytest.mark.usefixtures("single_process_model_parallel")
-# TODO(merge6) zone=b1 entry=310-B1 -- fork region dropped by merge6 take-upstream resolution (B1 test fold); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__multimodal_gen__test__unit__test_wan_animate_2_parallelism.py.ours-dropped.txt
+# merge-#6 B1 seam closed (stack entry 310-B1): the dropped fork helper + CUDA
+# skipif are subsumed by upstream's single_process_model_parallel conftest
+# fixture (test/unit/conftest.py), which this test now uses; no callers of
+# _ensure_single_process_parallel_runtime remain in the merged file.
 def test_dit_constructs_only_its_own_blocks():
     """Every block the DiT constructs is the in-context block; the parent's block set is not
     built and then replaced (40 block objects per construction, allocated on whatever device

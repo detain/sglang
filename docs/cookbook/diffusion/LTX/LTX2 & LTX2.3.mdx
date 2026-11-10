@@ -138,8 +138,13 @@ On GPUs with at least 130 GiB (H200, B200, B300), `LTX2TwoStagePipeline` serving
 
 For image-conditioned serving, also add `--warmup-sampling-params '{"image_path":["/path/to/reference.png"]}'` to the server command. Use a reference image accessible to the server and the same conditioning layout as your requests. Matching resolution and frame count alone is insufficient: TI2V uses different guidance batches and timestep shapes from T2V. Requests that do not match the captured conditioning signature still run eager.
 
-#### 3.3.1 Two GPUs
-<!-- TODO(merge6) zone=b1 entry=310-B1 -- fork region dropped by merge6 take-upstream resolution (LTX rider docs (B1)); snapshot /tmp/opencode/merge6-dossier/replant/docs__cookbook__diffusion__LTX__LTX2_&_LTX2.3.mdx.ours-dropped.txt -->
+#### 3.4.1 Two GPUs
+
+<!-- merge-#6 B1 re-plant (stack entry 310-B1): the fork renumbered these presets
+     to 3.4.x under its new "### 3.4 Fast multi-GPU presets" section ("### 3.3
+     Breakable CUDA graphs" is the fork rider). The take-upstream resolution had
+     dropped this heading back to the base's 3.3.1, dangling beside the surviving
+     3.4.2 below. Restored to the fork numbering. -->
 
 ```bash
 sglang serve \

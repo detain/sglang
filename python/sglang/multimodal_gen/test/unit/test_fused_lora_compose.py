@@ -11,7 +11,8 @@ import pytest
 import torch
 import torch.distributed as dist
 from safetensors.torch import save_file
-# TODO(merge6) zone=b1 entry=310-B1 -- fork region dropped by merge6 take-upstream resolution (B1 test fold); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__multimodal_gen__test__unit__test_fused_lora_compose.py.ours-dropped.txt
+# merge-#6 B1 seam closed (stack entry 310-B1): the dropped fork import line was
+# already carried by the kept torch.distributed import above -- no content lost.
 
 from sglang.multimodal_gen.runtime.layers.linear import (
     MergedColumnParallelLinear,

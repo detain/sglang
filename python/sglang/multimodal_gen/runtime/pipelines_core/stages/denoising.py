@@ -20,36 +20,28 @@ from typing import Any
 import torch
 import torch.nn as nn
 
+# Re-planted at merge-#6 B1 (stack entry 310-B1): the fork-kept seam carried the
+# superseded mount/unmount function generation -- every name it imported resolves
+# NOWHERE in the merged kernel tree (kernels PEP-562 _EXPORTS has zero mount_* keys;
+# proven by runtime probe). Upstream's site-object generation (eb73a50b1d) is what
+# the merged dits, helios_denoising.py and the quality-fusion tests all consume.
 from sglang.kernels.ops.diffusion import (
-    mount_flux2_nvfp4_swiglu_quant,
-    mount_fused_gate_rmsnorm,
-    mount_fused_linear_gelu,
-    mount_fused_ln_modulate,
-    mount_helios_gated_residual,
-    mount_hunyuan_qknorm,
-    mount_lingbot_video_gated_residual,
-    mount_lingbot_video_rmsnorm,
-    mount_ltx2_qknorm_split_rope,
-    mount_ltx2_rms_norm_modulate,
-    mount_minimax_h3_norm_modulate,
-    mount_nvfp4_bias_gelu,
-    mount_qwen_image_added_qkv,
-    mount_sana_video_linear_attention,
-    unmount_flux2_nvfp4_swiglu_quant,
-    unmount_fused_gate_rmsnorm,
-    unmount_fused_linear_gelu,
-    unmount_fused_ln_modulate,
-    unmount_helios_gated_residual,
-    unmount_hunyuan_qknorm,
-    unmount_lingbot_video_gated_residual,
-    unmount_lingbot_video_rmsnorm,
-    unmount_ltx2_qknorm_split_rope,
-    unmount_ltx2_rms_norm_modulate,
-    unmount_minimax_h3_norm_modulate,
-    unmount_nvfp4_bias_gelu,
-    unmount_qwen_image_added_qkv,
-    unmount_sana_video_linear_attention,
-    # TODO(merge6) zone=b1 entry=310-B1 -- upstream region dropped at fork-kept seam (fork-owned stage; upstream fold); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__multimodal_gen__runtime__pipelines_core__stages__denoising.py.theirs-dropped.txt
+    FLUX2_NVFP4_SWIGLU_QUANT,
+    FUSED_GATE_RMSNORM,
+    FUSED_LINEAR_GELU,
+    FUSED_LN_MODULATE,
+    HELIOS_GATED_RESIDUAL,
+    HUNYUAN_QKNORM,
+    LINGBOT_VIDEO_GATED_RESIDUAL,
+    LINGBOT_VIDEO_RMSNORM,
+    LTX2_QKNORM_SPLIT_ROPE,
+    LTX2_RMS_NORM_MODULATE,
+    MINIMAX_H3_NORM_MODULATE,
+    NVFP4_BIAS_GELU,
+    QWEN_IMAGE_ADDED_QKV,
+    SANA_VIDEO_LINEAR_ATTENTION,
+    WAN_ROCM_FLYDSL_NORM_SCALE_SHIFT,
+    QualityGatedFusion,
 )
 from sglang.multimodal_gen import envs
 from sglang.multimodal_gen.configs.pipeline_configs.base import (
@@ -58,7 +50,8 @@ from sglang.multimodal_gen.configs.pipeline_configs.base import (
     STA_Mode,
 )
 
-# TODO(merge6) zone=b1 entry=310-B1 -- upstream region dropped at fork-kept seam (fold); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__multimodal_gen__runtime__pipelines_core__stages__denoising.py.theirs-dropped.txt
+# merge-#6 B1 seam closed (stack entry 310-B1): upstream's standalone STA_Mode
+# import was dropped here because the kept grouped import above already binds it.
 from sglang.multimodal_gen.configs.pipeline_configs.flux import (
     Flux2PipelineConfig,
     FluxPipelineConfig,
@@ -193,100 +186,48 @@ logger = init_logger(__name__)
 # to "high". No entry is tier "exact": the default must keep running the same
 # kernels it runs today, so a by-construction bit-exact fast path has to come
 # with a BitExactFusionGate before it can move there.
-_QUALITY_FUSION_HANDLERS: tuple[
-    tuple[str, str, Callable[[nn.Module], bool], Callable[[nn.Module], None]], ...
-] = (
-    (
-        # quantizes FC2's input before the reference BF16 intermediate exists
-        "high",
-        "FLUX.2 NVFP4 FC1+SwiGLU+quant",
-        mount_flux2_nvfp4_swiglu_quant,
-        unmount_flux2_nvfp4_swiglu_quant,
-    ),
-    (
-        "lossless",
-        "fused linear+GELU (cublasLt epilogue)",
-        mount_fused_linear_gelu,
-        unmount_fused_linear_gelu,
-    ),
-    (
-        "lossless",
-        "Wan NVFP4 fused bias+GELU",
-        mount_nvfp4_bias_gelu,
-        unmount_nvfp4_bias_gelu,
-    ),
-    (
-        "lossless",
-        "Qwen-Image fused added-QKV",
-        mount_qwen_image_added_qkv,
-        unmount_qwen_image_added_qkv,
-    ),
-    (
-        "lossless",
-        "fused LN+modulate (affine folding)",
-        mount_fused_ln_modulate,
-        unmount_fused_ln_modulate,
-    ),
-    (
-        "lossless",
-        "LTX-2 Hopper QKNorm+split-RoPE",
-        mount_ltx2_qknorm_split_rope,
-        unmount_ltx2_qknorm_split_rope,
-    ),
-    (
-        "lossless",
-        "LTX-2 fused RMSNorm+modulate",
-        mount_ltx2_rms_norm_modulate,
-        unmount_ltx2_rms_norm_modulate,
-    ),
-    (
-        # Ideogram's reference keeps the norm statistics in fp32; the
-        # BF16-native kernel rounds them, which lowers accumulation precision
-        "high",
-        "fused gate RMSNorm (BF16-native Triton)",
-        mount_fused_gate_rmsnorm,
-        unmount_fused_gate_rmsnorm,
-    ),
-    (
-        "lossless",
-        "HunyuanVideo strided QK RMSNorm",
-        mount_hunyuan_qknorm,
-        unmount_hunyuan_qknorm,
-    ),
-    (
-        "lossless",
-        "LingBot Video fused RMSNorm",
-        mount_lingbot_video_rmsnorm,
-        unmount_lingbot_video_rmsnorm,
-    ),
-    (
-        "lossless",
-        "LingBot Video per-token gated residual",
-        mount_lingbot_video_gated_residual,
-        unmount_lingbot_video_gated_residual,
-    ),
-    (
-        "lossless",
-        "Helios per-token gated residual",
-        mount_helios_gated_residual,
-        unmount_helios_gated_residual,
-    ),
-    (
-        "lossless",
-        "MiniMax-H3 fused RMSNorm + AdaLN",
-        mount_minimax_h3_norm_modulate,
-        unmount_minimax_h3_norm_modulate,
-    ),
-    (
-        # the first attention GEMM takes BF16 inputs where the reference
-        # promotes them to FP32
-        "high",
-        "SANA-Video BF16-input linear attention",
-        mount_sana_video_linear_attention,
-        unmount_sana_video_linear_attention,
-    ),
-    # TODO(merge6) zone=b1 entry=310-B1 -- upstream region dropped at fork-kept seam (fold); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__multimodal_gen__runtime__pipelines_core__stages__denoising.py.theirs-dropped.txt
+# Re-planted at merge-#6 B1 (stack entry 310-B1): the fork-kept seam retained the
+# superseded (tier, description, mount, unmount) table -- its function names
+# resolve nowhere in the merged kernel tree. Upstream's (tier, site) generation
+# (eb73a50b1d) is byte-restored here; it also brings the WAN_ROCM_FLYDSL
+# NORM_SCALE_SHIFT site the fork table predates.
+_QUALITY_FUSION_HANDLERS: tuple[tuple[str, QualityGatedFusion], ...] = (
+    # quantizes FC2's input before the reference BF16 intermediate exists
+    ("high", FLUX2_NVFP4_SWIGLU_QUANT),
+    ("lossless", FUSED_LINEAR_GELU),
+    ("lossless", NVFP4_BIAS_GELU),
+    ("lossless", QWEN_IMAGE_ADDED_QKV),
+    ("lossless", FUSED_LN_MODULATE),
+    ("lossless", LTX2_QKNORM_SPLIT_ROPE),
+    ("lossless", LTX2_RMS_NORM_MODULATE),
+    # Ideogram's reference keeps the norm statistics in fp32; the
+    # BF16-native kernel rounds them, which lowers accumulation precision
+    ("high", FUSED_GATE_RMSNORM),
+    # Wan FlyDSL converts FP32 gate/modulation operands and residuals to BF16.
+    ("high", WAN_ROCM_FLYDSL_NORM_SCALE_SHIFT),
+    ("lossless", HUNYUAN_QKNORM),
+    ("lossless", LINGBOT_VIDEO_RMSNORM),
+    ("lossless", LINGBOT_VIDEO_GATED_RESIDUAL),
+    ("lossless", HELIOS_GATED_RESIDUAL),
+    ("lossless", MINIMAX_H3_NORM_MODULATE),
+    # the first attention GEMM takes BF16 inputs where the reference
+    # promotes them to FP32
+    ("high", SANA_VIDEO_LINEAR_ATTENTION),
 )
+
+
+def toggle_quality_fusions(transformers: list[nn.Module | None], quality: str) -> None:
+    """Mount the fusions ``quality`` allows on each transformer, unmount the rest."""
+    mounted_fusions: set[str] = set()
+    for transformer in filter(None, transformers):
+        for tier, fusion in _QUALITY_FUSION_HANDLERS:
+            if quality_allows(quality, tier):
+                if fusion.mount(transformer):
+                    mounted_fusions.add(fusion.name)
+            else:
+                fusion.unmount(transformer)
+    for name in sorted(mounted_fusions):
+        logger.debug("Mounted %s for quality=%s", name, quality)
 
 
 def _ensure_tensor_model_output(model_output):
@@ -907,18 +848,11 @@ class DenoisingStage(PipelineStage, RolloutDenoisingMixin):
         quality = getattr(batch.sampling_params, "quality", "lossless")
         if quality == self._mounted_quality:
             return
-        mounted_fusions: set[str] = set()
-        for transformer in filter(None, [self.transformer, self.transformer_2]):
-            for tier, description, mount, unmount in _QUALITY_FUSION_HANDLERS:
-                if quality_allows(quality, tier):
-                    if mount(transformer):
-                        mounted_fusions.add(description)
-                else:
-                    unmount(transformer)
-
+        # Re-planted at merge-#6 B1 onto upstream's site-object toggle (stack
+        # entry 310-B1); the fork's _mounted_quality memoization -- load-bearing
+        # for the breakable-CUDA-graph runner key below -- is preserved.
+        toggle_quality_fusions([self.transformer, self.transformer_2], quality)
         self._mounted_quality = quality
-        for description in sorted(mounted_fusions):
-            logger.debug("Mounted %s for quality=%s", description, quality)
 
     def _cache_dit_dual_model_name(self) -> str:
         return "wan2.2"

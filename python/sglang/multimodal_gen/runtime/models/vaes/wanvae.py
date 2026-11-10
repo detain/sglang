@@ -1621,7 +1621,10 @@ class AutoencoderKLWan(ParallelTiledVAE):
             not is_auto_parallel_decode_mode(config.parallel_decode_mode)
             or should_use_spatial_shard_parallel_decode(config)
         )
-        # TODO(merge6) zone=b1 entry=310-B1 -- fork region dropped by merge6 take-upstream resolution (fork 2-line dropped (B1 fold)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__multimodal_gen__runtime__models__vaes__wanvae.py.ours-dropped.txt
+        # merge-#6 B1 seam closed (stack entry 310-B1): upstream 7df65d970d
+        # (#46722) subsumed the fork's two plain config-pass-through lines with
+        # this getattr + auto-mode-guard formulation; the merged file is
+        # byte-identical to upstream here.
 
         if config.load_encoder:
             self.encoder = WanEncoder3d(
