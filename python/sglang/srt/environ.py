@@ -307,6 +307,9 @@ class Envs:
     # File-backed PLE tables use deterministic names and are reused across restarts.
     SGLANG_QWEN4_PLE_FILE_DIR = EnvStr(lambda: _default_cache_subdir("ple"))
     SGLANG_QWEN4_PLE_FILE_PREFETCH = EnvBool(True)
+    # Escape hatch for check_file_backend_supported's device-attribute probe
+    # (pageable host memory reachable for the direct-read PLE table path).
+    SGLANG_QWEN4_PLE_FILE_SKIP_DEVICE_CHECK = EnvBool(False)
     # Skip rewriting a shard whose bytes are already on disk, verified by
     # sampling random 4 KiB windows per shard (not by name, mtime or size).
     SGLANG_QWEN4_PLE_FILE_REUSE = EnvBool(True)

@@ -99,6 +99,7 @@ def _run(packed, lengths, device, dtype, pad_tokens=0):
     layer = _layer(device, dtype)
     conv_state = torch.randn(NUM_SLOTS, CHANNELS, STATE_LEN, device=device, dtype=dtype)
     batch = _batch(lengths, device, pad_tokens)
+    forward_batch = _forward_batch(lengths, device)
     x = torch.randn(batch.processed_tokens, CHANNELS, device=device, dtype=dtype)
     # Post-#46970x seam: _short_conv reads its state through the layer router's
     # SHORT_CONV_PART KVLayer (view.layer_cache(view_layer_id)); stub that.
@@ -114,11 +115,23 @@ def _run(packed, lengths, device, dtype, pad_tokens=0):
             "get_token_to_kv_pool",
             lambda: SimpleNamespace(layer_router=router),
         ),
+        # #48328-era seam: _ple_track_targets takes the PHYSICAL tracking
+        # destinations from the attention backend's metadata, not the batch
+        # field (eager and graph replay disagree on that one's domain). This
+        # test builds the eager batch directly, so its mamba_track_indices
+        # already are the physical slots; serve them through the backend stub.
+        patch.object(
+            qwen4_exp,
+            "get_attn_backend",
+            lambda: SimpleNamespace(
+                linear_attn_backend=SimpleNamespace(
+                    state_tracking_indices=forward_batch.mamba_track_indices
+                )
+            ),
+        ),
         patch.object(qwen4_exp, "_ple_padding_is_wasteful", lambda b: packed),
     ):
-        out = qwen4_exp.Qwen4ExpPLELayer._short_conv(
-            layer, x, _forward_batch(lengths, device), batch
-        )
+        out = qwen4_exp.Qwen4ExpPLELayer._short_conv(layer, x, forward_batch, batch)
     return out[batch.valid_tokens], conv_state
 
 

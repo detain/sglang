@@ -332,6 +332,7 @@ def fused_qwen4_short_conv_state(
 @triton.jit
 def _qwen4_varlen_conv_kernel(
     x_ptr,
+    residual_ptr,
     weight_ptr,
     state_ptr,
     state_indices_ptr,
@@ -344,6 +345,7 @@ def _qwen4_varlen_conv_kernel(
     KERNEL_SIZE: tl.constexpr,
     DILATION: tl.constexpr,
     STATE_LEN: tl.constexpr,
+    HAS_RESIDUAL: tl.constexpr,
     BLOCK_CHANNELS: tl.constexpr,
 ):
     token = tl.program_id(0).to(tl.int64)
@@ -378,7 +380,23 @@ def _qwen4_varlen_conv_kernel(
             other=0.0,
         ).to(tl.float32)
         acc += tl.where(from_tokens, token_value, state_value) * weight
-    tl.store(output_ptr + token * CHANNELS + channel, acc, mask=mask)
+    if HAS_RESIDUAL:
+        # Match the native path's two low-precision materialization points:
+        # conv1d output before SiLU, then SiLU output before residual addition.
+        conv = acc.to(x_ptr.dtype.element_ty)
+        activated = (conv.to(tl.float32) * tl.sigmoid(conv.to(tl.float32))).to(
+            x_ptr.dtype.element_ty
+        )
+        residual = tl.load(
+            residual_ptr + token * CHANNELS + channel,
+            mask=mask,
+            other=0.0,
+        )
+        output = residual + activated
+    else:
+        # Compatibility API: callers that omit residual still receive raw conv.
+        output = acc
+    tl.store(output_ptr + token * CHANNELS + channel, output, mask=mask)
 
 
 @triton.jit
@@ -462,22 +480,23 @@ def can_fuse_qwen4_varlen_conv(
     req_indices,
     token_offsets,
     dilation,
+    residual=None,
 ):
     """Return whether ordinary PLE prefill can use the packed CUDA path."""
 
     requests = state_indices.shape[0] if state_indices.ndim == 1 else -1
     return (
         x.is_cuda
-        and x.dtype == torch.bfloat16
+        and x.dtype in (torch.bfloat16, torch.float16)
         and x.ndim == 2
         and x.is_contiguous()
         and weight.device == x.device
-        and weight.dtype == torch.bfloat16
+        and weight.dtype == x.dtype
         and weight.ndim == 3
         and weight.shape[:2] == (x.shape[1], 1)
         and weight.is_contiguous()
         and state.device == x.device
-        and state.dtype in (torch.bfloat16, torch.float32)
+        and state.dtype in (x.dtype, torch.float32)
         and state.ndim == 3
         and state.shape[1] == x.shape[1]
         and 0 < state.shape[2] <= _QWEN4_MAX_SHORT_CONV_STATE_LEN
@@ -501,6 +520,15 @@ def can_fuse_qwen4_varlen_conv(
         and token_offsets.dtype == torch.int64
         and token_offsets.shape == (x.shape[0],)
         and token_offsets.is_contiguous()
+        and (
+            residual is None
+            or (
+                residual.device == x.device
+                and residual.dtype == x.dtype
+                and residual.shape == x.shape
+                and residual.is_contiguous()
+            )
+        )
     )
 
 
@@ -514,6 +542,7 @@ def fused_qwen4_varlen_conv(
     token_offsets,
     dilation,
     *,
+    residual=None,
     track_indices=None,
     track_offsets=None,
 ):
@@ -544,6 +573,7 @@ def fused_qwen4_varlen_conv(
         req_indices,
         token_offsets,
         dilation,
+        residual,
     ):
         raise ValueError("unsupported input for Qwen4 packed-varlen convolution")
     has_track = track_indices is not None or track_offsets is not None
@@ -562,12 +592,14 @@ def fused_qwen4_varlen_conv(
         raise ValueError("invalid Qwen4 packed-varlen track metadata")
 
     output = torch.empty_like(x)
+    has_residual = residual is not None
     block_channels = 128
     if x.shape[0]:
         _qwen4_varlen_conv_kernel[
             (x.shape[0], triton.cdiv(x.shape[1], block_channels))
         ](
             x,
+            residual if has_residual else output,
             weight,
             state,
             state_indices,
@@ -580,7 +612,9 @@ def fused_qwen4_varlen_conv(
             KERNEL_SIZE=weight.shape[2],
             DILATION=dilation,
             STATE_LEN=state.shape[2],
+            HAS_RESIDUAL=has_residual,
             BLOCK_CHANNELS=block_channels,
+            enable_fp_fusion=False,
         )
 
     requests = state_indices.shape[0]
@@ -605,7 +639,6 @@ def fused_qwen4_varlen_conv(
 
 
 @triton.jit
-# TODO(merge6) zone=b5 entry=313 -- fork region dropped by merge6 take-upstream resolution (DUAL IMPL: packed varlen conv kernel family); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__kernels__ops__mamba__qwen4_short_conv.py.ours-dropped.txt
 def _qwen4_verify_conv_prepare_kernel(
     x_ptr,
     state_ptr,

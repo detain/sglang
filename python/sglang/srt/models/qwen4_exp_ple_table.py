@@ -24,7 +24,6 @@
     mapping's resident set under a budget, because faulting rows in maps whole
     page-cache folios and the table would otherwise creep towards full
     residency (see ``PleFileRssTrimmer``).
-# TODO(merge6) zone=b5 entry=313 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__models__qwen4_exp_ple_table.py.ours-dropped.txt
 
 This module has no Triton or CUDA-kernel imports so that its allocator and
 prefetcher can be unit-tested on CPU.
@@ -404,13 +403,10 @@ def ple_table_file_name(
     return f"ple_table_{dims}_{str(dtype).replace('torch.', '')}_{numel * elem}B{suffix}.bin"
 
 
-# TODO(merge6) zone=b5 entry=313 -- grafted back fork memo dict (its region was
-# dropped by the take-upstream import resolution; merge #5 cascade-repair class).
 _HOST_PAGE_TABLES: dict[int, Optional[bool]] = {}
 
 
 def device_reads_pageable_memory(device_index: int = 0) -> Optional[bool]:
-    # TODO(merge6) zone=b5 entry=313 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__models__qwen4_exp_ple_table.py.ours-dropped.txt
     """Whether pageable host memory is directly addressable by the GPU.
 
     Returns None when the CUDA runtime library cannot be queried.

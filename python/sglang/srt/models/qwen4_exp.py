@@ -422,7 +422,6 @@ def _prepare_ple_batch(
         if mode in (
             ForwardMode.EXTEND,
             ForwardMode.MIXED,
-            ForwardMode.SPLIT_PREFILL,
         ):
             packed_query_start_loc = query_start_loc
         sequence_count = lengths.shape[0]
@@ -666,6 +665,7 @@ def _use_qwen4_varlen_prefill(
     req_indices: torch.Tensor,
     token_offsets: torch.Tensor,
     dilation: int,
+    residual: torch.Tensor | None = None,
 ) -> bool:
     if (
         not envs.SGLANG_ENABLE_QWEN4_PLE_FUSION.get()
@@ -691,13 +691,10 @@ def _use_qwen4_varlen_prefill(
         req_indices,
         token_offsets,
         dilation,
+        residual,
     )
 
 
-# TODO(merge6) zone=b5 entry=313 -- fork region dropped by merge6 take-upstream resolution (DUAL IMPL: varlen-prefill predicate (fork residual/SPLIT arms vs upstream native)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__models__qwen4_exp.py.ours-dropped.txt
-# TODO(merge6) zone=b5 entry=313 -- grafted back fork predicate dropped by the
-# take-upstream varlen resolution (its kernel helpers survived in
-# kernels/ops/mamba/qwen4_short_conv.py; merge #5 cascade-repair class).
 def _use_qwen4_direct_decode(
     mode: ForwardMode,
     x: torch.Tensor,
@@ -756,7 +753,6 @@ def _use_qwen4_packed_ngram_prefill(
         not in (
             ForwardMode.EXTEND,
             ForwardMode.MIXED,
-            ForwardMode.SPLIT_PREFILL,
         )
         or query_start_loc is None
     ):
@@ -1619,6 +1615,7 @@ class Qwen4ExpPLELayer(nn.Module):
             batch.req_indices,
             batch.token_offsets,
             self.short_conv_dilation,
+            residual,
         ):
             from sglang.kernels.ops.mamba.qwen4_short_conv import (
                 fused_qwen4_varlen_conv,
@@ -1635,12 +1632,12 @@ class Qwen4ExpPLELayer(nn.Module):
                 batch.req_indices,
                 batch.token_offsets,
                 self.short_conv_dilation,
+                residual=residual,
                 track_indices=track_indices,
                 track_offsets=track_offsets,
             )
-            return F.silu(conv_output)
+            return conv_output if residual is not None else F.silu(conv_output)
 
-        # TODO(merge6) zone=b5 entry=313 -- fork region dropped by merge6 take-upstream resolution (DUAL IMPL: varlen-prefill call site); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__models__qwen4_exp.py.ours-dropped.txt
         if batch.use_decode_fast_path:
             # With row_width=1 the padded/transpose path is x.unsqueeze(-1),
             # and each state boundary is a one-column shift; conv and SiLU stay native.
@@ -1964,10 +1961,24 @@ class Qwen4ExpPLELayer(nn.Module):
 
         stream = self._prefetch_stream
         stream.wait_stream(torch.get_device_module().current_stream())
-        lookup_ids.record_stream(stream)
+        if lookup_ids is not None:
+            lookup_ids.record_stream(stream)
+        if not self._is_capturing():
+            # The eager buffer is written by the side stream but allocated and
+            # freed on the current one, so the allocator would otherwise hand
+            # its block straight back when a larger buffer replaces it. Graph
+            # buffers are excluded: they are held for the life of the process
+            # and record_stream is not defined for graph-pool blocks.
+            prefetched.record_stream(stream)
         with torch.get_device_module().stream(stream):
-            offloaded_embedding.gather(lookup_ids, out=output_view)
-        # TODO(merge6) zone=b5 entry=313 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__models__qwen4_exp.py.ours-dropped.txt
+            if self.ple_embedding.uses_host_staging:
+                offloaded_embedding.gather_staged(
+                    lookup_tokens * self.ple_embedding.ngram_heads,
+                    forward_batch.input_ids.device,
+                    out=output_view,
+                )
+            else:
+                offloaded_embedding.gather(lookup_ids, out=output_view)
         self._prefetch_state = prefetched, semantic_tokens, physical_tokens
 
     def _consume_prefetched_embeddings(
