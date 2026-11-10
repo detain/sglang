@@ -38,7 +38,7 @@ dependencies = [
   "easydict",  # Required by remote model code (e.g. DeepSeek-OCR) loaded via trust_remote_code; validated by transformers 5.4+ check_imports
   "einops",
   "fastapi",
-  "flashinfer_python[cu13]==0.7.3", # keep it aligned with jit-cache version in Dockerfile
+  "flashinfer_python[cu13]==0.7.2", # TODO(merge6) zone=b6 entry=315 -- fork wheel/floor pairing (entry 228); upstream #48468 bumped to 0.7.3, venv still 0.7.2 -- flip pin + assert together only after the wheel moves
   "gguf",
   "humming-kernels[cu13]==0.1.18",
   "interegular",
@@ -77,8 +77,8 @@ dependencies = [
   "sentencepiece==0.2.1",  # 0.2.2 rejects null pieces in InternVL tokenizers.
   "setproctitle",
   "sgl-deep-ep==0.1.2.post1",
-  "sgl-deep-gemm==0.2.7",
-  "sgl-flash-mla==1.0.4",
+  "sgl-deep-gemm==0.2.7", # TODO(merge6) zone=b6 entry=315 -- OPERATOR-OWED WHEEL CHECK: prod venv still 0.2.3.post2; upstream grew deep_gemm call sites in the window (e.g. #48984). Move the wheel or verify the boot path never hits the new APIs.
+  "sgl-flash-mla==1.0.4", # TODO(merge6) zone=b6 entry=315 -- OPERATOR-OWED WHEEL CHECK: prod venv still 1.0.0; upstream bumped twice in the window (#48525/#49362). Same pairing rule as flashinfer (entry 228).
   "sglang-kernel==0.4.10",
   "smg-grpc-servicer>=0.9.0",
   "soundfile==0.13.1",

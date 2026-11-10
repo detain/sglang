@@ -393,7 +393,7 @@ class TestVerifyIntermediateStateIndices(CustomTestCase):
             with (
                 self.subTest(pool_size=pool_size, eager_bs=eager_bs, graph_bs=graph_bs),
                 patch(
-                    "sglang.srt.utils.common.get_eager_max_batch_size",
+                    "sglang.srt.layers.dp_attention.get_eager_max_batch_size",
                     return_value=eager_bs,
                 ),
                 patch(
