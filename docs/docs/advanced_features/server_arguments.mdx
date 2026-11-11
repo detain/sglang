@@ -2224,8 +2224,7 @@ Combining `--enable-response-store` with `--disaggregation-mode=prefill` or `dec
     </tr>
         <tr>
       <td style={{padding: "9px 12px", fontWeight: 500, backgroundColor: "rgba(255,255,255,0.02)"}}>`--hicache-storage-backend`</td>
-      <td style={{padding: "9px 12px", backgroundColor: "rgba(255,255,255,0.05)"}}>The storage backend for hierarchical KV cache. Built-in backends: file, fast_file, mooncake, npu_memcache, hf3fs, nixl, aibrix, tensorcast, seaweedfs. For dynamic backend, use --hicache-storage-backend-extra-config to specify: backend_name (custom name), module_path (Python module path), class_name (backend class name).</td>
-<!-- TODO(merge6) zone=b6 entry=315 -- fork region dropped by merge6 take-upstream resolution (B6 coverage re-pin); snapshot /tmp/opencode/merge6-dossier/replant/docs__docs__advanced_features__server_arguments.mdx.ours-dropped.txt -->
+      <td style={{padding: "9px 12px", backgroundColor: "rgba(255,255,255,0.05)"}}>The storage backend for hierarchical KV cache. Built-in backends: file (minimal reference), fast_file (local disk with direct host-buffer I/O, parallel reads, and background eviction), mooncake, npu_memcache, hf3fs, nixl, aibrix, tensorcast, seaweedfs. For dynamic backend, use --hicache-storage-backend-extra-config to specify: backend_name (custom name), module_path (Python module path), class_name (backend class name).</td>
       <td style={{padding: "9px 12px", backgroundColor: "rgba(255,255,255,0.02)"}}>`None`</td>
       <td style={{padding: "9px 12px", backgroundColor: "rgba(255,255,255,0.05)"}}><code>file</code>, <code>fast_file</code>, <code>mooncake</code>, <code>hf3fs</code>, <code>nixl</code>, <code>aibrix</code>, <code>dynamic</code>, <code>eic</code>, <code>simm</code></td>
     </tr>
@@ -2503,7 +2502,6 @@ Combining `--enable-response-store` with `--disaggregation-mode=prefill` or `dec
     <tr>
       <td style={{padding: "9px 12px", fontWeight: 500, backgroundColor: "rgba(255,255,255,0.02)"}}>`--ple-offload-backend`</td>
       <td style={{padding: "9px 12px", backgroundColor: "rgba(255,255,255,0.05)"}}>Host storage for the offloaded PLE table: `pinned` (CPU pinned memory) or `file` (a sparse file-backed mmap under `--ple-offload-dir`, read directly by the gather kernel). Use `file` on unified-memory devices such as GB10 / DGX Spark, where pinned host memory comes out of the same pool as the weights; it requires a device that reports `cudaDevAttrPageableMemoryAccess` (GB10, or a discrete GPU with HMM).</td>
-<!-- TODO(merge6) zone=b6 entry=315 -- fork region dropped by merge6 take-upstream resolution (B6 coverage re-pin); snapshot /tmp/opencode/merge6-dossier/replant/docs__docs__advanced_features__server_arguments.mdx.ours-dropped.txt -->
       <td style={{padding: "9px 12px", backgroundColor: "rgba(255,255,255,0.02)"}}>`pinned`</td>
       <td style={{padding: "9px 12px", backgroundColor: "rgba(255,255,255,0.05)"}}>Type: str</td>
     </tr>

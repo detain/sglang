@@ -663,13 +663,11 @@ def handle_model_specific_adjustments(server_args: Any):
             resolved_view(server_args)
         )
         accepted_backends = gemma4_attention_backends()
-        # TODO(merge6) zone=b6 entry=315 -- fork region dropped by merge6 take-upstream resolution (fork flashinfer acceptance must re-home into gemma4_attention_backends() helper); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__arg_groups__model_hook.py.ours-dropped.txt
         assert (
             prefill_backend in accepted_backends and decode_backend in accepted_backends
         ), (
             f"Gemma4 only supports attention backends in {accepted_backends}, "
             f"got prefill={prefill_backend}, decode={decode_backend}"
-            # TODO(merge6) zone=b6 entry=315 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (contested)); snapshot /tmp/opencode/merge6-dossier/replant/python__sglang__srt__arg_groups__model_hook.py.ours-dropped.txt
         )
 
         # The quantization/moe_runner_backend resolution moved to the override

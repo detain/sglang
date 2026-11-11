@@ -297,7 +297,6 @@ Please refer to our dedicated guide on [constrained decoding](../advanced_featur
       <td style={{padding: "9px 12px", fontWeight: 500, backgroundColor: "rgba(255,255,255,0.02)"}}>logit_bias</td>
       <td style={{padding: "9px 12px", backgroundColor: "rgba(255,255,255,0.05)"}}>`Optional[Dict[str, float]] = None`</td>
       <td style={{padding: "9px 12px", backgroundColor: "rgba(255,255,255,0.02)"}}>Maps token IDs to a bias added to their logits. Each key must be a token ID in `[0, vocab_size)` and each value a finite number with magnitude at most `1e30` (the sampler divides logits by a temperature of at least `1e-6`, so larger values overflow float32); otherwise the request fails with HTTP 400. Values outside OpenAI's `[-100, 100]` range are accepted.</td>
-<!-- TODO(merge6) zone=b6 entry=315 -- fork region dropped by merge6 take-upstream resolution (B6 docs); snapshot /tmp/opencode/merge6-dossier/replant/docs__docs__basic_usage__sampling_params.mdx.ours-dropped.txt -->
     </tr>
     <tr>
       <td style={{padding: "9px 12px", fontWeight: 500, backgroundColor: "rgba(255,255,255,0.02)"}}>ignore_eos</td>

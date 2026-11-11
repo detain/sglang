@@ -19,6 +19,10 @@ _BUILTIN_ATTENTION_BACKENDS = (
     "triton",
     "fa4",
     "fa3",
+    # merge-#6 B6 re-home: the fork's Gemma4 flashinfer acceptance (base
+    # model_hook.py region@650) moves into this helper, which upstream made
+    # the single source of truth for the allowlist.
+    "flashinfer",
     "ascend",
     "intel_xpu",
     "intel_amx",

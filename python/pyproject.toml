@@ -38,7 +38,7 @@ dependencies = [
   "easydict",  # Required by remote model code (e.g. DeepSeek-OCR) loaded via trust_remote_code; validated by transformers 5.4+ check_imports
   "einops",
   "fastapi",
-  "flashinfer_python[cu13]==0.7.2", # TODO(merge6) zone=b6 entry=315 -- fork wheel/floor pairing (entry 228); upstream #48468 bumped to 0.7.3, venv still 0.7.2 -- flip pin + assert together only after the wheel moves
+  "flashinfer_python[cu13]==0.7.2", # merge-#6 B6 VERIFIED: fork wheel/floor pairing (entry 228) -- prod venv ships 0.7.2 and engine.py asserts 0.7.2; upstream #48468's 0.7.3 stays HELD -- flip pin + assert together only when the wheel moves
   "gguf",
   "humming-kernels[cu13]==0.1.18",
   "interegular",
@@ -77,8 +77,8 @@ dependencies = [
   "sentencepiece==0.2.1",  # 0.2.2 rejects null pieces in InternVL tokenizers.
   "setproctitle",
   "sgl-deep-ep==0.1.2.post1",
-  "sgl-deep-gemm==0.2.7", # TODO(merge6) zone=b6 entry=315 -- OPERATOR-OWED WHEEL CHECK: prod venv still 0.2.3.post2; upstream grew deep_gemm call sites in the window (e.g. #48984). Move the wheel or verify the boot path never hits the new APIs.
-  "sgl-flash-mla==1.0.4", # TODO(merge6) zone=b6 entry=315 -- OPERATOR-OWED WHEEL CHECK: prod venv still 1.0.0; upstream bumped twice in the window (#48525/#49362). Same pairing rule as flashinfer (entry 228).
+  "sgl-deep-gemm==0.2.3.post2", # merge-#6 B6 REVERTED TO VENV TRUTH (was upstream 0.2.7): prod venv is 0.2.3.post2 and boot 321 ran green on it; the SM120 configurer probe (fp8_einsum/m_grouped_fp8_fp4_gemm_nt_contiguous/transform_sf_into_required_layout) is fully satisfied by 0.2.3.post2; the only post2-absent APIs the window grew (#48984-era get/set_compile_mode) are hasattr-gated in deep_gemm_wrapper/compile_utils.py:252. Pairing rule (entry 228): move this pin only with the wheel.
+  "sgl-flash-mla==1.0.0", # merge-#6 B6 REVERTED TO VENV TRUTH (was upstream 1.0.4): prod venv is 1.0.0 and boot 321 ran green on it; the window's new call sites (#48525/#49362-era sparse_decode_num_sm_parts) are hasattr-gated in kernels/ops/attention/flash_mla_interface.py:44; every ungated symbol the tree touches (fused_norm_rope_attn_rope_cast, FlashMLASchedMeta, flash_mla_sparse_fwd/with_kvcache, get_mla_decoding_metadata) is present in 1.0.0. Same pairing rule as flashinfer (entry 228).
   "sglang-kernel==0.4.10",
   "smg-grpc-servicer>=0.9.0",
   "soundfile==0.13.1",
