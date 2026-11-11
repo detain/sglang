@@ -22,13 +22,21 @@ from sglang.test.ci.ci_register import register_cpu_ci
 
 register_cpu_ci(est_time=11, suite="base-a-test-cpu")
 
+import functools
 import unittest
 from unittest.mock import MagicMock, patch
 
 import torch
 
-# TODO(merge6) zone=b2 entry=314 -- fork region dropped by merge6 take-upstream resolution (SM120-FP8-KV fail-loud (entry-313) B2 fold); snapshot /tmp/opencode/merge6-dossier/replant/test__registered__unit__layers__quantization__test_flashinfer_trtllm_fp8_fallback.py.ours-dropped.txt
+import sglang.srt.layers.deep_gemm_wrapper as deep_gemm_wrapper
+import sglang.srt.layers.quantization.fp8 as fp8
 import sglang.srt.layers.quantization.fp8_utils as fp8_utils
+from sglang.srt.layers.quantization.fp8 import Fp8Config, Fp8LinearMethod
+from sglang.srt.layers.quantization.fp8_utils import (
+    Fp8GemmRunnerBackend,
+    dispatch_w8a8_block_fp8_linear,
+    triton_w8a8_block_fp8_linear,
+)
 from sglang.test.test_utils import CustomTestCase
 
 BLOCK_SIZE = [128, 128]
@@ -99,6 +107,60 @@ class TestFlashinferTrtllmFp8Fallback(CustomTestCase):
         trtllm_spy.assert_not_called()
 
 
+# Re-homed (merge-#6 B2, SM120-FP8-KV fail-loud entry-313 fold): the fork's
+# dispatch-contract suite that the take-upstream resolution dropped.
+class TestBlockSizeDispatch(CustomTestCase):
+    """Non-128-wide K blocks dispatch to Triton regardless of --fp8-gemm-backend;
+    128-wide blocks keep the backend choice."""
+
+    def test_128_wide_k_blocks_keep_the_backend_choice(self):
+        for name in ("triton", "deep_gemm"):
+            with (
+                self.subTest(backend=name),
+                patch.object(
+                    fp8_utils, "FP8_GEMM_RUNNER_BACKEND", Fp8GemmRunnerBackend(name)
+                ),
+            ):
+                if name == "deep_gemm" and not deep_gemm_wrapper.ENABLE_JIT_DEEPGEMM:
+                    # "Keep the backend choice" only means something when the
+                    # backend exists. This file is a register_cpu_ci test, and on
+                    # a device-less runner _compute_enable_deep_gemm() returns
+                    # False (get_device_sm() == 0 < 90), so the dispatcher's real
+                    # contract here is to refuse the request loudly rather than
+                    # quietly run Triton -- pin that instead of asserting a
+                    # selection this lane cannot make.
+                    with self.assertRaisesRegex(RuntimeError, "DeepGEMM"):
+                        dispatch_w8a8_block_fp8_linear()
+                    continue
+                default = dispatch_w8a8_block_fp8_linear()
+                self.assertIs(dispatch_w8a8_block_fp8_linear([128, 128]), default)
+                self.assertIs(dispatch_w8a8_block_fp8_linear([1, 128]), default)
+                fn = dispatch_w8a8_block_fp8_linear([32, 32], act_scale_ue8m0=True)
+                self.assertIsInstance(fn, functools.partial)
+                self.assertIs(fn.func, triton_w8a8_block_fp8_linear)
+                self.assertEqual(fn.keywords, {"act_scale_ue8m0": True})
+
+    def test_method_dispatches_on_the_effective_block_size(self):
+        # An MXFP8 checkpoint converted to block-fp8 at load time is a [128, 128]
+        # weight; dispatching on the pre-conversion [1, 32] would pick Triton.
+        with (
+            patch.object(
+                fp8_utils, "FP8_GEMM_RUNNER_BACKEND", Fp8GemmRunnerBackend.TRITON
+            ),
+            patch.object(fp8, "_mxfp8_to_block_fp8_required", True),
+        ):
+            method = Fp8LinearMethod(
+                Fp8Config(
+                    is_checkpoint_fp8_serialized=True,
+                    use_mxfp8=True,
+                    weight_block_size=[1, 32],
+                    scale_fmt="ue8m0",
+                )
+            )
+            self.assertTrue(method.convert_mxfp8_to_block)
+            self.assertIs(method.w8a8_block_fp8_linear, triton_w8a8_block_fp8_linear)
+            self.assertFalse(method.block_fp8_as_mxfp8)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=3)
-# TODO(merge6) zone=b2 entry=314 -- fork region dropped by merge6 take-upstream resolution (same); snapshot /tmp/opencode/merge6-dossier/replant/test__registered__unit__layers__quantization__test_flashinfer_trtllm_fp8_fallback.py.ours-dropped.txt

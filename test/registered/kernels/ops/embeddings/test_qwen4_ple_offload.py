@@ -23,12 +23,11 @@ from sglang.srt.models.qwen4_exp import (
 from sglang.srt.runtime_context import get_context, get_parallel
 from sglang.test.ci.ci_register import register_cuda_ci, register_xpu_ci
 
-register_cuda_ci(est_time=45, stage="base-b-kernel-unit", runner_config="1-gpu-small")
+register_cuda_ci(est_time=60, stage="base-b-kernel-unit", runner_config="1-gpu-small")
 register_xpu_ci(est_time=45, suite="stage-b-test-1-gpu-xpu")
 
 _accelerator = torch.accelerator.current_accelerator()
 DEVICE = _accelerator.type if _accelerator is not None else None
-# TODO(merge6) zone=b2 entry=314 -- fork region dropped by merge6 take-upstream resolution (B2 re-pin est_time); snapshot /tmp/opencode/merge6-dossier/replant/test__registered__kernels__ops__embeddings__test_qwen4_ple_offload.py.ours-dropped.txt
 
 pytestmark = pytest.mark.skipif(
     DEVICE not in ("cuda", "xpu"), reason="a CUDA or XPU device is required."
