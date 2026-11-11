@@ -588,7 +588,6 @@ class TestPrefillAdder(CustomTestCase):
     def test_shared_continuation_takes_its_rows_and_commits_its_decode(self):
         """A finishing continuation takes the whole remainder now; its decode,
         committed at admission, is charged as pending, not as rows taken now."""
-        # TODO(merge6) zone=b2 entry=314 -- fork region dropped by merge6 take-upstream resolution (B2: fork pricing tests (353 lines) -> replant into upstream layout); snapshot /tmp/opencode/merge6-dossier/replant/test__registered__unit__managers__test_prefill_adder.py.ours-dropped.txt
         adder = self.create_shared_adder()
         req = self.create_shared_req("continuation", max_new_tokens=80)
         self.assertIsNone(adder.add_chunked_req(req))
