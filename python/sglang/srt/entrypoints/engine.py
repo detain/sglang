@@ -2041,13 +2041,7 @@ def _set_envs_and_config(server_args: ServerArgs):
         ):
             assert_pkg_version(
                 "flashinfer_python",
-                # merge-#6 B6 VERIFIED PAIRING (entry 228 rule: floor and wheel move
-                # together, never one without the other): prod venv ships the 0.7.2
-                # wheel and pyproject pins ==0.7.2 -- this assert matches the wheel
-                # byte-for-byte. Upstream #48468 raised it to 0.7.3 in the same
-                # commit as the pyproject pin; to adopt 0.7.3, install the wheel
-                # FIRST, then flip BOTH lines together.
-                "0.7.2",
+                "0.7.3",
                 "Please uninstall the old version and "
                 "reinstall the latest version by following the instructions "
                 "at https://docs.flashinfer.ai/installation.html.",
