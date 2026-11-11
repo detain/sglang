@@ -659,12 +659,15 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
             self.server_args, self.mm_processor
         )
 
+        # Upstream's last step: the registration message dispatches over the
+        # IPC channels init_ipc_channels assigns, which the fork orders after
+        # init_preprocess_executor.
+        self.maybe_init_router_registration()
+
     def init_preprocess_executor(self):
         self.preprocess_executor = PreprocessExecutor(
             get_shared_tokenizer=lambda: self._tokenizer
         )
-
-        self.maybe_init_router_registration()
 
     def init_model_config(self):
         server_args = self.server_args
