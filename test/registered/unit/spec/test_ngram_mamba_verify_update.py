@@ -397,7 +397,11 @@ class TestVerifyIntermediateStateIndices(CustomTestCase):
                     return_value=eager_bs,
                 ),
                 patch(
-                    "sglang.srt.utils.common.get_cuda_graph_max_batch_size",
+                    # merge-#6 B2 mock-target retarget (b5 hand-off): the
+                    # builder imports both maxima from layers.dp_attention at
+                    # call time (linear/utils.py:142); utils.common's same-name
+                    # function is not the bind site.
+                    "sglang.srt.layers.dp_attention.get_cuda_graph_max_batch_size",
                     return_value=graph_bs,
                 ),
             ):

@@ -199,9 +199,22 @@ def test_replay_stages_padded_inputs_after_load(staged):
     runner.model_context = lambda: nullcontext()
     runner._init_model_hooks()
     assert (runner._replay_prepare_hook is not None) == staged
-    runner.backend = SimpleNamespace(replay_session=nullcontext, replay=replay)
+    runner.backend = SimpleNamespace(
+        replay_session=nullcontext,
+        replay=replay,
+        # merge-#6 B2 stub re-home (#48012-era replay protocol): the runner
+        # consults supports_shared_read_events (the CUDA base backend's True)
+        # before the body and asks prepare_replay (base default: not prepared)
+        # whether load_batch must stage the inputs -- exactly the load ->
+        # prepare -> publish -> replay order this test pins.
+        supports_shared_read_events=True,
+        prepare_replay=lambda forward_batch: False,
+    )
     runner.load_batch = load
-    runner._replay_attn_backend = lambda: None
+    # merge-#6 B2: the _replay_attn_backend indirection is gone -- the runner
+    # carries attn_backend as a plain attribute (decode_cuda_graph_runner:401)
+    # and execute passes it to the (stubbed) read-end resolver.
+    runner.attn_backend = None
     runner._resolve_shared_read_ends = lambda *_: module.SharedReadEnds.PRE_REPLAY
     runner._publish_read_done = lambda **_: events.append("publish")
     with (

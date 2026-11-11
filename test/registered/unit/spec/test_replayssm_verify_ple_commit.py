@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 
 import torch
 
+from sglang.srt.mem_cache.kv.alloc.id_space import IdSpace
 from sglang.srt.layers.attention.hybrid_linear_attn_backend import (
     commit_ple_state_after_mtp_verify,
 )
@@ -118,6 +119,11 @@ class TestReplaySSMVerifyCommitsPle(CustomTestCase):
             short_conv_pool=short_conv_pool,
             ngram_pool=ngram_pool,
             get_mamba_indices=lambda req_pool_indices: slots,
+            # merge-#6 B2 stub re-home: the commit path resolves state slot
+            # ids through the runner's id spaces (#48012); the scheduler
+            # keeps virtual ids, so the real seam for this fixture is the
+            # identity space state_id_space({}, ...) yields.
+            state_sub_pool="mamba",
         )
         attn_backend = MagicMock()
         # #46980: the commit path reaches the state part through the KV
@@ -129,6 +135,12 @@ class TestReplaySSMVerifyCommitsPle(CustomTestCase):
                 req_to_token_pool=req_pool,
                 attn_backend=attn_backend,
                 token_to_kv_pool=SimpleNamespace(layer_router=layer_router),
+                # #48012: virtual state ids stay virtual without a
+                # relocation table -- the identity IdSpace is prod's default
+                # for an allocator reporting no state spaces.
+                runner_ids=SimpleNamespace(
+                    state_ids=lambda sub_pool: IdSpace(key=(sub_pool, None))
+                ),
             )
         )
         batch = MagicMock()
