@@ -1,6 +1,9 @@
 # stack.txt -- sglang stack for Qwen3.8-Flash-Next on 4x RTX PRO 6000 Blackwell Max-Q
 #
-# STACK: qwennext-stack-321-2026-10-30+merge6-2026-11-10(MERGE #6 @ eb73a50b1d -- 950 commits, 110-file conflict census, 125 TODO(merge6) markers PLANTED, RE-PLANT ERA OPEN; entries 322-323) (main @ 2a6c204570, MERGE #5 TAKEN + ALL RE-PLANT BATCHES LANDED -- entries 310-315; post-merge port queue 316-318; MERGE-5 CARGO REPAIR 319 (** true rust pin 943P/0F/1-ignored **); TLFIX 320; ** 321 = FIRST POST-MERGE PROD BOOT RECORD (9d, ready 14:23:10) -- LLGUARD needle + armed PCIe-IPC + cold-autotune bargain + L3 survival all OBSERVED, forced-retune lever RETIRED **)
+# STACK: qwennext-stack-329-2026-11-10(MERGE #6 + re-plant era COMPLETE -- 125/125 markers; entries 322-329; LIVE TREE PARKED at 2d87757bb1 for prod; era branch NOT BOOTED -- operator gate) +merge6-2026-11-10(MERGE #6 @ eb73a50b1d -- 950 commits, 110-file conflict census, 125 TODO(merge6) markers PLANTED, RE-PLANT ERA OPEN; entries 322-323) (main @ 2a6c204570, MERGE #5 TAKEN + ALL RE-PLANT BATCHES LANDED -- entries 310-315; post-merge port queue 316-318; MERGE-5 CARGO REPAIR 319 (** true rust pin 943P/0F/1-ignored **); TLFIX 320; ** 321 = FIRST POST-MERGE PROD BOOT RECORD (9d, ready 14:23:10) -- LLGUARD needle + armed PCIe-IPC + cold-autotune bargain + L3 survival all OBSERVED, forced-retune lever RETIRED **)
+#   [11-10 ERA CLOSE: the leading epoch segment moved 321-2026-10-30 -> 329-2026-11-10; the
+#   superseded 321 name stays readable inside the +merge6 tag and the boot-record
+#   parenthetical, which carry the era-OPEN state this closeout supersedes.]
 #   ** MERGE-ERA-CLOSED 2026-10-29 (session 3 / B6): B1-B6 ALL CLOSED, B2/B3/B4/B5 marker
 census ZERO, damage driven to env-class + documented survivors; the branch is BOOT-READY
 pending OPERATOR execution of the BOOT_DELTA first-boot choreography (see CAVEATS top
@@ -66,7 +69,11 @@ current-state bullet + entry 315). **
 #    stack-owned, no upstream PR, see entry 320)
 #   +first-boot-record-2026-10-30(BOOT: 9d first post-merge prod boot --
 #    no code, observation + verdicts, see entry 321)
-#   (entries 1-323; *=squash/ported, see commit messages. 10-10 added
+#   +merge6-era-closeout-2026-11-10(ERA CLOSE docs wave: imports+bootfix trunk (324);
+#    B1-B6 re-plant table 125/125 + ERA CATCHES (325); battery re-pin + path-to-
+#    bootable (326); wheels & venv record (327); INCIDENT record + NEW ERA LAW (328);
+#    backfill audit universe 2714 (329) -- no code, see entries 324-329)
+#   (entries 1-329; *=squash/ported, see commit messages. 10-10 added
 #   entries 157-161: parser batch A (Qwen3-Coder tool-call fixes + sampling
 #   upper bounds), on top of upstream merge #3 (see synced). 10-10b added
 #   entries 162-166: SM120 batch B (#42863 PCIe-IPC vocab gathers, #42566
@@ -304,33 +311,46 @@ current-state bullet + entry 315). **
 #   make --enable-mixed-chunk safe and fix the QSA verify ring collision.
 #   * = picked with local modifications, see the entries)
 # branch : qwennext-stack
-# tip    : dea2641dc2   (MERGE-6 CASCADE FOLLOW-UP: import retargets, qwen3_moe import
-#          tidy, and the flashinfer wheel/floor pairing REVERTED to the fork's 0.7.2
-#          (entry-228 pairing rule -- the installed wheel is 0.7.2; tension recorded
-#          in entry 322). Sits above the MERGE #6 commit cff688b39e (main @ eb73a50b1d,
-#          +950 commits since 2a6c204570; its own message is the merge ledger), landed
-#          into qwennext-stack by --ff-only 2026-11-10 -- branch merge6-2026-11-10 was
-#          BORN at the stack tip 2d87757bb1 (merge-base verified; stack unchanged).
-#          Superseded values in this line's history: e9f0ae1838 (TLFIX, entry 320 --
-#          qsa/mqa.py pass-config key, absorbed as ancestor), 065fdcdf33 (repair),
-#          b7c656f69f (pass-4), 5cde7a5ede (merge era) -- read the synced block for
-#          merge history.)
-#          commit in the merge era VERIFIED by an actual cargo build -- check/clippy/
-#          fmt/test + the operator's release cdylib command all green; sits above the
-#          pass-4 code tip b7c656f69f, whose stack.txt docs commits sit above it too.
-#          Supersedes the header tip line b7c656f69f and, before it, the merge-era
-#          5cde7a5ede -- read the synced block for merge history and this line for the
-#          live code tip.)
-# HEAD   : ** CODE MOVED AT HEAD -- dea2641dc2 (MERGE #6 + cascade, --ff-only
-#          2026-11-10) ** -- the follow-up turn on this state is DOCS-ONLY: it
-#          records the 2026-11-10 sweep review (entry 322), the MERGE #6 land
-#          (entry 323), the header/tip/synced re-pins, the #44590 PROOF-PASS
-#          retirement and the 11-10 watch-list refresh. Entry count 323; stack
-#          name carries the +merge6-2026-11-10 epoch tag. Superseded HEAD note:
-#          "CODE UNCHANGED AT 065fdcdf33" (the entry-320/321 docs turns, whose
-#          measurements -- 2535P/23F/0err mem_cache pin and the DEVICE-class
-#          survivor census -- stay in the entries and are the BASELINE the
-#          entry-323 post-merge measurements diff against).
+# tip    : b86b7c9230   (MERGE-6 ERA CODE TIP -- B6 C4 "budget contract RESTORED via
+#          UNION-RE-ANCHOR": the LAST code commit of the re-plant era, 125/125
+#          TODO(merge6) markers consumed (grep census ZERO at this tree). Sits on the
+#          full wave chain, era order: B1 1d5e062698 -> IMPORTS 1dcc2d6848 -> B3
+#          ad0b50f71a..a7a8d7c19c (5 commits) -> B4 90c173bde3..ec927cad0b (4) -> B5
+#          3ac9f421c7..b069e6a5ef (3) -> BOOTFIX 10a1c08975 -> B2 7ccf76a38e (WIP
+#          freeze, author 16:55) + b29a45b0c7..1fc11b299c (C1..C8) -> B6 f922068330..
+#          C4. Above MERGE #6 cff688b39e (main @ eb73a50b1d, +950 commits since
+#          2a6c204570; its own message is the merge ledger) + cascade dea2641dc2,
+#          landed into qwennext-stack --ff-only 2026-11-10; the re-plant waves and this
+#          docs wave integrate by BRANCH REF-MOVE only (era law, entry 328) -- the
+#          live tree never saw a commit. Superseded values in this line's history:
+#          dea2641dc2 (MERGE-6 cascade, the entries-322/323 turn -- era-OPEN tip,
+#          absorbed as ancestor), e9f0ae1838 (TLFIX, entry 320 -- qsa/mqa.py
+#          pass-config key, absorbed as ancestor), 065fdcdf33 (repair), b7c656f69f
+#          (pass-4), 5cde7a5ede (merge era) -- read the synced block for merge history.)
+#          The DOCS TIP is this wave itself -- the stack.txt era-closeout commit (this
+#          text) + the CALIBER copy commit on top; after integration both ride at the
+#          end of the chain above and `git rev-parse qwennext-stack` reads the final one.
+#          Cargo note carried from the cascade tip: the commit in the merge era VERIFIED
+#          by an actual cargo build -- check/clippy/fmt/test + the operator's release
+#          cdylib command all green; the rust pin at the ERA tip re-read 966P/0F/1-
+#          ignored (entry 326).
+# HEAD   : ** DOCS MOVED AT HEAD -- MERGE-6 ERA CLOSEOUT wave (entries 324-329 +
+#          header/tip/live-state re-pins + EVALUATED backfill block + era watch
+#          lines) on code tip b86b7c9230 ** -- docs-only: NO .py touched. Entry count
+#          329; the stack name carries the qwennext-stack-329-2026-11-10 epoch.
+#          Superseded HEAD notes: "CODE MOVED AT HEAD -- dea2641dc2" (the
+#          entries-322/323 turn, whose sweep/merge records STAND as the era's
+#          damage BASELINE) and "CODE UNCHANGED AT 065fdcdf33" (the entry-320/321
+#          docs turns; the 2535P/23F/0err mem_cache pin and the DEVICE-class survivor
+#          census therein are the pre-merge6 baselines entry 326 supersedes).
+# ** LIVE/BOOT STATE **: the MAIN CHECKOUT /home/my/sglang/sglang sits DETACHED at
+#          2d87757bb1 -- the ONLY boot-validated state (9b booted from it 16:58:52,
+#          warm, ALL needles hit -- /tmp/opencode/prod-health-2026-11-10.txt; 9d never
+#          dropped since Nov 3). The ERA BRANCH (qwennext-stack @ b86b7c9230 + this
+#          docs wave) is CPU-GREEN but NOT BOOTED. Switching prod to the era =
+#          `git checkout qwennext-stack` at an OPERATOR-CHOSEN window; the FIRST boot
+#          pays the era boot-watch (entry 326). LIVE TREE LAW: the working tree is
+#          the prod import path -- integration by branch ref-move ONLY (entry 328).
 # base   : upstream sgl-project/sglang main @ 7ad55e4386 ([HiCache] TMA-staged
 #          host<->device KV transfer kernel (sm_90+) (#40278), 2026-09-21)
 # synced : upstream main @ f209e67767 (#39643, 2026-09-28) MERGED IN as
@@ -509,6 +529,42 @@ current-state bullet + entry 315). **
 #          pin 966P/0F/1-ignored ** (+23 upstream growth, check exit 0) --
 #          the rust/ workspace now EXCLUDES sglang-radix-tree: RUN CARGO
 #          INSIDE THE CRATE DIR.
+# updated: 2026-11-10 (entries 324-329): ** THE MERGE #6 RE-PLANT ERA IS CLOSED --
+#          125/125 MARKERS, CPU-GREEN AT b86b7c9230, AND THE ERA'S MOST VALUABLE BUG
+#          FIND CAME FROM THE OPERATOR'S OWN RESTART ** THE IMPORTS+BOOTFIX TRUNK
+#          (entry 324): the #48781 gather-trio relocation invisible to any marker
+#          (base_runner "superset imports" resolution kept a dead import block --
+#          deletion-only fix unmasking a 145E/32E/31E collection cascade), then the
+#          OPERATOR-LIVE CRASH: maybe_init_router_registration read tokenizer_ipc_name
+#          before init_ipc_channels because our fork's entry-201 init order predates
+#          upstream's placement -- call moved back, RED/GREEN test, family scan clean.
+#          SIX RE-PLANT WAVES (entry 325): B1 12/12 diffusion seams, B3 18/18
+#          mem_cache/controllers (the #48421 clamp re-planted; trailing_endpoint 17P
+#          back), B4 39/39 scheduler, B5 17/17 moe/quant/qwen4, B2 23/23 test re-home
+#          (via an EMERGENCY FREEZE kept in-range -- entry 328), B6 16/16 environ/
+#          wheels/field-order. ERA CATCHES, full credit in entry 325: the
+#          _rope_cache_key 10/11-arg UNIVERSAL get_rope death (15 spec F were its
+#          fingerprints), the PLE file-backend env-registration gap (AttributeError
+#          EVERY boot), the COW-catcher doubled-staging-arm cascade bug, the
+#          stat_loggers DI test restored from its corrupted merge hybrid, the w13
+#          refined-grid mis-key, the BUDGET-CONTRACT DECISION (fork accounting
+#          RESTORED on the 106.9GB/100GB evidence -- the entry-317 leak shape;
+#          INDEXER collective order verified), the verify-gate SUBSUME pick (#44047
+#          eats #42779, policy-recorded), the mm_process_config ambient-widths root-
+#          cause, and the TLFIX twin re-pinned 282/285. FINAL BATTERY TRUTH (entry
+#          326): managers 1307P/0F, spec 406P/0F, server_args 496P/0F, sampling
+#          252P/0F, distributed 213P/0F, mem_cache 2965P/24F (24 = the ACCEPTED
+#          device-only residual, nodes listed there), cargo 966P/0F/1-ignored, all
+#          five registration/wheel gates rc=0. WHEELS TREE-FIXED TO VENV TRUTH (entry
+#          327): FI 0.7.2 HELD (0.7.3 stays a WHEEL-FIRST-THEN-PIN contract; the
+#          sampling.cuh tension rides to the first boot), sgl-deep-gemm 0.2.3.post2,
+#          sgl-flash-mla 1.0.0, blake3 1.0.11 INSTALLED (zero-drift proof there),
+#          check_dockerfile_wheel_pins RE-GREENED. NOTHING PUSHED; LIVE TREE UNTOUCHED
+#          THROUGHOUT -- the ref-move integration law is the incident's own lesson
+#          (entry 328: prod booted back at 2d87757bb1, 16:58:52, all needles hit; 9d
+#          never dropped). ERAS BEFORE THIS ONE EARNED THEIR BUGS FROM BATTERIES; THIS
+#          ONE EARNED ITS FLAGSHIP FROM A REAL RESTART -- and the era branch still
+#          waits UNBOOTED for the operator gate.
 # updated: 2026-11-10 (entries 322-323): ** THE 11-10 SWEEP + MERGE #6 TAKEN
 #          -- 950 COMMITS ABSORBED, 125 MARKERS PLANTED, RE-PLANT ERA OPEN **
 #          SWEEP: merged-window enumeration >= 10-27 (** 1201 **; split @
@@ -536,6 +592,13 @@ current-state bullet + entry 315). **
 #          (the PREDICTED RED, entries 209/218) + ** blake3 ABSENT from the
 #          venv ** (~380 battery error lines, the #47120 hard-dep class).
 #          NOTHING PUSHED.
+#          [11-10 ERA-CLOSE CORRECTION: the two operational facts in the line above are
+#          SUPERSEDED -- the blake3 wheel LANDED (1.0.11, class dead at 0 battery lines,
+#          entry 327) and the trailing_endpoint + field-order classes CLOSED with the
+#          re-plant waves (entries 325/326). The BOOT BAN is now purely the OPERATOR
+#          GATE on the CPU-green, still-UNBOOTED era branch; and the live tree has NOT
+#          moved past 2d87757bb1 since the 16:5x incident (entry 328) -- the era's whole
+#          landing story under the running servers is the NEW ERA LAW's origin.]
 # updated: 2026-10-30 (entry 321): ** FIRST POST-MERGE PROD BOOT RECORDED --
 #          NO CODE, ALL OBSERVATION, AND FOUR ERA BETTS TURN OUT TO HAVE
 #          LANDED ** (9d = the NVFP4 arm, launched 14:19:41, ** SERVER READY
@@ -11025,6 +11088,9 @@ STACK, IN BUILD ORDER (bottom first)
       #   operator owed: sgl-deep-gemm tree ==0.2.7 vs venv 0.2.3.post2;
       #   sgl-flash-mla tree ==1.0.4 vs venv 1.0.0. (sglang-kernel 0.4.10/
       #   0.4.10 and flashinfer 0.7.2/0.7.2 post-revert are CONSISTENT.)
+      #   [11-10 ERA-CLOSE: RESOLVED tree-side to VENV TRUTH at f922068330 with
+      #    reachability evidence -- entry 327; blake3 SINCE INSTALLED (1.0.11),
+      #    the ~380-line error class reads ZERO in the era's final batteries.]
       # ==========================================================================
       # DUAL-IMPLEMENTATION PATTERN -- THE MERGE-#7 SHAPE, RECORD IT NOW: the
       #   window LANDED UPSTREAM NATIVELY several things the fork hand-carries:
@@ -11050,6 +11116,594 @@ STACK, IN BUILD ORDER (bottom first)
       #   at this tip until the B-waves close the blake3 (env-side: S-BLAKE3),
       #   trailing_endpoint and field-order classes AND THE OPERATOR RE-GATES
       #   (boot gate stays operator-judged per era rule)**; NOTHING PUSHED.
+      # [11-10 ERA-CLOSE CORRECTION: ALL THREE named classes CLOSED -- blake3
+      #   LANDED (entry 327), trailing_endpoint gate 17P and field-order 6F->0F
+      #   (entries 325/326); 125/125 TODO(merge6) markers consumed, grep census
+      #   ZERO at b86b7c9230. Zone math re-verified against the wave ledgers:
+      #   planted b1 12 / b2 23 / b3 18 / b4 39 / b5 17 / b6 16 == consumed, and
+      #   the "121 at the merge commit vs 125 recount" line above stands as the
+      #   correct reading (the cascade added 4 to b6: FI pairing + pyproject +
+      #   the two WHEEL-CHECK operator markers). The BAN's remaining force is
+      #   the OPERATOR GATE only -- and the field mooted the rest: prod never
+      #   booted this era; the 16:5x incident ROLLED the live tree BACK to
+      #   2d87757bb1 (entry 328).]
+
+        324. 1dcc2d6848 + 10a1c08975  IMPORTS + BOOTFIX trunk wave -- the silent-auto-merge
+      # debris that lived BELOW the markers, and the operator's live restart crash
+      # ==========================================================================
+      # IMPORTS (1dcc2d6848): upstream 6b13469f91 (#48781, the utils/common.py topic-
+      #   module split) relocated require_attn_tp_gather / require_gathered_buffer /
+      #   require_mlp_tp_gather to layers/dp_attention.py (defs at :1398 at
+      #   eb73a50b1d). Merge-#6's base_runner.py region 66 resolved "ours" (dossier
+      #   note "superset imports" -- gen_decisions.py:89) and the fork body DID
+      #   genuinely superset upstream, but the kept utils import block carried the
+      #   trio at its now-dead home. NO MARKER SAT ON THE SITE -- the re-plant queue
+      #   was blind to it by construction. Fix = deletion of the stale trio, ONE
+      #   FILE, base_runner (the dp_attention block at :32-39 already imports all
+      #   three from the definition module; every other importer -- cpu_graph_runner,
+      #   decode/prefill runners, 4 speculative runners, dp_attn.py -- already sat on
+      #   the canonical source). WHAT IT UNMASKED (the class counts it hid, at HEAD
+      #   5e3cd1493e): managers 145 errors (84 collection + ~97 setup-cascade via
+      #   managers.scheduler), mem_cache 32 ImportError, spec 31 ImportError -- one
+      #   upstream-symbol class, ALL rooted here. Probes: 8/9 target modules
+      #   ImportError at 1d5e062698 -> 9/9 OK (imports-wave-probes.log);
+      #   check_indirect_imports violation set byte-identical pristine-vs-tree (the
+      #   pre-existing ForwardMode class, other waves' scope); all other
+      #   scripts/lint/check_* rc=0.
+      # BOOTFIX (10a1c08975, chained above B5 C3 b069e6a5ef -- the era tip WHEN IT
+      #   MATTERS: the operator's real restart DIED HERE):
+      #   tokenizer_manager.py:623 __init__ -> :667 init_preprocess_executor -> :958
+      #   maybe_init_router_registration -> AttributeError: 'TokenizerManager' object
+      #   has no attribute 'tokenizer_ipc_name'. ROOT CAUSE: upstream 4e5057aef9
+      #   (#48119) folded the registration in as the LAST statement of __init__
+      #   (after init_ipc_channels assigns tokenizer_ipc_name/send_to_scheduler and
+      #   after the cuda_vmm transport construction); OUR FORK runs
+      #   init_preprocess_executor BEFORE init_ipc_channels -- the entry-201 lineage
+      #   (#39716 tokenizer-clone parallel preprocessing) -- and the B4 merge
+      #   resolution wired the upstream call inside that earlier step, so it read
+      #   attributes not yet assigned. Single-worker servers crashed TOO: the read is
+      #   unconditional inside the method's guard. FIX: move the call back to
+      #   upstream's exact position (__init__'s final step). No guard, no hasattr --
+      #   the method's IPC-dispatch semantics REQUIRE the channels; only the ORDER
+      #   was wrong. 2-line move + comment.
+      #   RED/GREEN: test_tokenizer_manager_init_order.py drives the REAL __init__
+      #   sequence (only model/tokenizer loading, the SHM snapshot reader and
+      #   sock_send stubbed), parameterized router OFF (=1 worker: construction
+      #   completes, nothing dispatched) / ON (=2: exactly one
+      #   TokenizerWorkerRegistrationReq carrying the worker's IPC name, dispatched
+      #   AFTER the attrs exist). RED at b069e6a5ef = 2F, the verbatim AttributeError
+      #   (/tmp/opencode/m6bootfix-red.log); GREEN = 2P (m6bootfix-green.log).
+      #   FAMILY SCAN (window methods 2a6c204570..eb73a50b1d across
+      #   tokenizer_manager/detokenizer_manager, MRO-precise assignment check): NO
+      #   second init-order hazard, no other never-assigned attribute; the detokenizer
+      #   init chain verified. REPORT-ONLY CARRY: get_tokenizer_worker_class /
+      #   entrypoints wiring untouched -- uncertain-adjacent, outside the managers
+      #   init zone (rides as an era WATCH line; entry 328's narrative needs it).
+      #   Gate at bootfix: managers battery 1301P/2F/11S -- the 2F the PRE-EXISTING
+      #   test_mm_process_config pair (B2 C8 root-causes it, entry 325).
+      # THIS ENTRY IS THE ERA'S LESSON IN MINIATURE: markers caught the conflicted
+      #   files; these two bugs lived OUTSIDE the conflict set -- one in an
+      #   auto-merged import block, one in the fork-vs-upstream ORDER of statements
+      #   no diff ever flagged. What found them: a collection-cascade archaeology
+      #   pass and a real restart, respectively.
+
+        325. b1..b6 (25 commits + 1 freeze)  RE-PLANT ERA TABLE -- 125/125 TODO(merge6)
+      # markers consumed, zone-by-zone; the era's B2-B6 analogue of entries 311-315
+      # ==========================================================================
+      # WAVE LEDGERS (the commit bodies are the per-file detail; every wave ran
+      # CVD=9 batteries + ruff repo ruleset + format + the registration trio before
+      # committing; dossier /tmp/opencode/merge6-dossier/ = 317 replant artifacts +
+      # MANIFEST.tsv):
+      #   B1 1d5e062698   12/12  -- 4 re-plants + 8 EVIDENCE-BASED seam closings,
+      #     zero survivors. Denoising.py site-generation folded BYTE-IDENTICAL (all
+      #     28 mount_* names resolve NOWHERE in the merged tree -- the fork kept a
+      #     superseded function generation; the _mounted_quality memoization for the
+      #     BCG runner key preserved); DisaggServer.is_alive re-planted (dangling
+      #     consumer http_server._backend_failure:218 -- a LATENT FORK BUG
+      #     pre-merge too); minimax_h3 default folded to upstream's "max" constant;
+      #     scheduler_mixin dead entrypoints.utils import removed (cascade class).
+      #     REPORTED NOT RESURRECTED (orchestrator call): stages/denoising.py:157
+      #     imports post_training.rollout_denoising_mixin, deleted by upstream
+      #     #44603 = an ANCESTOR OF THE MERGE-#5 BASE -- the fork's stage was already
+      #     unimportable at the fork tip. NOT merge-#6 damage.
+      #   B3 (5 commits)  18/18  -- ad0b50f71a re-plants THE CLAMP onto #48421's
+      #     structure after an ORACLE run proved PARTIAL subsumption (its inline mask
+      #     builder + per-pool verdicts adopted; its collapse-to-deepest RETURN
+      #     REJECTED -- the entry-209 prod fix needs folded count PLUS agreed
+      #     endpoint SET or the forfeited-prefix symptom returns): trailing_endpoint
+      #     boot gate 10F/7P -> **17P**. a7a8d7c19c adopts #48421's _host_pool_schema
+      #     for the verdict slots (PP stages reduce what they register) while KEEPING
+      #     the fork layout: pp ticket suite 17F -> 1F (survivor = b2's named-window
+      #     harness). 678a778023 closes the 68F write-back cascade at DEF SITES (the
+      #     new upstream fixture mirrored the pre-#44800 no-kwarg surface; the
+      #     record_submission wrapper FORWARDS the wait flag -- swallowing it would
+      #     understate the fence; _FencedController gains load_fence_stream, which
+      #     also silences the 16-test Rust TreeCore panic class), adopts
+      #     #48008/#48012's per-page signal for the set_hicache_transfer_done_event
+      #     marker, accepts #46934's DELIBERATE deletion of the buffer-mode threshold
+      #     floor, re-plants entry-293's cadence gate + expired-no-retry arm; URC
+      #     _deferred_ready_sync_group gets the published-config guard (CPU fixtures
+      #     reached unguarded get_memory()). 170dfb042b re-plants the last 12: the
+      #     sharded-decode rotation_bases arm (take_decode -- merged alloc_decode
+      #     still asserts one base per request), #46643 fix(1) continuing-chunk cap
+      #     (STILL OPEN upstream, never landed), the donation-skip recorder at all
+      #     THREE pinned-pool arms, the --hicache-mamba-size-gb knob in the SIMPLE
+      #     mamba stack builder (it had survived ONLY in the SWA-group builder -- a
+      #     plain KV+Mamba boot silently ignored the knob) + the entry-219 coverage
+      #     boot line restored in BOTH builders (defined-but-never-called orphan),
+      #     the pool_host tuple-snapshot adaptation; 5 test-side signature chases
+      #     green. ee85e24e1b: device_uses_host_page_tables -> device_reads_pageable_-
+      #     memory, the mem_cache battery's SOLE collection error (cross-zone
+      #     signature seam; b5's region with its own live marker untouched).
+      #   B4 (4 commits)  39/39  -- 90c173bde3: overlap seam ADOPTED onto #47716 with
+      #     the entry-220 publish-before-prepare predicate re-planted as its first
+      #     arm; capacity pair de-double-widened (the configurator's allocator.size is
+      #     LOGICAL; test_dcp_logical_capacity the tripwire) keeping upstream's
+      #     in-window from_cp_sharded arm; COW catcher re-planted over the cascade's
+      #     BROKEN UNION (see catch #3); retract floor (#46496) re-planted; 6 test-
+      #     harness re-adaptations, pins preserved. dfeab53c46: the #46977 PRICING
+      #     reconciliation -- grammar_needs_sync folded INTO upstream's in-window
+      #     is_none gate; the #43484/entry-266 CLASSIC ledger re-planted onto the
+      #     renamed helpers (state_slots_charge threaded at 5 call sites + _commit_-
+      #     prefill_admission; the 266(c) isinstance discipline untouched); entry-270
+      #     select-time _mamba_fork_split_len gate + the truncation_align kwarg chain
+      #     (b3's TypeError handoff consumed); entry-269/177 floor->page->cache LCM
+      #     composition re-planted; _state_slot_reserve_for_req rename ADOPTED.
+      #     98P/0F/118sub. a7ad684c22: brp #46272 id-set re-planted at the two O(B)
+      #     scan sites take-upstream reverted (the #49253 deferred kv_ops shape kept);
+      #     the entry-265 interlock CLOSED as ADOPTED (upstream #48328 deleted BOTH
+      #     sides -- hazard and guard together); detokenizer's sent_offset
+      #     anti-retreat clamp re-planted at its #47338 new home (6F -> 7P/3sub);
+      #     io_struct ADOPTS #44047's env gate (the dossier's "entry-265 brp field"
+      #     label PROVEN a misattribution by fork-delta audit); tokenizer_manager
+      #      dedupe resolved as the UNION (upstream return_logprob gate + the fork's
+      #     shared validate_top_logprobs_num delegation); the sampling_params.verify
+      #     DOUBLE-GATE tension identified as pre-existing cascade damage and HANDED
+      #     TO B6 -- catch #7's origin. 158P + 128sub. ec927cad0b: FP4 draft pricing
+      #     (#43356, verified absent upstream) re-planted folded onto the DCP-aware
+      #     else (byte-equivalent here); the entry-61 class BOOT-INTEGRITY re-plant:
+      #     _init_model_hooks()'s CALL was dropped by the merge while its def + the
+      #     _replay_prepare_hook consumer survived -- every real DecodeCudaGraphRunner
+      #     would have AttributeError'd on replay; eager_runner CP arms ADOPTED
+      #     (byte-equivalent, in-window ancestor); lossless-verify tuple +
+      #     empty_cache hunk VERIFIED (check-gate markers -> verification notes).
+      #     223P/0F/193sub. ZONE B4 CENSUS ZERO.
+      #   B5 (3 commits)  17/17  -- CATCHES #1, #2, #5 live here; see the catch list.
+      #     C1 3ac9f421c7 rotary-factory repair; C2 d794bb61af the qwen4 PLE varlen
+      #     RESIDUAL family (the merged fused arm SILENTLY DROPPED THE RESIDUAL --
+      #     wrong-output class -- fork kernel family re-planted VERBATIM keeping
+      #     upstream's int64 token tweak; SPLIT_PREFILL RETIRED not re-planted:
+      #     #43898 deleted the enum + all producers in-window, the fork reads were
+      #     dead-on-arrival AttributeError at first batch build; host-staging prefetch
+      #     guards re-planted -- lookup_ids None-guard, record_stream under
+      #     not _is_capturing(), the gather_staged arm; b3's rename handoff consumed
+      #     as #48689's ADOPTION, fail-loud raises STAND) + CATCH #2 (the
+      #      SGLANG_QWEN4_PLE_FILE_SKIP_DEVICE_CHECK environ.py registration LOST in
+      #     the merge with NO marker covering it -- the PLE file backend died
+      #     AttributeError EVERY boot) + the ngram/ple_staging/replayssm stub gaps
+      #     LABELED for the b2 brief (test re-homes, not b5 code). Spec dir after
+      #     C1+C2: 405P/5F/27S/258sub (was 396P/20F at b4 HEAD -- C1 killed the 15-F
+      #     rope class). C3 b069e6a5ef: nvfp4 defer-arms UNION (the merged
+      #     skip_swizzled_blockscales kept upstream's correct marlin/lora_marlin/auto
+      #     terms but LOST the entry-247 b12x route + the entry-296 serialized-CUTLASS
+      #     deferral; oracle test_nvfp4_deferred_scales 5P/2F-subtests -> 7P -- THE
+      #     RED PROOF IS REAL: it asserts swizzle_blockscale NOT called); CATCH #6 the
+      #     w13 REFINED-GRID MIS-KEY (upstream's allow_fp8_blockwise_tail re-keyed the
+      #     w13 scale grid on (block_n, block_k) where the FORK assignment pairs w13's
+      #     refined N with W2's refined K -- shape mismatch at LOAD on any
+      #     TP-refined block-FP8 MoE ckpt; fork formula byte-restored, upstream's
+      #     tail arm kept); fused_moe DUAL resolved VERIFIED-PRESENT (#42654 landed
+      #     its own deferred finalize; entry-301's gone-call-site rule holds);
+      #     hc_mix/quant_utils/qsa-backend markers consumed verified-present; the
+      #     BOOT-INTEGRITY SWEEP re-checked entry-178 trtllm fail-loud, entry-230
+      #     warn-once + published-auto guards, pair_w2_weight fold -- ALL ALIVE.
+      #   B2 (8 commits)  23/23  -- C1 b29a45b0c7 COMPLETES the emergency-frozen WIP
+      #     7ccf76a38e (author 16:55:02, mid-incident; entry 328): io_struct marker
+      #     VERIFIED-CONSUMED (dropped import was DEAD -- cuda_ipc module gone
+      #     upstream), prefill_adder's 4 hybrid-mamba full-KV-page cases re-planted
+      #     (171P/2S/167sub). C2 84bfb8a761: ple_offload est_time re-pin 45->60 (the
+      #     fork's +4 cases are what 45s couldn't carry); the short_conv DUAL-IMPL
+      #     fold (direct-decode x5 + varlen-output-fusion x3 + 4 twins; the fork's
+      #     SPLIT_PREFILL dispatch case EXCLUDED -- b5 C2 retired the enum);
+      #     fp8_fallback VERBATIM incl. the entry-313 DeepGEMM fail-loud pin. C3
+      #     b66804c9aa: mem_pool_ep b12x global-ids arm re-homed (entry-247
+      #     contract); shared_experts_fusion_gates re-homed VERBATIM; CATCH #4 -- the
+      #     stat_loggers DI test RESTORED from its CORRUPTED MERGE HYBRID (upstream-
+      #     reword scaffolding for fields _log_hicache_stats NEVER READS pasted over
+      #     the fork's entries+sidecar_pool_names DI; baseline F -> green). C4
+      #     fb615aa966: buffer_mode_sidecar reduce-binding DI folded ONE place (b3's
+      #     named-window seam CLEARED); prefill_memory_budget tri-chain pin re-homed
+      #     onto live API (retired fence/window rules named); _DsaStrategy import
+      #     consumed (deleted into _KvStrategy); hicache_file_lru's upstream fold NOT
+      #     adopted WITH REASON (pins the #48421 collapsed-mask layout the fork
+      #     collective diverged from on purpose); mamba_donated re-home on the
+      #     skip-recorder idiom; b3's lazy_in_place x2 CLEARED onto the current
+      #     mask-taking API; the explicit_budget x5 RESIDUAL ESCALATED, not weakened
+      #     -- "the contract call is the orchestrator's" -> catch #6's sibling,
+      #     resolved by B6 C4. C5 6f6905fc75: fast_file DUAL fold VERBATIM re-home;
+      #     the fork's storage_root_precedence NOT re-homed -- its config key is GONE
+      #     from the merged resolver and upstream's own test pins the live precedence.
+      #     C6 c656419d9a: theirs-dropped folds (ForwardMode retarget ADOPTED;
+      #     mamba_cache_kl's upstream FullPool class VERIFIED BYTE-IDENTICAL to the
+      #     fork's skip-gated InplaceKL -- adopted-in-kind; npu_mla one-liner contained
+      #     in the fork's richer test; autotune_sync fold adopted RE-PINNED to the
+      #     fork-retained load-decision digest, b3's gloo-teardown x2 CLEARED);
+      #     CATCH #9 the TLFIX entry-320 twin re-pinned 282/285 -- the per-kernel
+      #     pass key SURVIVED the window unmoved. Zone battery 122P/290S/0F, CENSUS
+      #     23/23. C7 3f44580d98: b5's hand-off kills -- ngram mock-target re-pointed
+      #     to layers.dp_attention, replayssm identity-IdSpace stub onto the #48012
+      #     commit path, ple_staging stub completed with the LIVE replay protocol
+      #     ("NO ERA CATCH: every re-pointed attribute VERIFIED PRESENT in production
+      #     -- the stubs lagged, the code didn't"). C8 1fc11b299c: CATCH #8 the
+      #     mm_process_config root-cause -- the bootfix-era managers 2F were ORDER-
+      #     DEPENDENT: the runtime_context parallel validator READ AMBIENT WIDTHS
+      #     whatever the previous module left installed because both topology
+      #     overrides stated only RANK DELTAS; each override now states the COMPLETE
+      #     self-consistent 8-way layout (7 rank/width pairs + both factorizations +
+      #     the dp/cp/tp layout equation), pins unchanged, no reordering.
+      #   B6 (4 commits)  16/16  -- C1 f922068330 the wheel pairing matrix + tree-side
+      #     reverts (entry 327) + the help/args/doc re-plants (b12x FP8-GEMM choice
+      #     clause, fast_file descriptor + mdx row; the PLE-staging help + mdx row
+      #     OBSOLETE-CONSUMED -- upstream rewrote the mechanism to direct pageable
+      #     reads; hicache_best_practices DUAL SUPERSEDED-CONSUMED; the Gemma4
+      #     model_hook flashinfer acceptance RE-HOMED into
+      #     gemma4_attention_backends() "so no stale list can rot"). C2 5f2400159e:
+      #     server_args field-order 6F -> 0F -- merge-#5's B6 class ROOT-CAUSED
+      #     IDENTICALLY (three fork fields promoted into the MIDDLE of
+      #     POSITIONAL_FIELD_ORDER displaced upstream's tail +3); fix is the FIELD
+      #     ORDERING not the tests (module header rule says append -> three names to
+      #     marked TAIL slots; 562 fields unmoved, slots 95/96/97 byte-verified);
+      #     zone=b6 marker census ZERO on test files. C3 1eae1bd4ae: CATCH #7 the
+      #     verify-gate collision resolved by SUBSUMPTION (policy record; see the
+      #     catch list). C4 b86b7c9230: CATCH #6 the budget-contract decision (see
+      #     the catch list). sampling dir battery 1F -> 0F closes C3; the named budget
+      #     cluster 108P/0F/89sub closes C4.
+      # ==========================================================================
+      # ERA CATCHES -- FULL CREDIT, in the order the waves met them:
+      #  1. ROTARY FACTORY UNIVERSAL CRASH (3ac9f421c7): the take-upstream restored
+      #     the dual_chunk_attention_config PARAM and kept the canonicalization block
+      #     but the CACHE-KEY CALL at :375 kept upstream's arg-less shape -- 10
+      #     positional args against the 11-param _rope_cache_key -> EVERY get_rope()
+      #     raised TypeError (missing 'for_cpu'). BOOT-INTEGRITY: any model building
+      #     RoPE crashed at construction. THE FINGERPRINTS: 15 spec F (dflash
+      #     model-config 7F + dflash-mla 2F/6sub surfacing THROUGH the constructor
+      #     chain -- the era's best example of a battery shape hiding a DoA root).
+      #     Fixed by passing the arg in its slot; entry-248's dedup semantics hold
+      #     (47P key tests).
+      #  2. PLE FILE-BACKEND ENV REGISTRATION GAP (d794bb61af): #48689's
+      #     check_file_backend_supported reads SGLANG_QWEN4_PLE_FILE_SKIP_DEVICE_CHECK
+      #     but the merge lost the environ.py registration and no zone marker covered
+      #     it -- the file backend died AttributeError ON EVERY BOOT. Restored next to
+      #     its siblings. (This is why "the boot is the test" is era dogma.)
+      #  3. COW-CATCHER DOUBLED-STAGING-ARM CASCADE BUG (90c173bde3): merge6's take-
+      #     upstream FLATTENED the entry-198 try/except and left a DOUBLED staging
+      #     arm with add_one_req NESTED inside the hicache guard -- non-hicache
+      #     deployments would have LOST the res= assignment and prepare_staged_-
+      #     prefetch would DOUBLE-CALL. Silent-on-CPU, lethal-in-prod class; found by
+      #     dossier-diffing, fixed over the union.
+      #  4. STAT_LOGGERS DI TEST RESTORED (b66804c9aa): the merge produced a
+      #     CORRUPTED HYBRID -- upstream reword-scaffolding pasted over the fork's
+      #     entries+sidecar_pool_names DI body -- baseline-F from birth, resurrected
+      #     by diffing both parents, not by weakening the assertion.
+      #  5. W13 REFINED-GRID MIS-KEY (b069e6a5ef): upstream's tail restructure paired
+      #     the fork's refined sizes wrong ((block_n, block_k) where the fork's
+      #     w13 grid needs w13-refined-N x w2-refined-K); loader shape mismatch at
+      #     any TP-refined block-FP8 MoE ckpt load. Fork formula byte-restored.
+      #     (The e2e proof is CUDA-registered -- honest-skip on the CPU seat, noted.)
+      #  6. BUDGET-CONTRACT DECISION (b86b7c9230, closing B2's escalation): the 5
+      #     explicit_budget F's are OUR CONTRACT, NOT DAMAGE -- upstream #47714's
+      #     "DSA indexers sit on top" premise is FALSE in this architecture: the
+      #      KEY_ROWS-only deduction leaves the paged DSA sidecar host bytes accounted
+      #     NOWHERE, and the test lands 106.9 GB against the 100 GB --hicache-size
+      #     ceiling -- BYTE-FOR-BYTE the entry-317 leak shape the fork budget was
+      #     ported to close (219/317 make staying inside the ceiling the whole point).
+      #     RESOLVED BY UNION-RE-ANCHOR: the fork's #44462-era reservation re-planted
+      #     as its OWN multiplicative step; the #47714 KEY_ROWS block untouched;
+      #     disjoint by key_layout so no sidecar is charged twice (entry-317 no-double-
+      #     count proof restated). CROSS-CHECK while in there: the collective/digest
+      #     ORDER KV->IDX->Mamba VERIFIED INTACT (_build_pool_entries emits the KV
+      #     anchor then sidecars in declaration order; mamba appends last). B3's
+      #     region@1377 comment corrected in place (it over-claimed the #47714
+      #     helper's generality). Assembler 5/5 subtests back; named run 108P/0F/89sub.
+      #  7. VERIFY-GATE SUBSUME PICK (1eae1bd4ae): the double gate at
+      #     sampling_params.verify (#44047's env-bounded validate_n vs the fork's
+      #     #42779 static validate_sample_count) was LITERALLY PROVEN mutually
+      #     exclusive -- identical inputs demanding opposite verdicts. The PR bodies
+      #     decide: #42779 CLOSED unmerged (author self-closed 2026-10-09), #44047
+      #     MERGED (b2616cabbf) as the same crash class re-implemented env-tunable
+      #     with Rust-server parity, and the merge ALREADY adopted it at the ONLY
+      #     enforcement site (io_struct pre-fan-out; #42779's own port said
+      #     "verify() runs too late"). Both INTENTS preserved -- no oversized n
+      #     replicates the prompt (env gate, managers pins green); the bound is the
+      #     ENV not OpenAI's 128; the static verify-time 128 cap dropped with its
+      #     last caller, MAX_PARALLEL_SAMPLES survives as the documented reference
+      #     constant, test re-pinned 4096+1-raises; the historical hard 128 is ONE
+      #     env value away (SGLANG_MAX_BATCH_REQS_PER_HTTP_REQ=128). "No test lost,
+      #     no safety intent weakened."
+      #  8. MM_PROCESS_CONFIG ROOT-CAUSE (1fc11b299c): order-dependent ENV pair --
+      #     topology overrides stated only RANK deltas so the parallel validator read
+      #     AMBIENT WIDTHS; validators now state the full 8-way layout (see B2 C8).
+      #     The last two managers F's went to zero WITHOUT touching production code.
+      #  9. TLFIX TWIN RE-PINNED 282/285 (c656419d9a): the entry-320 per-kernel
+      #     TL_DISABLE_DATA_RACE_CHECK key + def re-verified UNMOVED through the
+      #     window (key line 282 / def line 285) -- the stack-owned QSA fix's second
+      #     survival audit.
+      # MARKER CENSUS AT THE ERA TIP: grep -rn "TODO(merge6)" over python/, test/,
+      #   rust/, docker/, docs/ = ** 0 ** -- b1 12 + b2 23 + b3 18 + b4 39 + b5 17 +
+      #   b6 16 = 125/125 consumed. DUAL-IMPLEMENTATION RULE (entry 323) held: the
+      #   fast_file, short_conv, ForwardMode, mamba_cache_kl, deferred-finalize,
+      #   _host_pool_schema and n-validator classes ADOPTED UPSTREAM-WHERE-EQUIVALENT
+      #   instead of re-planting -- the marker count shrinking per plan was itself a
+      #   check that the resolution-time read of the window was right.
+
+        326. (no code)  BATTERY RE-PIN TABLE -- the ERA PINS at b86b7c9230, the
+      # ACCEPTED device-only residual, and the PATH-TO-BOOTABLE statement
+      # ==========================================================================
+      # dir | damage at dea2641dc2 (entry 323) | ERA PIN at b86b7c9230 (CVD=9, prod
+      #   venv, PYTHONPATH=worktree/python; logs /tmp/opencode/merge6-batteries/
+      #   b6-final-*.log, driver COMPLETE 22:38:26):
+      #   unit/managers    273P/55F/96err  -> ** 1307P/0F/11S/800sub **
+      #   unit/mem_cache   894P/96F/117err -> ** 2965P/24F/1589S/3027sub **
+      #   unit/spec        166P/22F/39err  -> ** 406P/0F/27S/262sub **
+      #   unit/server_args 493P/8F          -> ** 496P/0F/356sub **
+      #   unit/distributed 209P/0F/1err     -> ** 213P/0F/28S/34sub **
+      #   unit/sampling (dir battery, first era run) ** 252P/0F/3S/98sub ** (was 1F
+      #     through B6 C3 -- the verify-gate entry's own pin)
+      #   cargo sglang-radix-tree ** 966P/0F/1-ignored ** re-run mid-era
+      #     (b3-cargo-test.log "test result: ok", rc=0); RUN INSIDE THE CRATE DIR
+      #     (workspace-excluded -- entry 323's pin rule survives the era).
+      #   REGISTRATION GATES AT THE ERA TIP: check_registered_tests /
+      #   check_no_registered_tests_in_package / check_no_bare_pytest_main /
+      #   check_opt_in_ci_tiers / check_dockerfile_wheel_pins ALL rc=0
+      #   (b6-gate-final.log) -- the wheel-pin gate re-greened BY the tree-side
+      #   reverts (entry 327), not around them.
+      # RESIDUAL -- the ACCEPTED 24 (all "No CUDA GPUs are available"/no-accelerator
+      #   class, entry-323 DEVICE lineage, zero replant seams, zero blake3):
+      #   test_kv_layer_access x7, test_decode_retraction_backup x6,
+      #   test_unified_pricing_property x4, test_chunked_publish_release_disjointness
+      #   x2, test_unified_radix_cache_storage x2 (SUBFAILED component legs),
+      #   test_hicache_pp_sync_drain x1, test_hicache_storage_sync_recovery x1 (the
+      #   2-rank gloo spawn), test_mamba_unittest x1 = 24 FAILED/SUBFAILED nodes over
+      #   8 files. This is the era's ANSWER TO THE PIN, accepted with the list open
+      #   for the GPU window: the same class that pinned 23F at the 321-era state.
+      # PATH TO BOOTABLE -- what is CPU-PROVEN GREEN vs what remains GPU-WINDOW DEBT:
+      #   PROVEN (this table + entry 325): every marker class incl. the two
+      #   boot-integrity catches (get_rope arg wiring, PLE env registration) now with
+      #   unit teeth; the init-order fix with its own RED-at-crash-tip/GREEN test; the
+      #   trailing_endpoint boot gate at 17P (entry-311 pin); field-order and export-
+      #   ability re-pins; the budget math (106.9->inside ceiling) with the +/−1-page
+      #   assertions closing unretuned; wheels paired to the installed venv.
+      #   OWED at the FIRST ERA BOOT (operator window; these are NEEDLES TO READ, not
+      #   known-bads): (1) THE sampling.cuh-vs-0.7.2 JIT ARBITRATION -- the tree HELD
+      #   0.7.2 while upstream code reportedly expects 0.7.3 headers on that one
+      #   reported path (entry 322 item 2, S-FI073); if the first EAGLE verify JIT-
+      #   fails, the answer is the WHEEL TRIO THEN PIN, same sitting, never a lone
+      #   re-pin. (2) The PLE file-backend boot (catch #2's needle: no AttributeError
+      #   at load) AND the router-registration order (catch-era crash: the boot must
+      #   now get PAST tokenizer_manager __init__). (3) The budget ceiling line the
+      #   CPU test only SIMULATES -- read the HiCache host split + 59.3-GiB-class
+      #   budget line against the 100 GB. (4) Autotune caches SHOULD HIT WARM -- no
+      #   retune is owed on 0.7.2 (caches are version-keyed; the six 0.7.2/sm120 dirs
+      #   are live and the 16:58 back-to-base boot proved the warm path at ~2s "with
+      #   cache"); the ONE cold retune boot is owed only at a 0.7.3 ADOPTION. (5) The
+      #   entry-322 VERIFY-AT-BOOT quartet #48522/#48734/#47512/#46214 + #48444's
+      #   default-False confirmation. (6) THE STILL-RIDING 321-ERA WATCHES: #45472's
+      #   sync-free-extend TTFT watch + #46643's starvation watch (entries 263/268)
+      #   under real load, and entry-277's first-delta / tool-call-stream latency
+      #   re-check with grouped tokenizer sends ON -- none of these were measured by
+      #   the 16:58 boot either (it ran the SAME base as before, they were already
+      #   open there; they ride TO the era boot, unchanged in kind).
+      # COMPARISON BOOKEND: the 321-era table read 2535P/23F mem_cache / 1056P/2F
+      #   managers / 388P/0F spec / 461P/0F server_args / 156P distributed -- the era
+      #   nets +430 mem_cache P (wheel fix + upstream growth), −23 F-CLASS churn
+      #   (23 device -> 24 device: one node changed shape via #48421's partial-host
+      #   reject; the device list is not elementwise comparable across a merge),
+      #   +251 managers P through three damage eras, and a spec dir 22F -> 0F with
+      #   the catch #1 fingerprints gone. The numbers are the era's signature; the
+      #   24-node list is its accept-condition.
+
+        327. (no code)  WHEELS & VENV RECORD -- tree fixed to venv truth; blake3
+      # landed; the FI-0.7.3 adoption contract restated with post-era facts
+      # ==========================================================================
+      # PAIRING MATRIX AT ERA CLOSE (the B6 C1 ledger f922068330, re-verified read-
+      #   only against the live venv at docs time):
+      #   flashinfer_python[cu13] tree ==0.7.2 | venv 0.7.2 | HELD -- #48468's 0.7.3
+      #     stays unadopted; the window's docker/Dockerfile* FLASHINFER_VERSION=0.7.3
+      #     leak REVERTED to honor pyproject's own "keep aligned with Dockerfile"
+      #     comment; engine assert 0.7.2.
+      #   sglang-kernel tree ==0.4.10 | venv 0.4.10 | MATCH -- engine floor 0.4.9 <=
+      #     installed (floor-assert is a floor, not a pin). ERA-CONSISTENT: the
+      #     #44590 pairing rule was RETIRED OBSOLETE at entry 323's PROOF-PASS, and
+      #     the entry-321 boot had already run 0.4.10/0.4.10 in production -- the
+      #     floor/pin coexistence is now a settled fact, not a tension.
+      #   blake3 tree >=1.0.0 (#47120 HARD DEP) | venv 1.0.11 | ** INSTALLED ** --
+      #     the entry-323 ENV-DEBT headline CLOSED. ZERO-DRIFT PROOF: (i) the era
+      #     final batteries read 0 "No module named 'blake3'" lines across mem_cache/
+      #     managers/spec where the absent wheel had caused ~380 error lines (dossier
+      #     headline; b6-final-*.log); (ii) every OTHER wheel above UNCHANGED by the
+      #     install (the matrix was re-read post-install, versions identical); (iii)
+      #     causality had already been machine-proven by the NEGATIVE-SHIM prefix-sim
+      #     runs -- /tmp/opencode/merge6-batteries/shim/blake3.py raising
+      #     ModuleNotFoundError on demand re-created the 55F/96err managers damage
+      #     profile on a blake3-installed venv (prefix-sim/*.log). UV TOOL NOTE: the
+      #     venv HAS NO PIP (venv-check.txt: "pip show is broken in this venv (no
+      #     pip)") -- versions read via importlib.metadata and the install is an
+      #     OPERATOR uv action; wheel installs were NEVER agent-side (S-BLAKE3's own
+      #      protocol line).
+      #   sgl-deep-gemm 0.2.7->0.2.3.post2 + sgl-flash-mla 1.0.4->1.0.0: TREE-SIDE
+      #     REVERTS TO VENV TRUTH (live-tree law: fix the tree, never the venv; the
+      #     era BASE 2d87757bb1 pinned exactly the venv versions and passed the wheel
+      #     gate). Reachability evidence recorded in C1 (deep-reconcile's obligation):
+      #     BOTH wheels import on the live path (SGLANG_ENABLE_JIT_DEEPGEMM default
+      #     True; the SM120 configurer's probes fp8_einsum /
+      #     m_grouped_fp8_fp4_gemm_nt_contiguous / transform_sf_into_required_layout
+      #     ALL PRESENT in 0.2.3.post2), and every window-grown API the tree touches
+      #     that the OLDER wheels LACK is guarded or arch-inert: get/set_compile_mode
+      #     behind hasattr (compile_utils.py:252), sparse_decode_num_sm_parts behind
+      #     supports_native_heads (flash_mla_interface.py:41-44), tf32_hc_prenorm_-
+      #     gemm_dual SM100-only inside a dsv4-only route (mhc.py:2772), deep_gemm.
+      #     localize inside the dsv4 mega_moe block. Residual symbol sweep vs the
+      #     installed wheels: ZERO ungated misses.
+      #   torch 2.14.1/2.14.1 MATCH; nvidia-cutlass-dsl[cu13] 4.8.0/4.8.0 MATCH
+      #     (b12x's >=4.6.0 satisfied); triton unpinned in pyproject, venv 3.8.0 by
+      #     torch bundle. GATE: check_dockerfile_wheel_pins was BROKEN by the
+      #     window's 0.2.7 landing and is GREEN ONLY BECAUSE OF THE REVERT -- re-pin
+      #     discipline now machine-checked again (b6-gate-c1 + era-tip finals).
+      # FI-0.7.3 ADOPTION CONTRACT (restated with post-era facts): upstream code NOW
+      #   expects 0.7.3 in ONE REPORTED JIT path -- sampling.cuh's last_valid_index ->
+      #   DeviceSamplingFromProb reportedly compiles ONLY against 0.7.3 headers, while
+      #   the tree HELD 0.7.2 (entry 322 item 2; the cascade's pairing revert stands).
+      #   FIRST BOOT ARBITRATES (entry 326 owed-item 1). If it JIT-fails: WHEEL TRIO
+      #   FIRST (flashinfer-python[cu13] + flashinfer-cubin + flashinfer-jit-cache,
+      #   all 0.7.3, cu13 index) THEN pyproject + engine assert + Dockerfile in the
+      #   SAME STEP (S-FI073-ADOPT, wanted_stack); REQUIRED at adoption: the 21-arg
+      #   fast_prefill_plan tail (fixed_uniform_q_len slot -- entry-228's 20-element
+      #   hand-list overtaken) and exactly ONE cold autotune retune boot (caches
+      #   version-keyed under ~/.cache/sglang/flashinfer/autotune/; judge throughput
+      #   from the SECOND boot). Comm surface was already GH-verified safe for the
+      #   PcieIpc* names; the removed MoeAlltoAll pair is NOT our path (a2a=none).
+      # NAMING NOTE for future greps: the DISTRIBUTION is sglang_kernel-0.4.10
+      #   (dist-info) while the MODULE DIRECTORY is sgl_kernel (legacy import name);
+      #   queries for a "sgl-kernel" or "cutlass-dsl" package read MISSING and that
+      #   is NORMAL (venv-check.txt site-packages enumeration: humming_kernels,
+      #   kernels, kernels_data, quack_kernels, sgl_kernel, triton_kernels beside it).
+
+        328. (no code)  INCIDENT RECORD 2026-11-10 ~16:4x-16:58 -- the crash, the
+      # restart that DIAGNOSED the era's flagship bug, and the NEW ERA LAW
+      # ==========================================================================
+      # THE SETTING (this is the part the law is about): the re-plant waves were
+      #   landing DURING THE DAY INTO THE MAIN CHECKOUT'S WORKING TREE (it followed
+      #   the moving branch), WHILE :30000 (9b) AND :30001 (9d) IMPORTED sglang
+      #   EDITABLE from that exact tree (venv -> repo path; the era batteries
+      #   deliberately ran CVD=9 worktree-PYTHONPATH to stay OFF that import path --
+      #   the servers were the only thing that couldn't). Files mutating under a
+      #   running server matters because WORKERS RESPAWN, and a respawned worker
+      #   RE-IMPORTS changed code.
+      # (1) ~16:4x-16:50: ** 9b DIED ** (last wave in the tree at that moment: B5 C3
+      #   landed 16:13; the old log /home/my/sglang_next9b.log truncates to 0 bytes
+      #   at 16:51). CAUSE UNVERIFIABLE FROM THE USER ACCOUNT -- the server's own
+      #   logs sit under /root and are unreadable here. LEADING MECHANISM, STATED AS
+      #   SUCH: a worker respawn importing changed code mid-serve (the tree at the
+      #   moment CONTAINS the init-order defect entry 324 describes plus every mid-
+      #   wave file state of the day); GPU showed no orphans afterward, 9d never
+      #   dropped, and the era's CPU batteries never executed on the serving GPUs --
+      #   but honesty keeps the verdict at LEADING MECHANISM, not PROVEN.
+      # (2) ~16:5x: THE OPERATOR'S RESTART CRASHED AT BOOT and that traceback is the
+      #   era's most valuable bug find: the entry-324 init-order defect, verbatim
+      #   (maybe_init_router_registration -> tokenizer_ipc_name AttributeError at era
+      #   tip b069e6a5ef). Single-worker too -- the crash class was not a corner.
+      #   A CPU battery would have run the REAL __init__ only AFTER the bootfix test
+      #   existed; the restart found it first, in the field.
+      # (3) EMERGENCY FREEZE: the b2 session was mid-wave when prod went down --
+      #   WIP commit ** 7ccf76a38e "WIP b2 frozen mid-wave" (AUTHOR 16:55:02) ** was
+      #   made to preserve the work and the session STOPPED. The commit was KEPT IN
+      #   RANGE (never squashed away, never silently redone) and COMPLETED as B2 C1
+      #   (b29a45b0c7, committed 21:17) -- provenance note: the b2 zone's ledger
+      #   spans the incident; the WIP's 57-line prefill_adder re-plant + the io_struct
+      #   dead-import removal are the frozen state C1 finished.
+      # (4) RECOVERY, in order: branch ** merge6-era-backup pinned at b069e6a5ef **
+      #   (the era state at the crash -- preserved for forensics; re-plant commits
+      #   stay chained above it); MAIN CHECKOUT DETACHED to ** 2d87757bb1 ** (the
+      #   pre-merge, entry-321-boot-validated state -- the only state that had EVER
+      #   served the era's models); 9b RE-BOOTED ** 16:58:52 **, READY 17:02:14
+      #   (boot 3m22s), ALL NEEDLES HIT (page-size 64 QSA needle; PCIe-IPC enabled
+      #   world=2 + "autotuned 9 shape(s)" at 17:01:06; warm cached autotune ~2s;
+      #   KV 5,059,264 tokens both TP; HiCache split 12.08/19.92 GB, budget 59.3
+      #   GiB/rank; 0 Traceback / 0 AttributeError) -- /tmp/opencode/
+      #   prod-health-2026-11-10.txt (read-only verification ~20:53). 9d NEVER
+      #   DROPPED: pid 556710 up since Nov 3 19:16, HTTP 200, 7d+.
+      # (5) THE NEW ERA LAW: ** the working tree IS the prod import path -- no commits
+      #   into it while servers run; no checkout of a moving branch; integration by
+      #   BRANCH REF-MOVE ONLY (git branch -f on the era branch, live HEAD/status
+      #   equality proven around every move); switching the checked-out state is an
+      #   OPERATOR-GATED BOOT DECISION, never a side effect of landing.** The era's
+      #   own integration from here on followed it (b2-final/b6 gate logs record
+      #   HEAD+status snapshots: 2d87757bb1 / "A  CALIBER_LEARNINGS.md" unchanged
+      #   throughout; b2r-main-before/after.head/.status).
+      # (6) AFTERMATH LEDGER: the bootfix + B2 + B6 waves landed 21:15-22:24 WITHOUT
+      #   prod pressure -- prod sat on the validated base the whole time (the
+      #   incident's own cost bought the era its safest hours); the bootfix family
+      #   scan's report-only line (get_tokenizer_worker_class/entrypoints wiring)
+      #   rides as a WATCH (era closeout block); the era branch remains UNBOOTED with
+      #   entry 326's first-boot needles armed; the CALIBER anti-pattern learning
+      #   (import-path law, verbatim) enters CALIBER_LEARNINGS.md with this wave --
+      #   its copy-commit on the era branch is byte-identical to the live tree's
+      #   STAGED (uncommitted-by-design) file, see the copy commit's message for the
+      #   divergence resolution.
+      # WHAT WENT WRONG WAS NOT THE CODE ERA -- it was treating a LIVE import path as
+      #   a landing surface. The code died honestly (boot traceback, RED test in
+      #   minutes); the PROCESS had no traceback to print. This record exists so the
+      #   next era does not have to re-derive the law from a second incident.
+
+        329. (no code)  BACKFILL AUDIT RECORD -- window 2026-08-10..2026-10-27,
+      # universe 2714, the 3-month lookback under the 11-10 sweep (entry 322)
+      # ==========================================================================
+      # METHOD, one line each: (a) universe = every PR with window activity via REST
+      #   search sweep (14 zone/term queries -> 1,576 uniq search PRs) + title/keyword
+      #   sweeps over the window's merged+closed population; (b) IN-TREE determination
+      #   = zone-file git-log enumeration of EVERY commit reachable from the era tip
+      #   at run time (1dcc2d6848) with --name-status -M over the 11 stack zones
+      #   (qsa/, qwen4_exp/qwen3_5 model+config+arg_groups, GDN/PLE/fla kernels,
+      #   speculative+replayssm, device_communicators+communication ops,
+      #   moe_runner/flashinfer_cutlass+fused_moe_triton, srt/mem_cache, hicache/
+      #   prefetch/storage, qwen4 embeddings/elementwise kernels), PR attribution from
+      #   trailing "(#N)" squash subjects incl. BARE revert/reland refs -- 12 PRs
+      #   ARRIVED-BY-ABSORPTION (bare (#N) inside reland/revert parents) + 5 ARRIVED-
+      #   BY-MERGE-COMMIT (no (#N)$ subject, merge-commit ancestor-verified); 5/5
+      #   random merge-base --is-ancestor spot-verify PASS; (c) already-documented =
+      #   grep #N across stack.txt + wanted_stack.txt; (d) survivors got title +
+      #   symbol checks: per-PR patch fetch, added def/class tokens grepped against
+      #   the fork worktree (deep-verify.tsv over 60 closed candidates); (e) rejects
+      #   carry a one-line REJECT CLASS + reason each, manual adjudication for
+      #   keyword-adjacent titles (final-rejects-manual.tsv, 315 rows).
+      # SPLIT: universe ** 2714 = 1830 CONFIRMED-IN-TREE + 255 ALREADY-DOCUMENTED +
+      #   628 NEW REJECTS + 1 NEW-INTERESTING **. The 1830 includes 12+5 exotic
+      #   arrivals; the reject taxonomy's heads: OTHER-MODEL-FAMILY 145,
+      #   HW-NOT-RUN 86, SM12x-adjacent 56, SIDE-BRANCH 44, NVFP4/modelopt-adjacent
+      #   35, GDN-worded 28, CONFIG-NOT-RUN 26 (tails in the block).
+      # CLASS DISCOVERY -- ** qwen4-main-squashed: an UPSTREAM SIDE BRANCH with its
+      #   OWN PR line (44 of the 628 rejects are REJECT-MERGED-TO-SIDE-BRANCH against
+      #   it) **: PRs merged THERE are NOT in-tree arrivals for anyone; the line is
+      #   where Qwen3.8/Qwen4 development landed outside main (SM120/SM121 sparse-
+      #   decode fixes #36649/#36806, the file-backed PLE table #37068 the fork runs
+      #   its own version of, #38569's squashed-to-main-via-#37500 route). FUTURE
+      #   SWEEPS MUST FILTER BY BASE; the line's existence also EXPLAINS several
+      #   "closed unmerged with no successor" sightings -- they were MERGED, just not
+      #   to main. (Orchestrator's brief cited "206" for this class; the backfill
+      #   artifacts support **44** in-window reject rows carrying the tag -- recorded
+      #   as verified here, the 206 not found in any artifact and NOT asserted.)
+      # NEW-INTERESTING (the only one) -- **#36043 [Kernel] Add Qwen3.8 NVFP4 skinny
+      #   GEMM for SM120** full paragraph (new-interesting.md, verbatim record):
+      #   CLOSED-UNMERGED, absent from the fork tree (NO symbol hits anywhere -- file
+      #   names, symbols, the env name all checked), aimed EXACTLY at our cell: dense
+      #   NVFP4 **W4A4 GEMM for M<=16 decode on sm_120a "RTX PRO 6000 Blackwell, 188
+      #   SMs"**, opt-in env SGLANG_ENABLE_QWEN38_FP4_SKINNY_GEMM, files kernels/jit/
+      #   csrc/gemm/nvfp4/fp4_skinny_sm120.cu + kernels/ops/gemm/nvfp4_skinny_sm120.py
+      #   + modelopt_quant dispatch. RELEVANCE: LIVE path -- the NVFP4 modelopt_mixed
+      #   arm's dense projections run at bs<=48 decode graphs; a skinny M<=16 kernel
+      #   is a pure PERF opportunity (NO correctness claim -- it does not fix wrong
+      #   numbers, it makes right numbers faster). Why it never landed is UNKNOWN
+      #   from the PR body (no reviewer gate cited); porting it means OWNING a JIT
+      #   kernel. VERDICT: **BENCHMARK-BEFORE-PORT** -- measure vs the
+      #   flashinfer-cutlass-fp4 path AT OUR M-DISTRIBUTION first; if the perf case
+      #   dies, EXCLUDE with that note. Filed as ** S-36043-BENCH ** (watch-list era
+      #   block; bench-gated like the entry-227 discipline).
+      # ARTIFACTS: /tmp/opencode/pr-backfill-2026-11-10/ -- universe.tsv (2714),
+      #   classified.tsv (1813 in-tree + 12 + 5 + 255 + 629 candidate), rejects-auto
+      #   .tsv, final-rejects-manual.tsv, candidates-detail.tsv, deep-verify.tsv,
+      #   commit-index.tsv + commits-window*.tsv + fulltree-subjects.tsv, files-hits/
+      #   title-hits/keyword-subjects/zone-hits, search/*.json (per-term captures),
+      #   cand/ (634 fetched PR jsons), patches/, new-interesting.md, and the final
+      #   assembly DOCS-BLOCK.txt (671 lines) -- inserted VERBATIM as the dated block
+      #   in EVALUATED below (165 dropped list commas tidied at insertion; nothing
+      #   else reflowed). Scripts kept in-tree-usable: classify{1,2,2b,3}.py,
+      #   deep_verify.py, finalize.py, gen_docs.py.
+      # WHAT THIS AUDIT BUYS THE STACK: the 2-month band under every sweep's floor is
+      #   now CLOSED as a source of surprises -- 1830 confirmations say the merge-era
+      #   absorption already carries the family history, the 628 rejects are filed so
+      #   no future pass re-litigates them one by one, and the ONE interesting find
+      #   is bench-gated rather than queued. The side-branch discovery is the
+      #   durable method change: base-filter all future enumerations.
 
 ==============================================================================
 EVALUATED AND DELIBERATELY NOT INCLUDED
@@ -11060,6 +11714,9 @@ EVALUATED AND DELIBERATELY NOT INCLUDED
   # 11-10: same discipline -- full record IN ENTRY 322 above; the grouped
   # EXCLUDE list below is its audit-trail echo (wanted_stack.txt SECTION R
   # carries the same 23 with the queue-side phrasing).
+  # 11-10b (ERA CLOSE): the MERGE-#6-era BACKFILL SWEEP block below (window
+  # 08-10..10-27) is the 671-line DOCS-BLOCK.txt inserted verbatim -- its
+  # record entry 329; the 11-10 sweep's own echo stays the block above it.
 
   Sweep 2026-11-10 -- evaluated, NOT included (23; reasons from deep-port.md):
   DSPARK/DFLASH/NGRAM/MULTI-LAYER-EAGLE FAMILY -- the jianc99 4618x
@@ -11100,7 +11757,686 @@ EVALUATED AND DELIBERATELY NOT INCLUDED
       /update_weights_from_* use appears in prod).
 
 
-  Merge #4 + apply-b..apply-i evaluation (2026-10-14/15) -- verdicts,
+  ============================================================================
+  Backfill sweep record, MERGED-INTO-THIS-FILE 2026-11-10 -- window
+  2026-08-10..2026-10-27 (the 3-month lookback UNDER the 11-10 sweep floor;
+  record: entry 329). Inserted VERBATIM from
+  /tmp/opencode/pr-backfill-2026-11-10/DOCS-BLOCK.txt (671 lines, TIDIED AT
+  INSERTION -- comma-drops between #NNNNN list items restored in the
+  condensed enumeration lines; nothing else reflowed). Universe 2714 =
+  1830 in-tree / 255 already-documented / 628 NEW REJECTS / 1
+  NEW-INTERESTING (#36043, bench-gated -> S-36043-BENCH).
+  ----------------------------------------------------------------------------
+Backfill sweep 2026-11-10 -- window 2026-08-10..2026-10-27 (3-month lookback,
+  zone-file + title exhaustive), verdicts:
+
+CONFIRMED-IN-TREE (1830; zone-file git-log enumeration of every commit
+  reachable from stack tip 1dcc2d6848 with --name-status -M over qsa/, models+configs+
+  arg_groups qwen4_exp/qwen3_5, attention/linear+fla+kernels mamba, srt/speculative+replayssm,
+  device_communicators+kernels/ops/communication, moe_runner/flashinfer_cutlass+fused_moe_triton,
+  srt/mem_cache, hicache/prefetch/storage, kernels/ops/{embeddings,elementwise}/qwen4;
+  PR attribution via (#N)$ squash subjects incl. bare revert/reland refs; 5/5 random
+  merge-base --is-ancestor spot-verify PASS; per-PR zone tags + shas in classified.tsv):
+  QSA zone (7): #38851, #38855, #38876, #39446, #41729, #43463, #45752
+  qwen4_exp/qwen3_5 model files (55): #29753, #32745, #34421, #34446, #34447, #34474, #34771, #35341, #35455, #35506, #35669, #35719, #35805, #37087, #37193, #37471, #38878, #39064, #39126, #39798, #39902, #40971, #41079, #41080, #41081, #41196, #41198, #41199, #41431, #41442, #41443, #41547, #41548, #41549, #41550, #41551, #41552, #41553, #41554, #41555, #41750, #41812, #41816, #42002, #42183, #42301, #42478, #42587, #42588, #42645, #42721, #42936, #43688, #43839, #45413
+  kernels qwen4 GDN/PLE (17): #31847, #33561, #33974, #35031, #35051, #36887, #37213, #37622, #37836, #37926, #38039, #38558, #39130, #40496, #41105, #41223, #44886
+  GDN/linear-attn kernels (66): #28417, #30144, #30360, #31794, #32593, #33354, #33426, #33722, #33922, #34198, #34546, #34592, #34820, #34859, #35042, #35544, #35632, #35775, #35908, #35958, #36267, #36507, #36821, #37317, #37477, #38169, #38184, #38229, #38346, #39061, #39219, #39273, #39405, #39524, #39688, #39987, #40197, #40227, #40607, #40685, #40895, #40989, #41134, #41144, #41400, #41445, #41572, #42251, #42306, #42486, #42489, #42506, #42611, #42857, #43227, #43246, #43271, #43570, #43991, #44089, #44778, #45018, #45473, #45710, #45713, #46465
+  spec-decode/NEXTN/replayssm (135): #29189, #29202, #30548, #30775, #31041, #31362, #32196, #32207, #32495, #32673, #32798, #33395, #33614, #33630, #33662, #33739, #34053, #34201, #34238, #34309, #34336, #34337, #34696, #34759, #34763, #34782, #34816, #34916, #34919, #34926, #35057, #35058, #35059, #35195, #35198, #35207, #35265, #35371, #35397, #35412, #35496, #35546, #35629, #35640, #35672, #35798, #35872, #35932, #36186, #36253, #36704, #36752, #36897, #36899, #36911, #36934, #37069, #37134, #37274, #37329, #37462, #37546, #37565, #37577, #37659, #37818, #38041, #38399, #38740, #38993, #39088, #39502, #39646, #39859, #40045, #40111, #40118, #40159, #40339, #40343, #40399, #40453, #40654, #40777, #41179, #41623, #41725, #41737, #41783, #41808, #41811, #41813, #41817, #41970, #41981, #41993, #42057, #42297, #42590, #42624, #42987, #43012, #43328, #43383, #43620, #43621, #43622, #43623, #43640, #43668, #43669, #43670, #43774, #43790, #43791, #43826, #43849, #44119, #44405, #44598, #44803, #44945, #45033, #45043, #45123, #45234, #45266, #45389, #45421, #45682, #45771, #45949, #46330, #46404, #46891
+  device_communicators (PCIe IPC allreduce) (45): #29100, #34199, #34528, #34543, #35061, #35062, #35330, #35735, #35758, #35906, #36053, #36250, #36252, #36254, #36397, #36620, #36949, #37086, #37206, #37210, #37442, #37874, #38238, #39034, #39653, #39704, #39966, #40294, #40340, #40342, #40344, #40632, #40922, #41021, #41284, #42175, #42695, #43764, #44665, #44681, #45112, #45254, #45950, #46137, #46481
+  MoE flashinfer_cutlass/triton (57): #28354, #28723, #29525, #31470, #32405, #32665, #33559, #33591, #33631, #33962, #34220, #34789, #34795, #34962, #34967, #35077, #35120, #35260, #35568, #35634, #36871, #37338, #37436, #37623, #38080, #38116, #38160, #38780, #38913, #39199, #39574, #39613, #39816, #39818, #39939, #40030, #40980, #41251, #41814, #41899, #42022, #42299, #42481, #43341, #43460, #43784, #43789, #44138, #45082, #45299, #45363, #45365, #45376, #45758, #45892, #46134, #46140
+  HiCache/L3/prefetch (161): #27010, #30762, #31180, #31926, #32017, #32500, #32503, #32710, #33572, #33824, #33883, #33930, #34074, #34329, #34477, #34560, #34667, #34793, #34798, #34889, #35130, #35233, #35239, #35269, #35306, #35407, #35443, #36176, #36187, #36222, #36232, #36308, #36345, #36382, #36454, #36605, #36700, #36738, #36789, #36792, #36798, #36848, #36972, #36975, #37050, #37091, #37094, #37152, #37194, #37353, #37381, #37382, #37425, #37426, #37503, #37507, #37578, #37771, #37778, #37870, #37967, #38095, #38097, #38375, #38461, #38577, #38592, #38652, #38798, #38827, #38925, #38959, #39036, #39050, #39110, #39283, #39318, #39385, #39415, #39479, #39487, #39516, #39565, #39606, #39726, #40034, #40068, #40071, #40135, #40238, #40264, #40288, #40326, #40467, #40595, #40674, #40795, #40807, #40812, #40824, #40896, #41147, #41248, #41393, #41450, #41585, #41675, #41758, #42077, #42118, #42215, #42362, #42399, #42420, #42553, #42686, #42754, #42823, #42824, #42825, #42923, #43021, #43023, #43063, #43100, #43101, #43206, #43210, #43308, #43407, #43503, #43539, #43548, #43562, #43593, #43594, #43596, #43711, #43735, #43816, #43817, #43868, #43870, #44001, #44592, #44726, #44790, #45076, #45222, #45414, #45432, #45593, #45673, #45732, #45925, #46139, #46205, #46206, #46501, #46570, #46689
+  mem_cache (HiCache radix/L3 host) (371): #24959, #27265, #27770, #28403, #29668, #29792, #30315, #30392, #30405, #30531, #30575, #30805, #30827, #30929, #31286, #31446, #31479, #31574, #31626, #32208, #32227, #32272, #32733, #32759, #32792, #32941, #32984, #33091, #33362, #33465, #33473, #33639, #33676, #33829, #33998, #34012, #34066, #34141, #34191, #34234, #34262, #34341, #34355, #34362, #34406, #34519, #34565, #34602, #34613, #34644, #34729, #34801, #34808, #34823, #34870, #35024, #35025, #35081, #35154, #35158, #35164, #35177, #35204, #35221, #35245, #35351, #35375, #35377, #35379, #35382, #35424, #35540, #35543, #35574, #35594, #35643, #35644, #35676, #35689, #35718, #35769, #35773, #35791, #35820, #35888, #35931, #35933, #35944, #35957, #36227, #36255, #36266, #36317, #36340, #36343, #36381, #36386, #36403, #36411, #36425, #36549, #36583, #36621, #36622, #36637, #36640, #36646, #36651, #36705, #36713, #36721, #36723, #36729, #36739, #36747, #36759, #36791, #36800, #36813, #36834, #36890, #36909, #36958, #36973, #36974, #36982, #37078, #37085, #37098, #37146, #37151, #37164, #37167, #37170, #37205, #37278, #37306, #37307, #37324, #37413, #37424, #37463, #37464, #37481, #37482, #37494, #37506, #37511, #37512, #37550, #37560, #37562, #37567, #37584, #37615, #37627, #37628, #37667, #37693, #37729, #37787, #37795, #37844, #37876, #37883, #37914, #37938, #38049, #38072, #38103, #38113, #38133, #38138, #38159, #38163, #38192, #38195, #38204, #38217, #38250, #38269, #38313, #38349, #38350, #38356, #38402, #38417, #38462, #38468, #38481, #38482, #38483, #38486, #38547, #38571, #38641, #38778, #38792, #38826, #38835, #38901, #38941, #38947, #38948, #38954, #38955, #38978, #39089, #39120, #39166, #39280, #39295, #39426, #39439, #39477, #39480, #39567, #39589, #39627, #39696, #39699, #39731, #39837, #39921, #39980, #40013, #40042, #40067, #40070, #40102, #40239, #40256, #40262, #40263, #40304, #40327, #40328, #40329, #40330, #40331, #40341, #40354, #40357, #40471, #40491, #40492, #40517, #40565, #40712, #40798, #40857, #40925, #40960, #40979, #40988, #41006, #41048, #41049, #41092, #41103, #41163, #41281, #41303, #41308, #41312, #41325, #41328, #41337, #41343, #41345, #41346, #41452, #41453, #41469, #41527, #41593, #41603, #41642, #41658, #41769, #41805, #41927, #41961, #42072, #42120, #42128, #42166, #42178, #42194, #42202, #42239, #42252, #42264, #42295, #42354, #42425, #42455, #42467, #42537, #42539, #42633, #42649, #42671, #42716, #42788, #42817, #42822, #42832, #42957, #42976, #42982, #43043, #43165, #43170, #43174, #43182, #43185, #43197, #43198, #43199, #43200, #43201, #43237, #43253, #43325, #43326, #43410, #43435, #43595, #43721, #43722, #43814, #43919, #43920, #43922, #43936, #43978, #44006, #44098, #44140, #44436, #44555, #44564, #44611, #44623, #44673, #44676, #44783, #44929, #44930, #44952, #44970, #44977, #45037, #45075, #45104, #45223, #45247, #45276, #45356, #45538, #45579, #45586, #45700, #45714, #45726, #45893, #46135, #46388, #46442, #46700
+  strong-keyword subjects outside zones (293): #29328, #29927, #30105, #30899, #32039, #32229, #32637, #32758, #32779, #32991, #33075, #33431, #33624, #34019, #34217, #34222, #34314, #34327, #34347, #34349, #34350, #34356, #34357, #34416, #34517, #34587, #34590, #34601, #34690, #34713, #34748, #34770, #34810, #34836, #34860, #34863, #34882, #34896, #34938, #34945, #35006, #35064, #35065, #35111, #35116, #35121, #35168, #35182, #35194, #35293, #35297, #35353, #35361, #35368, #35374, #35383, #35445, #35446, #35492, #35545, #35547, #35612, #35663, #35739, #35753, #35767, #35786, #35825, #36020, #36044, #36046, #36061, #36066, #36076, #36245, #36330, #36419, #36496, #36499, #36519, #36544, #36611, #36655, #36657, #36680, #36758, #36780, #36810, #36865, #36901, #36970, #36985, #37026, #37043, #37075, #37090, #37096, #37109, #37112, #37116, #37123, #37129, #37141, #37144, #37156, #37299, #37300, #37325, #37332, #37343, #37351, #37360, #37378, #37412, #37510, #37564, #37662, #37737, #37767, #37898, #37995, #38006, #38020, #38026, #38082, #38182, #38280, #38374, #38504, #38506, #38529, #38549, #38584, #38611, #38621, #38678, #38726, #38748, #38762, #38796, #38839, #38844, #38932, #39047, #39104, #39141, #39155, #39162, #39163, #39170, #39190, #39213, #39278, #39358, #39364, #39368, #39373, #39572, #39580, #39662, #39666, #39678, #39813, #39839, #39840, #39983, #39986, #40022, #40043, #40116, #40190, #40204, #40408, #40424, #40455, #40472, #40481, #40487, #40507, #40516, #40570, #40573, #40628, #40659, #40664, #40747, #40770, #40831, #40870, #40889, #40907, #41046, #41075, #41133, #41150, #41155, #41194, #41224, #41258, #41272, #41282, #41292, #41339, #41513, #41540, #41542, #41564, #41655, #41706, #41765, #41799, #41849, #41887, #41915, #41986, #42109, #42159, #42167, #42174, #42203, #42229, #42307, #42495, #42523, #42541, #42552, #42556, #42558, #42787, #42843, #42856, #42860, #42927, #43062, #43083, #43159, #43176, #43226, #43236, #43309, #43332, #43373, #43391, #43551, #43554, #43581, #43586, #43632, #43633, #43689, #43691, #43747, #44055, #44065, #44081, #44266, #44267, #44367, #44554, #44650, #44707, #44712, #44787, #44865, #45038, #45039, #45245, #45294, #45308, #45359, #45386, #45419, #45574, #45739, #45753, #45879, #45904, #45921, #45967, #46017, #46032, #46078, #46101, #46102, #46107, #46109, #46180, #46294, #46530, #46547, #46660, #46893, #46896
+  weak-keyword (flashinfer/fp8/allreduce bumps) (249): #27689, #27702, #28734, #30318, #30319, #30519, #30700, #30859, #30900, #31054, #31105, #31429, #31554, #31856, #32033, #32099, #32218, #32618, #32755, #32882, #33006, #33021, #33057, #33165, #33166, #33237, #33608, #33669, #33743, #33997, #34042, #34136, #34148, #34257, #34277, #34305, #34318, #34330, #34331, #34363, #34379, #34476, #34506, #34540, #34556, #34561, #34607, #34647, #34680, #34695, #34893, #34908, #34921, #35020, #35123, #35340, #35343, #35405, #35505, #35554, #35593, #35605, #35703, #35751, #35760, #35840, #35919, #36005, #36056, #36060, #36063, #36097, #36119, #36142, #36203, #36219, #36237, #36246, #36275, #36364, #36380, #36396, #36410, #36415, #36456, #36505, #36513, #36559, #36574, #36719, #36929, #36950, #36954, #37018, #37073, #37083, #37140, #37159, #37165, #37179, #37254, #37331, #37376, #37423, #37453, #37474, #37479, #37489, #37552, #37576, #37658, #37660, #37762, #37764, #37982, #38028, #38033, #38124, #38152, #38259, #38318, #38381, #38446, #38453, #38467, #38527, #38546, #38590, #38807, #38830, #38831, #39083, #39106, #39115, #39230, #39232, #39360, #39406, #39419, #39438, #39598, #39622, #39656, #39657, #39779, #39781, #39790, #39823, #39881, #39920, #39923, #40039, #40052, #40105, #40148, #40184, #40308, #40431, #40435, #40448, #40469, #40519, #40557, #40577, #40610, #40618, #40710, #40772, #40776, #40792, #40811, #40878, #40879, #40911, #41018, #41019, #41030, #41071, #41072, #41090, #41109, #41120, #41138, #41193, #41238, #41377, #41433, #41451, #41458, #41656, #41668, #41671, #41701, #41790, #41793, #41807, #41870, #41903, #41980, #41982, #41985, #42055, #42152, #42156, #42172, #42255, #42585, #42602, #42605, #42659, #42758, #42796, #42810, #42911, #43015, #43029, #43192, #43318, #43319, #43468, #43494, #43639, #43643, #43762, #43803, #43815, #43944, #43983, #44003, #44007, #44016, #44252, #44837, #44838, #45304, #45480, #45591, #45630, #45632, #45633, #45676, #45877, #45903, #45980, #46231, #46359, #46417, #46424, #46528
+  search-term hits w/ no zone or keyword subject match (357): #5967, #6042, #23112, #28021, #28666, #31590, #31700, #31768, #32269, #32414, #32467, #32577, #32902, #32947, #32954, #33146, #33250, #33517, #33518, #33820, #33838, #33911, #33945, #34167, #34210, #34283, #34365, #34372, #34395, #34417, #34483, #34503, #34505, #34534, #34567, #34575, #34580, #34581, #34619, #34650, #34653, #34693, #34736, #34747, #34880, #34888, #34953, #35016, #35018, #35021, #35044, #35114, #35118, #35172, #35174, #35228, #35244, #35263, #35292, #35314, #35349, #35451, #35511, #35524, #35599, #35626, #35684, #35740, #35755, #35757, #35794, #35802, #35858, #35861, #35950, #35974, #36003, #36149, #36180, #36204, #36229, #36295, #36430, #36440, #36470, #36485, #36502, #36541, #36571, #36584, #36608, #36618, #36624, #36641, #36718, #36725, #36726, #36740, #36784, #36794, #36804, #36805, #36811, #36852, #36979, #36988, #37093, #37148, #37261, #37266, #37286, #37320, #37380, #37385, #37431, #37586, #37601, #37679, #37695, #37878, #37903, #37907, #38014, #38148, #38293, #38295, #38296, #38314, #38329, #38335, #38396, #38520, #38575, #38581, #38657, #38689, #38725, #38756, #38841, #38845, #38988, #38991, #39021, #39029, #39105, #39165, #39175, #39206, #39234, #39241, #39244, #39378, #39482, #39553, #39592, #39648, #39660, #39671, #39680, #39720, #39729, #39957, #40003, #40055, #40092, #40104, #40147, #40165, #40205, #40325, #40490, #40502, #40505, #40556, #40590, #40592, #40593, #40599, #40620, #40657, #40794, #40804, #40861, #40867, #40868, #40924, #41061, #41062, #41066, #41118, #41137, #41195, #41197, #41208, #41216, #41252, #41254, #41280, #41287, #41344, #41436, #41459, #41561, #41659, #41721, #41722, #41723, #41787, #41845, #41894, #41942, #41943, #42004, #42019, #42026, #42121, #42125, #42214, #42219, #42300, #42309, #42311, #42312, #42329, #42331, #42477, #42494, #42505, #42524, #42571, #42643, #42661, #42683, #42709, #42743, #42768, #42771, #42841, #42896, #42903, #42905, #42926, #42933, #42941, #42958, #42964, #43005, #43006, #43026, #43027, #43070, #43211, #43307, #43334, #43337, #43346, #43438, #43447, #43449, #43453, #43454, #43455, #43456, #43457, #43458, #43459, #43470, #43504, #43592, #43608, #43625, #43683, #43684, #43685, #43770, #43799, #43802, #43823, #43838, #43918, #44002, #44139, #44192, #44193, #44210, #44228, #44243, #44256, #44301, #44307, #44357, #44421, #44510, #44587, #44597, #44654, #44685, #44694, #44716, #44740, #44761, #44847, #44887, #44975, #44996, #45040, #45047, #45111, #45179, #45214, #45218, #45277, #45311, #45340, #45349, #45398, #45422, #45449, #45495, #45508, #45513, #45602, #45637, #45659, #45662, #45749, #45775, #45796, #45880, #45916, #45924, #45977, #45978, #46005, #46093, #46146, #46161, #46170, #46176, #46241, #46243, #46254, #46264, #46309, #46340, #46365, #46457, #46463, #46464, #46468, #46506, #46546, #46551, #46567, #46708, #46719, #46807
+  ARRIVED-BY-ABSORPTION (bare (#N) inside reland/revert parents) (12): #509, #4303, #22607, #32907, #33835, #34183, #34516, #35472, #36497, #37582, #38206, #41634
+  ARRIVED-BY-MERGE-COMMIT (subject lacks (#N)$; merge-commit ancestor-verified) (5): #34263, #34266, #34267, #34376, #34819
+
+ALREADY-DOCUMENTED (255; grep #N in stack.txt/wanted_stack.txt):
+  #28690, #31503, #31652, #32550, #33036, #33588, #33778, #34535, #35504, #35609, #35694, #36767, #36787, #36933, #37162, #37290, #37460, #37500, #37612, #37625, #37943, #37958, #38040, #38151, #38170, #38480, #38650, #38690, #38815, #38875, #38900, #38960, #39095, #39209, #39294, #39388, #39474, #39475, #39478, #39526, #39575, #39614, #39643, #39721, #39723, #39724, #39727, #39765, #39807, #39862, #39893, #39928, #39978, #39982, #40001, #40002, #40033, #40041, #40075, #40076, #40171, #40175, #40223, #40278, #40312, #40313, #40363, #40456, #40499, #40501, #40512, #40582, #40626, #40638, #40680, #40709, #40748, #40754, #40762, #40775, #40778, #40780, #40785, #40787, #40796, #40913, #40915, #40917, #40929, #40963, #40972, #40983, #41154, #41165, #41166, #41169, #41173, #41175, #41187, #41243, #41276, #41286, #41297, #41340, #41486, #41520, #41745, #41818, #41907, #41933, #42044, #42050, #42087, #42245, #42270, #42348, #42388, #42443, #42448, #42452, #42557, #42579, #42689, #42701, #42753, #42776, #42779, #42803, #42811, #42928, #42930, #42973, #43013, #43028, #43037, #43054, #43064, #43108, #43168, #43171, #43247, #43333, #43344, #43363, #43370, #43387, #43390, #43419, #43433, #43439, #43450, #43464, #43524, #43527, #43550, #43556, #43559, #43567, #43607, #43712, #43727, #43792, #43927, #43932, #44029, #44030, #44036, #44097, #44114, #44124, #44150, #44173, #44195, #44196, #44213, #44220, #44222, #44251, #44275, #44280, #44317, #44325, #44351, #44372, #44387, #44418, #44430, #44480, #44493, #44500, #44514, #44518, #44591, #44593, #44595, #44614, #44642, #44643, #44666, #44690, #44729, #44770, #44800, #44842, #44849, #44858, #44861, #44901, #44913, #44968, #44971, #44972, #44993, #44994, #45090, #45118, #45144, #45145, #45158, #45212, #45213, #45219, #45236, #45238, #45241, #45242, #45289, #45298, #45334, #45435, #45439, #45450, #45462, #45472, #45474, #45491, #45504, #45559, #45585, #45631, #45670, #45672, #45684, #45701, #45702, #45703, #45787, #45791, #45917, #45923, #46141, #46167, #46290, #46543, #46853
+
+NEW REJECTS (628; first-time documented, one line each;
+  full titles in rejects-auto.tsv / final-rejects-manual.tsv):
+  #10243 -- REJECT-OTHER-MODEL-FAMILY; Add configs for Blackwell Workstation for GLM-4.5-Air-FP8 with MTP
+  #11466 -- REJECT-OTHER-MODEL-FAMILY; Support MiniMax-M1/Text01 Model
+  #12820 -- REJECT-OTHER-MODEL-FAMILY; [WIP][Feature] support tp-sp on qwen2/3 & deepseek v2/3/3.2
+  #13025 -- REJECT-OTHER-MODEL-FAMILY; Jet-Nemotron — EAGLE3 + Varlen Dynamic Conv
+  #13711 -- REJECT-OTHER-MODEL-FAMILY; [fused-moe] Add TP2 RTX Pro 6000 for GLM-4.5-Air and GLM-4.5V
+  #14391 -- REJECT-HW-NOT-RUN+FAMILY; [npu] support features of qwen3_next; fixup accuracy bugs in qwen3_next
+  #14502 -- REJECT-OTHER-MODEL-FAMILY; [Qwen3-Next]Optimize piecewise CUDA graph for Qwen3-Next
+  #15668 -- REJECT-MULTIMODAL-NOT-RUN; [diffusion] multi-platform: Use sage attn as default backend for SM120
+  #17190 -- REJECT-CONFIG-NOT-RUN; [bugfix] Add gfx942 (MI300X) support for MXFP4 quantization
+  #17823 -- REJECT-CONFIG-NOT-RUN; [fix] Fix wrong input mode using deepep with PP
+  #17898 -- REJECT-OTHER-MODEL-FAMILY; [Feature] Support Marconi
+  #18244 -- REJECT-OTHER-MODEL-FAMILY; perf: reduce JIT overhead by using fixed step size in Triton kernels
+  #18548 -- REJECT-HW-NOT-RUN+FAMILY; [NPU]Support model Kimi-Linear-480B-A3B-Instruct for npu, accuracy 90.5%
+  #18571 -- REJECT-HW-NOT-RUN+FAMILY; ROCm: Fix AITER attention for Qwen3-Coder-Next hybrid models
+  #18733 -- REJECT-OTHER-MODEL-FAMILY/CFG-NOT-RUN; Add DeepSeek V32 PD disaggregation test
+  #18968 -- REJECT-HW-NOT-RUN; feat: WIP NIXL transfer through CPU buffer for better performance with mixed TP sizes
+  #19260 -- REJECT-HW-NOT-RUN; [AMD] Add suffix decoding support for ROCm
+  #19299 -- REJECT-OTHER-MODEL-FAMILY; [Perf] O(1) expert weight matching in DeepSeek weight loader
+  #19353 -- REJECT-CONFIG-NOT-RUN; feat(disagg): KV return — reverse RDMA transfer from decode to prefill
+  #19591 -- REJECT-HW-NOT-RUN+FAMILY; [AMD] Port tree speculative sampling kernel to HIP
+  #19776 -- REJECT-OTHER-MODEL-FAMILY+MULTIMODAL; [FIX] [SGLang-Diffusion] Suppress noisy torch.compile logs during first forward pass
+  #20029 -- REJECT-FAMILY+ROUTER; Feat: qwen3.5 logits processor
+  #20097 -- REJECT-OTHER-MODEL-FAMILY; [Feature] Olmo Hybrid model 7B
+  #20141 -- REJECT-OTHER-MODEL-FAMILY; [Model] Jamba Support
+  #20370 -- REJECT-OTHER-MODEL-FAMILY; [Bug] Qwen3.5 with AWQ Quantization Startup issue
+  #20413 -- REJECT-OTHER-MODEL-FAMILY; [Feature] Add support to topk=10(Qwen3.5) for customized DeepEP
+  #20422 -- REJECT-HW-NOT-RUN; [NPU] Hybrid mtp npu
+  #20615 -- REJECT-MULTIMODAL-NOT-RUN; [SGLang-Diffusion LLM] Add inference support for d3LLM models (arXiv:2601.07568)
+  #20618 -- REJECT-HW-NOT-RUN; fix(quantization): enable NVFP4 auto-detection on ROCm
+  #20879 -- REJECT-CONFIG-NOT-RUN,REJECT-MULTIMODAL-NOT-RUN; [diffusion] feat: add KV cache pipeline for FLUX.2-klein-9b-kv
+  #21473 -- REJECT-OTHER-MODEL-FAMILY/CFG-NOT-RUN; [Kernel] Add FP8 MoE kernel config for Qwen3.5-122B on NVIDIA H200 NVL
+  #21553 -- REJECT-OTHER-MODEL-FAMILY; fix: Fix error output msg when serving kimi-k2.5 with enable_attn_tp_input_scattered and f
+  #21560 -- REJECT-OTHER-MODEL-FAMILY,REJECT-RL-NOT-RUN; [RL] [misc] fix weight_checker: FP8 dequant, scale handling, and threshold support
+  #21627 -- REJECT-HW-NOT-RUN,REJECT-CONFIG-NOT-RUN; [AMD] Enable MXFP4 KV cache on MI355X (--kv-cache-dtype fp4_e2m1)
+  #21799 -- REJECT-ROUTER-NOT-RUN; [Bugfix] Fix missing custom logit processor in SPEC_V2 verify
+  #21860 -- REJECT-OTHER-MODEL-FAMILY; [Feature] Marconi admission
+  #21862 -- REJECT-OTHER-MODEL-FAMILY; [Feature] Marconi eviction
+  #21889 -- REJECT-HW-NOT-RUN; [AMD] Enable FP4 (E2M1) KV cache quantization for NSA with TileLang backend
+  #21953 -- REJECT-OTHER-MODEL-FAMILY+MULTIMODAL; [Bug][VLM] Fix Kimi K2.5 image re-embedding device mismatch
+  #22383 -- REJECT-RL-NOT-RUN; [RL] Support nvfp4 in-place weight update and online input scale
+  #22455 -- REJECT-OTHER-MODEL-FAMILY/CFG-NOT-RUN; Fix Qwen3.5 crash with M=0 tokens under DP attention + AllToAll MoE backend
+  #22866 -- REJECT-OTHER-MODEL-FAMILY; [Model] Add JoyAI-LLM Flash NextN support for speculative decoding
+  #22929 -- REJECT-OTHER-MODEL-FAMILY; Add NVFP4 per-expert weight loading for Gemma 4 MoE models
+  #23003 -- REJECT-CONFIG-NOT-RUN; fix(disagg): support per-GPU JSON mapping in --disaggregation-ib-device
+  #23167 -- REJECT-CONFIG-NOT-RUN; [feat] Enable DeepGEMM Mega MoE as MoE layer runner backend in NVLink domain
+  #23257 -- REJECT-OTHER-MODEL-FAMILY/CFG-NOT-RUN; Fix double-reduce in DeepseekV2MoE with flashinfer_cutedsl + EP + DP-attention
+  #23318 -- REJECT-CONFIG-NOT-RUN; disaggregation: add shm_pinned backend for single-node PCIe transfer
+  #23372 -- REJECT-HW-NOT-RUN; [NPU] Add CI tests for Speculative Decoding
+  #23424 -- REJECT-HW-NOT-RUN+FAMILY; [AMD] support new model amd/DeepSeek-R1-0528-MXFP4-MTP-MoEFP4
+  #23462 -- REJECT-HW-NOT-RUN+FAMILY; [NPU]MTP support for Qwen3.5
+  #23468 -- REJECT-OTHER-MODEL-FAMILY; [Bug] fix accuracy issue when run qwen3.5 and  enable pcg and set piecewise-cuda-graph-com
+  #23783 -- REJECT-HW-NOT-RUN; support granite hybrid model on npu
+  #23859 -- REJECT-OTHER-MODEL-FAMILY; Fix: auto-detect Qwen3.5/3.6 MTP draft model path for speculative decoding
+  #24290 -- REJECT-OTHER-MODEL-FAMILY; [LoRA] Add Kimi K2.5 NVFP4 expert LoRA support
+  #24430 -- REJECT-OTHER-MODEL-FAMILY; [model-support] Add support for Bamba
+  #24497 -- REJECT-MULTIMODAL-NOT-RUN; [Models] mimo_audio: fall back to SDPA varlen on non-Hopper CUDA
+  #24576 -- REJECT-CONFIG-NOT-RUN; [LoRA][MoE] Fix EP correctness: NVFP4 cutlass_moe_params sizing + Triton OOB pointer clamp
+  #24597 -- REJECT-HW-NOT-RUN; Enhance GDN kernel for ascend with chunked prefill metadata pre-compute for ascend backend
+  #24706 -- REJECT-MULTIMODAL-NOT-RUN; [VLM] vision_attention: honor s_aux/window_size in VisionTritonAttention via SDPA fallback
+  #24765 -- REJECT-OTHER-MODEL-FAMILY; fix: Prevent Qwen3.5  startup crash on unmapped expert weights
+  #24909 -- REJECT-HW-NOT-RUN; [AMD] Support MXFP4 dense and MoE layer for AMD CDNA3
+  #25028 -- REJECT-HW-NOT-RUN+FAMILY; [NPU] Support Longcat Flash for NPU
+  #25361 -- REJECT-CONFIG-NOT-RUN; Fix disagg overlap scheduler grammar sync for spec_v2 + guided decoding
+  #25916 -- REJECT-HW-NOT-RUN+FAMILY; [XPU] Fix FP8 KV cache support for ModelOpt quantized models (e.g. Llama-3.3-70B-FP8)
+  #26133 -- REJECT-OTHER-MODEL-FAMILY; Fix DeepSeek-V2 MoE/MLA correctness + perf with padded forward batches
+  #26153 -- REJECT-MULTIMODAL-NOT-RUN; [Feature] Support SANA-WM (camera-controlled TI2V world model)
+  #26560 -- REJECT-CONFIG-NOT-RUN; [P/D disagg] Add HiRadixCache (hierarchical KV cache) for decode disaggregation
+  #26657 -- REJECT-HW-NOT-RUN+FAMILY; [MUSA]: Add Qwen3_5 flashinfer linear attention backend
+  #26720 -- REJECT-OTHER-MODEL-FAMILY; [Bug Fix] Correct dp_gather for DeepSeek-V4 TP+DP+DPA configurations
+  #27016 -- REJECT-OTHER-MODEL-FAMILY+MULTIMODAL; [diffusion] Progressive resolution growing for FLUX.2 via GPU DCT upsampling with up to 2X
+  #27020 -- REJECT-HW-NOT-RUN; Improve xpu gdn
+  #27112 -- REJECT-OTHER-MODEL-FAMILY; Add fused moe triton config for Qwen3.5-397B-A17B in triton3.6.0
+  #27211 -- REJECT-OTHER-MODEL-FAMILY; [Qwen3.5] Add FlashInfer CuteDSL fused combine for DeepEP LL MoE
+  #27452 -- REJECT-HW-NOT-RUN; [CI] fix: skip Mamba attention tests when sgl-kernel CPU extension is unavailable
+  #27544 -- REJECT-HW-NOT-RUN; [Fix] mamba: add XPU support for causal_conv1d kernel dispatch
+  #27683 -- REJECT-HW-NOT-RUN; Pre-compute chunked metadata for GDN layers in NPU
+  #27684 -- REJECT-RL-NOT-RUN; [RL] fix: flashinfer_cutedsl weight reload in ModelOptNvFp4FusedMoEMethod
+  #27769 -- REJECT-ROUTER-NOT-RUN; fix: apply custom logit processors in EAGLE v2 verify path
+  #27771 -- REJECT-ROUTER-NOT-RUN; fix: expand custom logit processor params per token in speculative de…
+  #27778 -- REJECT-ROUTER-NOT-RUN; feat: add repetition truncation logit processor
+  #27805 -- REJECT-OTHER-MODEL-FAMILY; [HiCache] Support draft KV pool for UnifiedRadixCache(DeepSeekV4)
+  #27899 -- REJECT-OTHER-MODEL-FAMILY; [Fix] Register Qwen3_5ForCausalLM/Qwen3_5MoeForCausalLM for text-only checkpoints
+  #27916 -- REJECT-OTHER-MODEL-FAMILY; Fix MiMo-V2 expert routing on TopK-bypassing MoE backends
+  #27992 -- REJECT-MULTIMODAL-NOT-RUN; [diffusion] Add FlashInfer trtllm-gen skip-softmax (BLASST) attention backend for DiT
+  #28010 -- REJECT-SPEC-FAMILY-NOT-RUN; Add DFLASH Mamba/GDN reduced-cache replay
+  #28015 -- REJECT-RL-NOT-RUN; Fix BF16 RL weight update with non-routed flashinfer_trtllm MoE backend
+  #28025 -- REJECT-OTHER-MODEL-FAMILY; [DeepSeek-V4-Flash][SM120] FlashInfer MXFP4 path with custom SM120 FlashMLA
+  #28077 -- REJECT-OTHER-MODEL-FAMILY; Add tuned fused-MoE Triton config for Gemma-4 FP8 on RTX PRO 6000 Blackwell (SM120)
+  #28100 -- REJECT-OTHER-MODEL-FAMILY; [Bugfix] MiMo-V2: support plain [Q;K;V] fused qkv_proj checkpoints
+  #28197 -- REJECT-OTHER-MODEL-FAMILY; feat: Support speculative verification for KDA/Kimi-Linear
+  #28355 -- REJECT-OTHER-MODEL-FAMILY; feat: add FlashInfer cutlass FP8 block-scale MoE backend for Qwen3.5
+  #28501 -- REJECT-HW-NOT-RUN; 【bugfix】Fix the issue of NPU platform stress testing crashing
+  #28552 -- REJECT-OTHER-MODEL-FAMILY; Add Triton block-FP8 GEMM tuned configs for Qwen3.5 on Blackwell SM120
+  #28557 -- REJECT-MULTIMODAL-NOT-RUN; [diffusion] Add Qwen-Image ModelOpt NVFP4 support
+  #28574 -- REJECT-OTHER-MODEL-FAMILY; [Kimi K2.5] Fuse deferred MoE finalize into next-layer AR + residual + RMSNorm
+  #28620 -- REJECT-OTHER-MODEL-FAMILY; [DeepSeek V4 Flash] Add SM89 FP8 indexer fallback
+  #28889 -- REJECT-HW-NOT-RUN; [AMD] Use native e4m3fnuz fp8 GEMM for FLUX.2 modelopt-FP8 on gfx942
+  #29045 -- REJECT-HW-NOT-RUN; [NPU] W4A4 MoE: optional fused mega_moe_w4a4 kernel dispatch (default-off)
+  #29076 -- REJECT-OTHER-MODEL-FAMILY; bench_one_batch: init Mamba SSU backend for hybrid models (NemotronH)
+  #29213 -- REJECT-MULTIMODAL-NOT-RUN; [Diffusion] Add checkpoint namespace resolver for fused weights and quant metadata  
+  #29269 -- REJECT-MULTIMODAL-NOT-RUN; [Diffusion] Cache-DiT 1.5.0: DMD Calibrator, SVDQuant DQ, etc.
+  #29297 -- REJECT-RL-NOT-RUN; feat(glm4-moe): training-free sparse attention indexer for decode
+  #29304 -- REJECT-OTHER-MODEL-FAMILY; [Feature] NVFP4 KV cache: SM120 + SM121, Gemma-4 VO-split, FP4 prefix-cache correctness (b
+  #29305 -- REJECT-OTHER-MODEL-FAMILY+MULTIMODAL; [Feature] DiffusionGemma: retire Triton onto FA2 NVFP4 KV cache (stacked on #29304 + #2805
+  #29335 -- REJECT-OTHER-MODEL-FAMILY/CFG-NOT-RUN; Add Qwen3.5-397B GB300 FP4 disaggregated serving modes
+  #29495 -- REJECT-HW-NOT-RUN;  [NPU] correct SSM state transpose for spec decode extend with prefix
+  #29586 -- REJECT-OTHER-MODEL-FAMILY; GLM-5.2 FP8 DSA support on SM120 (RTX PRO 6000)
+  #29633 -- REJECT-HW-NOT-RUN; [AMD][Bugfix] Mamba radix cache: avoid the degenerate single-token (M=1) recompute that co
+  #29732 -- REJECT-HW-NOT-RUN; Refactor NPU state layout and add unit tests for verification
+  #29832 -- REJECT-HW-NOT-RUN; [AMD] Enable mamba extra_buffer on ROCm + shared-prefix donate correctness test
+  #29890 -- REJECT-OTHER-MODEL-FAMILY; fix(config): treat v_head_dim=0 as unset when deriving model shapes (deepseek-vl2-tiny war
+  #29940 -- REJECT-OTHER-MODEL-FAMILY; Fix conv_state_indices handling and add mamba_track_indices parameter
+  #29946 -- REJECT-OTHER-MODEL-FAMILY; Fix : fall back to NCCL all-reduce for symm-mem during CUDA graph capture
+  #29963 -- REJECT-OTHER-MODEL-FAMILY/CFG-NOT-RUN; Add B200 NVFP4 MTP deployment to DeepSeek-R1 cookbook recipe
+  #29965 -- REJECT-HW-NOT-RUN; [AMD] Fix mamba radix cache auto strategy crashing on ROCm (fall back to no_buffer)
+  #30119 -- REJECT-SPEC-FAMILY-NOT-RUN; Fix DFlash draft model crash with modelopt_mixed quantization
+  #30141 -- REJECT-OTHER-MODEL-FAMILY; [Feature] Add --config-format alias for --model-config-parser (Mistral vLLM parity, part 1
+  #30161 -- REJECT-FAMILY+ROUTER; [Gemma4] Support per-request max_soft_tokens (image resolution) via images_config and mm_p
+  #30175 -- REJECT-OTHER-MODEL-FAMILY/CFG-NOT-RUN; [Fix] Populate n-gram embedding token table in PD-disaggregation event loops (LongCat-2.0)
+  #30189 -- REJECT-OTHER-MODEL-FAMILY; [LoRA] Fix crash loading GDN in_proj_qkv/in_proj_z adapters for Qwen3.5
+  #30243 -- REJECT-OTHER-MODEL-FAMILY; [KDA] Support extra_buffer mamba radix cache for Kimi Linear
+  #30317 -- REJECT-HW-NOT-RUN; [NPU] Add mxfp8-w8a8 moe quantization and deepep new quantization support for npu
+  #30407 -- REJECT-HW-NOT-RUN; [AMD] [Fix] Skip split-KV EAGLE-verify fast path for MLA to fix triton spec GPU fault
+  #30466 -- REJECT-CONFIG-NOT-RUN; [Spec] Distributed argmax for greedy EAGLE draft over TP (multimem NVLink scatter)
+  #30473 -- REJECT-OTHER-MODEL-FAMILY; [sglang-miles] Fix DeepseekV3ForCausalLMNextN init: set unified-loader attrs bypassed by p
+  #30546 -- REJECT-OTHER-MODEL-FAMILY; [DSA] Opt-in MXFP4 index-K cache for GLM-5.x / DeepSeek-V3.2 (port of #26209), with fused-
+  #30625 -- REJECT-OTHER-MODEL-FAMILY+MULTIMODAL; [MiMo] fix: Disable default attn_implementation in MiMoVisionTransformer
+  #30705 -- REJECT-MULTIMODAL-NOT-RUN; [Diffusion] Support SM12.x GPUs (RTX PRO 6000 Blackwell / RTX 50xx / DGX Spark GB10)
+  #30952 -- REJECT-OTHER-MODEL-FAMILY; Auto-select DeepSeek V4 FP4 MoE backends
+  #31213 -- REJECT-OTHER-MODEL-FAMILY; [GLM-5.2] Keep GlmMoeDsa MoE e_score_correction_bias in fp32
+  #31214 -- REJECT-HW-NOT-RUN+FAMILY; [ROCm] Fix EAGLE spec-decode verify silently sampling greedy on HIP
+  #31269 -- REJECT-OTHER-MODEL-FAMILY; [Deepseek v4 & GLM-5.2] SM90 nvfp4 kvcache
+  #31572 -- REJECT-OTHER-MODEL-FAMILY; [Docs] Add Slurm cluster deployment to Qwen3.5 cookbook
+  #31644 -- REJECT-OTHER-MODEL-FAMILY; docs(cookbook): move rolling :dev pages to :latest where support shipped in v0.5.15
+  #31786 -- REJECT-OTHER-MODEL-FAMILY; fix: preserve content before DeepSeek streaming tool calls
+  #31821 -- REJECT-OTHER-MODEL-FAMILY; [Feature] Decode context parallelism (DCP) for DSA models (DeepSeek V3.2, GLM-5.x)
+  #31846 -- REJECT-HW-NOT-RUN; [AMD] ci: quarantine pre-existing nested unit failures + enable remainder on AMD
+  #32201 -- REJECT-OTHER-MODEL-FAMILY; Add one-sided RMA support with ncclPutSignal/ncclWaitSignal, registered-window handling, a
+  #32266 -- REJECT-HW-NOT-RUN+FAMILY; :construction: [WIP][llm][npu][quant] Fix offline W8A8 MXFP8 quantization for Qwen3.5 on A
+  #32329 -- REJECT-CONFIG-NOT-RUN; feat: add NCCL EP as optional moe-a2a-backend (low-latency decode)
+  #32497 -- REJECT-OTHER-MODEL-FAMILY; [Spec][DSV4] perf: Compile draft-extend hc_head during CUDA graph capture
+  #32528 -- REJECT-MULTIMODAL-NOT-RUN; [diffusion] model: add native BAGEL multimodal support
+  #32552 -- REJECT-HW-NOT-RUN+FAMILY; [AMD] Enable mamba-extra-buffer for Qwen3.5 on ROCm
+  #32722 -- REJECT-OTHER-MODEL-FAMILY/CFG-NOT-RUN; [RED regression] Test GLM-5.2 PD + DP attention + MTP
+  #32732 -- REJECT-CONFIG-NOT-RUN; [P/D disagg] Support decode radix cache for mamba/SSM hybrid models (KDA/MLA)
+  #32805 -- REJECT-HW-NOT-RUN+FAMILY; [NPU] Support Jet-Nemotron-2B on Ascend
+  #32904 -- REJECT-HW-NOT-RUN+FAMILY; [AMD] Enable MiniMax-M3-MXFP4 (Quark) on ROCm
+  #32980 -- REJECT-HW-NOT-RUN; [AMD] Enable ReplaySSM speculative decode on ROCm
+  #33284 -- REJECT-OTHER-MODEL-FAMILY; [Spec] Gate GLM-5.2 MTP index sharing by backend capability
+  #33681 -- REJECT-OTHER-MODEL-FAMILY+MULTIMODAL; [diffusion] feat: support FP8 Qwen3-VL text encoder for MiniMax-H3
+  #33755 -- REJECT-OTHER-MODEL-FAMILY; docs(cookbook): Gemma-4 re-bench + migration faithfulness fixes (WIP)
+  #33767 -- REJECT-OTHER-MODEL-FAMILY; [HiCache] [DCP] Support Kimi-K3 DCP decode offload to Mooncake L3
+  #33795 -- REJECT-FAMILY+SPEC-FAMILY; Fix(DSpark): sync device before CUDA graph capture to avoid JIT race
+  #33805 -- REJECT-FAMILY+SPEC-FAMILY; Fix single-request generation being killed early on hybrid-SWA models under DFLASH/DSPARK 
+  #33813 -- REJECT-OTHER-MODEL-FAMILY; Preserve streaming preamble before DeepSeek DSML tool calls for all marker forms
+  #33863 -- REJECT-OTHER-MODEL-FAMILY/CFG-NOT-RUN,REJECT-SPEC-FAMILY-NOT-RUN; [Feature] PP Support PD + DSpark
+  #33957 -- REJECT-OTHER-MODEL-FAMILY; [MoE] [minimax-m3] Support FlashInfer TRT-LLM MXFP8 MoE
+  #33972 -- REJECT-HW-NOT-RUN; [NPU] Add TeleChat4 support with fused mHC backends
+  #33988 -- REJECT-OTHER-MODEL-FAMILY+MULTIMODAL; fix: load Gemma-4 vision tower unquantized under compressed-tensors
+  #33991 -- REJECT-OTHER-MODEL-FAMILY+MULTIMODAL; feat(diffusion): add MiniMax H3 AdaLN cache
+  #34134 -- REJECT-OTHER-MODEL-FAMILY; Integrate the CuTe DSL allreduce fusion from FlashInfer and tune for GLM-5.2
+  #34139 -- REJECT-OTHER-MODEL-FAMILY,REJECT-FAMILY+SPEC-FAMILY; [Bugfix] DeepSeek V4 DSpark: fix shared-expert loading performance regression
+  #34162 -- REJECT-OTHER-MODEL-FAMILY+MULTIMODAL; [diffusion] Add SageAttention3 packed varlen path for MiniMax-H3
+  #34255 -- REJECT-OTHER-MODEL-FAMILY/CFG-NOT-RUN,REJECT-MULTIMODAL-NOT-RUN; [VLM] Optimize exact Kimi-K2.5/K2.7 EPD preprocessing
+  #34268 -- REJECT-MERGED-TO-SIDE-BRANCH cheng/gc-sr-5-debt-ratchet; config: the post-publish consumers of the pinned surface read the bags
+  #34279 -- REJECT-OTHER-MODEL-FAMILY; Cookbook: add Ling-3.0-tiny
+  #34343 -- REJECT-OTHER-MODEL-FAMILY/CFG-NOT-RUN,REJECT-SPEC-FAMILY-NOT-RUN; [WIP][DCP] Support PD disaggregation with DCP + DSPARK
+  #34348 -- REJECT-OTHER-MODEL-FAMILY+MULTIMODAL; [Diffusion] Restore ERNIE norm fusion on SM120
+  #34387 -- REJECT-HW-NOT-RUN; :construction: [WIP][llm][npu] Split mixed chunked-prefill FIA into prefill/decode calls o
+  #34422 -- REJECT-HW-NOT-RUN+FAMILY; [AMD][Perf] Fuse the GDN gate reshape copy into the gated RMSNorm kernel for Qwen3.5-archi
+  #34469 -- REJECT-HW-NOT-RUN; [ROCm] Size the GDN chunk-h V-tile to the gfx950 grid: 1.31x in-server, bit-identical
+  #34499 -- REJECT-FAMILY+SPEC-FAMILY; Fix dsv4 dspark swa pool accounting
+  #34571 -- REJECT-OTHER-MODEL-FAMILY; fix: resolve Qwen3.5 NEXTN HiCache startup failure
+  #34574 -- REJECT-HW-NOT-RUN; [XPU] Enable symmetric-memory one-shot all-reduce
+  #34684 -- REJECT-OTHER-MODEL-FAMILY; [Fix] Gemma4: pick a deterministic-capable attention backend under --enable-deterministic-
+  #34726 -- REJECT-HW-NOT-RUN,REJECT-CONFIG-NOT-RUN; Feiyue/mori pp dcp
+  #34742 -- REJECT-FAMILY+SPEC-FAMILY; Fix DSpark draft logits when the target lm_head is quantized
+  #34744 -- REJECT-OTHER-MODEL-FAMILY; fix: support Qwen3_5MoeForCausalLM in fused MoE tuning utils
+  #34794 -- REJECT-HW-NOT-RUN; [NPU] Fix NEXTN/MTP conv-window layout corrupting verify output
+  #34841 -- REJECT-OTHER-MODEL-FAMILY/CFG-NOT-RUN,REJECT-MULTIMODAL-NOT-RUN; [Diffusion] Validate MiniMax-H3 quality=high on B300
+  #34846 -- REJECT-FAMILY+SPEC-FAMILY; [DSpark] Fix draft MoE expert-location dispatch to restore speculative acceptance
+  #34934 -- REJECT-OTHER-MODEL-FAMILY; [Perf] Fuse prefill norm/act quantization for NVFP4 W4A4 hybrid models (Qwen3.5 family)
+  #35013 -- REJECT-HW-NOT-RUN; fix(npu): split packed MTP HiCache transfers by pool
+  #35152 -- REJECT-OTHER-MODEL-FAMILY; [Fix] Skip redundant routed_scaling_factor in TBO DeepseekV2MoE.op_output
+  #35165 -- REJECT-HW-NOT-RUN; [XPU] Skip the EAGLE verify-decision TP broadcast on XPU
+  #35237 -- REJECT-OTHER-MODEL-FAMILY; Add SM100 NVFP4 KV cache support for GLM-5.2 DSA
+  #35249 -- REJECT-OTHER-MODEL-FAMILY; fix(sgl-model-gateway): parse prefilled Qwen3 reasoning
+  #35250 -- REJECT-HW-NOT-RUN+FAMILY; [AMD] Qwen3.5: read token count from the fused AR quant tuple
+  #35288 -- REJECT-FAMILY+SPEC-FAMILY; fix(spec): quantized dspark lm head
+  #35359 -- REJECT-MULTIMODAL-NOT-RUN; [Diffusion] Compile-plan trajectory promotion gate
+  #35364 -- REJECT-CONFIG-NOT-RUN; [PD] Fall back to cpu_tensor when host-pool retraction cannot fit
+  #35366 -- REJECT-HW-NOT-RUN; [XPU] fix: drop CUDA assumptions from the mamba/GDN and weight-load paths
+  #35367 -- REJECT-HW-NOT-RUN; [XPU] Fix device assumptions and the ComfyUI passthrough denoise path
+  #35417 -- REJECT-OTHER-MODEL-FAMILY; [Kernel] Use Cake source Router GEMM for DeepSeek, GLM, and Mistral
+  #35462 -- REJECT-SPEC-FAMILY-NOT-RUN; [Spec] Support quantized target lm_head in DFlash2 selector
+  #35478 -- REJECT-OTHER-MODEL-FAMILY/CFG-NOT-RUN; fix(overrides): default moe_runner_backend to flashinfer_trtllm_routed for minimax-m3 nvfp
+  #35539 -- REJECT-FAMILY+SPEC-FAMILY; [Bugfix] Align deterministic DSpark target verify with Triton decode
+  #35541 -- REJECT-FAMILY+SPEC-FAMILY; [Fix] Preserve deterministic DSpark target-verify parity
+  #35579 -- REJECT-SPEC-FAMILY-NOT-RUN; [Spec] Fold a quantized-head DFlash2 selector into the draft CUDA graph
+  #35655 -- REJECT-QWEN3.8-27B-SIBLING (different model variant; DFlash2 not run); [docs] Add DFlash2 speculative cells to the Qwen3.8-27B cookbook
+  #35717 -- REJECT-CONFIG-NOT-RUN; [Scheduler][PD][Perf] Add deficit-aware minimum-transfer victim selection for decode retra
+  #35744 -- REJECT-OTHER-MODEL-FAMILY; Fix Qwen3.5 mRoPE positions silently dropped by fused QK RMSNorm+RoPE kernel
+  #35746 -- REJECT-OTHER-MODEL-FAMILY+MULTIMODAL; [multimodal] MiniMax-H3: accept target.width/height as an exact canvas
+  #35815 -- REJECT-MERGED-TO-SIDE-BRANCH qwen_optimize; feat(hicache): support Ascend Mamba states with FIA and async IO
+  #35821 -- REJECT-MERGED-TO-SIDE-BRANCH qwen_optimize; Fix mamba radix cache ghost node and clamp spec track step
+  #35827 -- REJECT-HW-NOT-RUN; [NPU]fix gdn prefix cache
+  #35846 -- REJECT-OTHER-MODEL-FAMILY; feat(minimax): integrate FlashInfer MSA on Blackwell
+  #35853 -- REJECT-MERGED-TO-SIDE-BRANCH qwen_optimize; [NPU]fix gdn prefix cache
+  #35902 -- REJECT-OTHER-MODEL-FAMILY,REJECT-FAMILY+SPEC-FAMILY; docs: link the Ling DSPARK option to its HF model card
+  #35943 -- REJECT-OTHER-MODEL-FAMILY; [inkling] serve NVFP4 with per-token activation scales
+  #35968 -- REJECT-MERGED-TO-SIDE-BRANCH qwen_optimize; [NPU]fix gdn prefix cache align length
+  #36077 -- REJECT-SPEC-FAMILY-NOT-RUN; [Bugfix] Fix Qwen3.8 NVFP4 DFlash with Full prefill CUDA graphs
+  #36096 -- REJECT-HW-NOT-RUN+FAMILY; [NPU] keep Qwen3.6 hybrid SSM state stable across radix modes
+  #36134 -- REJECT-HW-NOT-RUN; [XPU] Support DeepEP expert parallelism on Intel XPU
+  #36161 -- REJECT-HW-NOT-RUN; fix: resolve CPU device compatibility issues of Hy3
+  #36166 -- REJECT-OTHER-MODEL-FAMILY; [Bugfix] Fix Dots NextN post-load initialization
+  #36188 -- REJECT-HW-NOT-RUN; [NPU] add Ascend MemCache storage backend (HiCache L3) and fix L2 cache release issues
+  #36214 -- REJECT-CONFIG-NOT-RUN; [PP] Batch independent chunks for small-chunk disaggregated prefill
+  #36244 -- REJECT-OTHER-MODEL-FAMILY+MULTIMODAL; [diffusion] MiniMax-H3: shard QKV weights across TP and Ulysses
+  #36269 -- REJECT-HW-NOT-RUN; [AMD] Add ROCm MegaMoE path via AITER MegaMoEV2
+  #36312 -- REJECT-OTHER-MODEL-FAMILY; [Fix] Apply Bailing gemm1_clamp_limit on the FlashInfer CUTLASS MXFP4 path
+  #36373 -- REJECT-OTHER-MODEL-FAMILY; [Bugfix] Fix GemmaRMSNorm buffer handling in OffloaderV1
+  #36402 -- REJECT-OTHER-MODEL-FAMILY; [Docs] Prefer FlashInfer Mamba for Nemotron 3 Ultra
+  #36453 -- REJECT-QWEN3.8-27B-SIBLING (different model variant; DFlash2 not run); docs: drop NEW tag from Qwen3.8-27B cookbook page
+  #36479 -- REJECT-OTHER-MODEL-FAMILY+MULTIMODAL; [diffusion] prefer cuDNN SDPA for LongCat on SM120
+  #36494 -- REJECT-MULTIMODAL-NOT-RUN; [diffusion] prefer cuDNN SDPA for Wan 1.3B on SM120
+  #36516 -- REJECT-OTHER-MODEL-FAMILY; [spec decoding] Support block verification for rejection sampling
+  #36517 -- REJECT-OTHER-MODEL-FAMILY; [Bugfix] Reject corpus removal during pending async load (#36500)
+  #36525 -- REJECT-OTHER-MODEL-FAMILY+MULTIMODAL; [diffusion] prefer cuDNN SDPA for FastHunyuan on SM120
+  #36565 -- REJECT-OTHER-MODEL-FAMILY+MULTIMODAL; [diffusion] prefer cuDNN SDPA for Cosmos3-Edge video on SM120
+  #36581 -- REJECT-HW-NOT-RUN+FAMILY; [AMD] Enable DeepSeek-V4 FP4 Indexer on ROCm gfx950
+  #36582 -- REJECT-OTHER-MODEL-FAMILY; [Bugfix] [OffloaderV1]Fix GemmaRMSNorm buffer handling
+  #36601 -- REJECT-HW-NOT-RUN; [AMD] Support Qwen3.8-Flash-Next MXFP4 on ROCm
+  #36649 -- REJECT-MERGED-TO-SIDE-BRANCH qwen4-main-squashed; fix(qsa): enable trtllm-gen sparse decode on sm_121 (GB10 / DGX Spark)
+  #36667 -- REJECT-MERGED-TO-SIDE-BRANCH qwen4-main-squashed; chore: make qwen4-main-squashed pre-commit clean
+  #36772 -- REJECT-MERGED-TO-SIDE-BRANCH qwen4-main-squashed; fix(qwen4): accept qwen_sparse_attention layer type alias
+  #36806 -- REJECT-MERGED-TO-SIDE-BRANCH qwen4-main-squashed; fix(qsa): route exact SM120 to FlashInfer sparse decode
+  #36844 -- REJECT-OTHER-MODEL-FAMILY/CFG-NOT-RUN; docs(cookbook): add --enable-dp-lm-head to the Kimi-K3 GB200 decode cell
+  #36845 -- REJECT-MERGED-TO-SIDE-BRANCH qwen4-main-squashed; fix(qsa): restore SM121 correctness with Humanize and Kernel Design Agent
+  #36884 -- REJECT-MERGED-TO-SIDE-BRANCH xinyuan/glm-5.3-flash-support; fix(glm): mirror should_use_dp_reduce_scatterv() into the MHC communicator
+  #36885 -- REJECT-MERGED-TO-SIDE-BRANCH xinyuan/glm-5.3-flash-support; fix(kda): stop remapping the -1 padding sentinel onto a live mamba slot
+  #36895 -- REJECT-OTHER-MODEL-FAMILY/CFG-NOT-RUN; [docs] GLM-5.3-Flash: stop pinning TileLang DSA on the H100/H200 cells
+  #36926 -- REJECT-CONFIG-NOT-RUN; Fix disaggregated prefill cache leak after abort
+  #36930 -- REJECT-HW-NOT-RUN,REJECT-MULTIMODAL-NOT-RUN; [Diffusion] Accept native AMD FP8 dtype in offload test
+  #37068 -- REJECT-MERGED-TO-SIDE-BRANCH qwen4-main-squashed; [Qwen4-Exp] File-backed PLE table backend for unified-memory devices (GB10 / DGX Spark)
+  #37126 -- REJECT-ROUTER-NOT-RUN; RFC 0001: sglang-radix — a pure-Rust radix tree for the prefix cache
+  #37196 -- REJECT-OTHER-MODEL-FAMILY; [Comm] Share the CuTe DSL AR fusion core and wire it for DeepSeek-V3 / GLM-5.x
+  #37250 -- REJECT-MERGED-TO-SIDE-BRANCH xinyuan/glm-5.3-flash-support; fix(kda): preserve split-grid program ids
+  #37415 -- REJECT-CONFIG-NOT-RUN; [unified-memory] PD disaggregation for MHA full-attention hybrids
+  #37466 -- REJECT-MERGED-TO-SIDE-BRANCH sglang-miles; [LoRA] Restore GDN in_proj target-module choices lost in the rebase
+  #37676 -- REJECT-MULTIMODAL-NOT-RUN; [diffusion] fasth3: run VSA-H3 on FastVideo's native Blackwell block-sparse kernel
+  #37782 -- REJECT-OTHER-MODEL-FAMILY; [GLM-5.3-Flash] NextN/MTP crashes due to embedding gather goes out of bounds at TP8
+  #37887 -- REJECT-MERGED-TO-SIDE-BRANCH sglang-miles; Allow the GDN out_proj LoRA target in the CLI
+  #37954 -- REJECT-MERGED-TO-SIDE-BRANCH sglang-miles; fix(qwen3_5): let the GDN gated norm follow the model's device
+  #38060 -- REJECT-MERGED-TO-SIDE-BRANCH xinyuan/glm-5.3-flash-support; [GLM-5.3] Remove remaining context-parallel additions
+  #38061 -- REJECT-MERGED-TO-SIDE-BRANCH xinyuan/glm-5.3-flash-support; [GLM-5.3] Extract KPool-specific DSA backend helpers
+  #38121 -- REJECT-MERGED-TO-SIDE-BRANCH qwen4-main-squashed; [Qwen4-Exp] Load nvidia/Qwen3.8-Flash-Next-NVFP4 (ModelOpt MIXED_PRECISION) on qwen4-main-
+  #38123 -- REJECT-MERGED-TO-SIDE-BRANCH qwen4-main-squashed; Fix PLE file prefetch offsets for TP shards
+  #38168 -- REJECT-OTHER-MODEL-FAMILY; [Kernel] SM120 dense BF16 decode GEMM+GEMV for gemma-4-E2B (RTX 5090)
+  #38197 -- REJECT-HW-NOT-RUN; [NPU] Enable NGRAM speculative decoding on Ascend NPUs
+  #38290 -- REJECT-MERGED-TO-SIDE-BRANCH qwen4-main-squashed; [Kernel] Wait for the PDL dependency before loading the router bias (Triton + radix)
+  #38308 -- REJECT-MERGED-TO-SIDE-BRANCH qwen4-main-squashed; [qwen4-main-squashed] Cherry-pick #36811: avoid zero-bias allocation in fused softmax rout
+  #38363 -- REJECT-OTHER-MODEL-FAMILY; gguf: load Qwen3.5 / Qwen3-Next checkpoints correctly
+  #38367 -- REJECT-CONFIG-NOT-RUN; glm5_next: do not require a residual in the PP proxy tensors
+  #38372 -- REJECT-MERGED-TO-SIDE-BRANCH codex/deprecate-platform-prefill-cp; [Test] Remove obsolete CP mocks from NextN MM embedding tests
+  #38538 -- REJECT-OTHER-MODEL-FAMILY; Auto-select flashinfer_mxfp4 for Bailing V3 mixed FP8/MXFP4 checkpoints
+  #38879 -- REJECT-MERGED-TO-SIDE-BRANCH dsv4.1; [DeepSeek-V4.1] Optimize DSpark verify and MoE kernels on Blackwell
+  #38909 -- REJECT-HW-NOT-RUN; [AMD] Resolve QSA packed-varlen decode to aiter on HIP
+  #38952 -- REJECT-MERGED-TO-SIDE-BRANCH dsv4.1; Guard hc_split_sinkhorn against DP attention's empty idle batch
+  #38976 -- REJECT-MERGED-TO-SIDE-BRANCH dsv4.1; [DeepSeek-V4.1] Optimize small DSpark batches on Blackwell (BS1 803 tok/s)
+  #39052 -- REJECT-CONFIG-NOT-RUN; Fix disagg PP MTP for GLM5.2
+  #39142 -- REJECT-MERGED-TO-SIDE-BRANCH sglang-miles; [sglang-miles] Keep NVFP4 blockscale swizzle padding on device
+  #39161 -- REJECT-OTHER-MODEL-FAMILY; [Bugfix] Preserve complete Gemma speculative hidden-state captures
+  #39321 -- REJECT-HW-NOT-RUN+FAMILY; [Doc] [NPU] cookbook: add A3 deployment scenarios to GLM-5.2
+  #39370 -- REJECT-MERGED-TO-SIDE-BRANCH dsv4.1; [DSV4.1] Combine DSpark decode and prefill kernel optimizations
+  #39392 -- REJECT-MERGED-TO-SIDE-BRANCH sglang-miles; fix(dsv4): support R3 capture and MXFP4 online updates
+  #39418 -- REJECT-OTHER-MODEL-FAMILY/CFG-NOT-RUN; Verify the Ling-3.0-flash-VL FP4 lane on H200 and disable shared-expert fusion in quant re
+  #39625 -- REJECT-CONFIG-NOT-RUN; Enable PD disaggregation for Qwen4-Exp by sizing decode-side PLE state pools
+  #39806 -- REJECT-CONFIG-NOT-RUN; [DO NOT MERGE][CI] Test 1 gpu h100 compatibility with 1 gpu h200
+  #40054 -- REJECT-CONFIG-NOT-RUN; [CI] Check B200 NUMA mapping against sysfs numa_node
+  #40122 -- REJECT-HW-NOT-RUN; [AMD] Fix CUDA-only tensor checks in speculative JIT wrappers
+  #40242 -- REJECT-MERGED-TO-SIDE-BRANCH sglang-miles; Resolve HF LoRA targets through model-aware normalization
+  #40350 -- REJECT-OTHER-MODEL-FAMILY; Qwen3.5 CUDA shared-expert fusion and checkpoint loading fixes
+  #40447 -- REJECT-MULTIMODAL-NOT-RUN; [diffusion] keep Qwen-Image 2.1 prefix KV per layer under Cache-DiT
+  #40597 -- REJECT-HW-NOT-RUN+FAMILY; [AMD] Load serialized MXFP4 MTP draft experts for Qwen3.5
+  #40757 -- REJECT-HW-NOT-RUN; [AMD][gfx950] DSV4: fuse wo_b's GEMM with its all-reduce via mori cco
+  #40821 -- REJECT-MERGED-TO-SIDE-BRANCH sglang-miles; [sglang-miles] Colocated RL for hybrid-state models: flush order and bf16 MoE weight-updat
+  #40918 -- REJECT-MULTIMODAL-NOT-RUN; [diffusion] Qwen-Image 2.1: packed projections, SageAttention head-size fallback, channels
+  #41225 -- REJECT-HW-NOT-RUN; [XPU] Detect per-commit XPU tests dynamically in CI path filter
+  #41247 -- REJECT-MERGED-TO-SIDE-BRANCH sglang-miles; Fix KV offload synchronization
+  #41757 -- REJECT-CONFIG-NOT-RUN; [PD] Stop relying on positional layer mapping for DSA indexer state transfer
+  #41854 -- REJECT-HW-NOT-RUN; [AMD] Compress QSA extend groups that cross an exact-chunk-fill prefix
+  #42061 -- REJECT-HW-NOT-RUN; [AMD] Loosen quark MXFP4 MoE gsm8k thresholds to their observed spread
+  #42099 -- REJECT-OTHER-MODEL-FAMILY+MULTIMODAL; [Perf] Accelerate BF16 DiffusionGemma block decoding on Blackwell
+  #42483 -- REJECT-HW-NOT-RUN; [AMD] Pass a query-dtype cos_sin_cache to the HIP rotary_embedding fallback
+  #42820 -- REJECT-MERGED-TO-SIDE-BRANCH sglang-miles; [sglang-miles] Support P2P replica loading and target/draft weight updates
+  #42908 -- REJECT-MERGED-TO-SIDE-BRANCH codex/diffusion-deduplicate; [diffusion] Deduplicate KL VAE attention processor management
+  #43251 -- REJECT-MERGED-TO-SIDE-BRANCH yueming/p2p-s1; Quantized weight-update fixes: Qwen3.5 draft KV budget, UE8M0 partial blocks, mxfp8 fused 
+  #43637 -- REJECT-OTHER-MODEL-FAMILY; [Perf] scheduler: Remove implicit CUDA syncs from Mamba extend scheduling
+  #44154 -- REJECT-MERGED-TO-SIDE-BRANCH sglang-miles; [sglang-miles] Open a weight-update session only on an idle device
+  #44269 -- REJECT-MERGED-TO-SIDE-BRANCH kan/router-openai-main-parity; [Fix] sglang-processor: Send watermark only when the request sets it
+  #44332 -- REJECT-MERGED-TO-SIDE-BRANCH sglang-miles; [Fix] lora: Load fused-module members into their own buffer slots
+  #44717 -- REJECT-MERGED-TO-SIDE-BRANCH codex/muse-spark-stack-03-srt-tests; [Refactor] muse-spark: Consolidate layer modules into one package
+  #45231 -- REJECT-MERGED-TO-SIDE-BRANCH sglang-miles; [Feat] lora: serve DeepSeek-V4/V4.1 attention and shared-expert adapters
+  #45256 -- REJECT-MERGED-TO-SIDE-BRANCH beam-stack-02-kernels; [Feat] beam: Add Beam model, runtime support and checkpoints (4/7)
+  #45324 -- REJECT-HW-NOT-RUN,REJECT-MULTIMODAL-NOT-RUN; [Perf] [AMD] diffusion: Fuse the FLUX.2 SwiGLU into its FP8 quantize and drop the concaten
+  #45665 -- REJECT-HW-NOT-RUN; [Perf] [AMD] KDA: Fuse gfx950 prefill state and output
+  #45939 -- REJECT-MERGED-TO-SIDE-BRANCH sglang-miles; [sglang-miles] [Feat] lora: serve MiMo-V2.6 Flash/Pro adapters on the native FP8 + MXFP4 c
+  #46164 -- REJECT-MERGED-TO-SIDE-BRANCH rust-server-render-via-processor; [Refactor] rust-server: Tokenize and apply chat model rules through sglang-processor
+  #46195 -- REJECT-ROUTER-NOT-RUN; [Feat] sglang-processor: Tokenizer and chat-layer APIs for rust-server, and template selec
+  #46433 -- REJECT-FAMILY+SPEC-FAMILY; [Fix] speculative: Preserve NaN argmax semantics in DSpark kernels
+  #46473 -- REJECT-OTHER-MODEL-FAMILY; [Perf] [NVIDIA] kimi-k3: Low-latency SM107 path, prepared FP4 routing metadata and fused r
+  #46794 -- REJECT-HW-NOT-RUN; [Feat] [PPU] quantization: Support BF16 DeepGEMM for unquantized linear
+  #6802 -- REJECT-CI/TEST/DOCS-ONLY; Refactor apply fp8 linear
+  #6971 -- REJECT-NVFP4/modelopt-adjacent; closed-unmerged; recipe not ours; Remove redundant requesting to HF HUB when cache exists
+  #8573 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); Add lyra w4afp8 moe and linear
+  #8765 -- REJECT-keyword-adjacent; closed-unmerged; no fork gap proven; Ability to use custom-all-reduce on systems with more than 2 PCIe GPUs via env var
+  #8921 -- REJECT-NVFP4/modelopt-adjacent; closed-unmerged; recipe not ours; [Kernel] Fused RMS Norm Quant
+  #9737 -- REJECT-HiCache/PLE/spec-adjacent; closed-unmerged; no fork gap proven; update w4afp8_machete moe&linear
+  #10851 -- REJECT-NVFP4/modelopt-adjacent; closed-unmerged; recipe not ours; Support w4a16 nvfp4 quantization for CompressedTensors
+  #10866 -- REJECT-OTHER-MODEL-FAMILY (keyword adjacency only); [Feature] Accelerate Simple-EAGLE with a Fused Verify-Draft CUDA Graph 
+  #11049 -- REJECT-NOT-RUN: RemoteInstance draft weight load; Support quant model and draft model weight load by RemoteInstanceMode…
+  #13023 -- REJECT-HiCache/PLE/spec-adjacent; closed-unmerged; no fork gap proven; RFC: Page-Granular Free Path for PagedTokenToKVPoolAllocator
+  #13553 -- REJECT-SPEC-FAMILY: suffix decoding (ngram-style); [Feature] Add suffix decoding speculative algorithm
+  #13981 -- REJECT-SPEC-FAMILY: MHMTP multi-head MTP variant; our draft is NEXTN 1-layer; feat: Implement Multi-Head MTP (MHMTP) for improved speculative decoding
+  #15103 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); Support TP overlap on Blackwell
+  #15279 -- REJECT-SPEC-FAMILY: FP4 KV x EAGLE; neither run; Fix FP4 KV cache with EAGLE speculative decoding
+  #16638 -- REJECT-CI/TEST/DOCS-ONLY; refactor(server_args): use set_defaults for config file merging
+  #17009 -- REJECT-keyword-adjacent; closed-unmerged; no fork gap proven; feat: add support for bitwise weight verification via checksums
+  #17033 -- REJECT-keyword-adjacent; closed-unmerged; no fork gap proven; V2 Plan Stream Overlap + CUDA Graph Support
+  #17326 -- REJECT-TOOLING: parameter mapper utility; Parameter Mapper to convert hugging face parameter to sglang param and shard info
+  #17418 -- REJECT-SPEC-FAMILY: DP-Draft TP1 draft runner; Add DP‑Draft to run draft model with TP=1
+  #17752 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); Feature/sm89 cutlass block fp8 support
+  #18581 -- REJECT-NEVER-REACHABLE: FP4 KV auto-map; prod KV is fp8_e4m3; model_runner: auto map ModelOpt FP4/NVFP4 KV cache to fp4_e2m1#18551
+  #18934 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); Bumped cuda 13 to 13.0.2
+  #19024 -- REJECT-HiCache/PLE/spec-adjacent; closed-unmerged; no fork gap proven; fix: Fix false-positive mamba memory leak check (safe follow-up to #16067)
+  #19085 -- REJECT-HiCache/PLE/spec-adjacent; closed-unmerged; no fork gap proven; [jit_kernel] Add JIT ngram_utils kernel   
+  #19088 -- REJECT-HiCache/PLE/spec-adjacent; closed-unmerged; no fork gap proven; [jit_kernel] Add JIT segment_packbits kernel (port of sgl-kernel packbit.cu) 
+  #19101 -- REJECT-NVFP4/modelopt-adjacent; closed-unmerged; recipe not ours; [Nvidia] 3/N ModelOpt to Compressed-Tensors bridge: FP8 PCPT + FP8 block
+  #19702 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); [JIT Kernel] Migrate per_token_quant_fp8 to JIT
+  #19931 -- REJECT-GDN-adjacent (body mention or sibling family); closed-unmerged; no fork gap proven; feat: Mooncake support layerwise kv cache transfer
+  #19963 -- REJECT-STALE-JIT: arch-suffix fix predates current kernels JIT layout; [jit_kernel] Fix missing arch suffix in _get_cuda_arch_list for Blackwell/Hopper JIT
+  #20126 -- REJECT-keyword-adjacent; closed-unmerged; no fork gap proven; [Feature] Add UVM-based MoE expert offloading with all-GPU compute
+  #20140 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); [sgl-kernel] Add NewGELU kernel
+  #20613 -- REJECT-ALREADY-LANDED: fast_file store direct_io support present in fork; run-ci PR HiCacheFile: add optional direct_io mode for HiCacheFile backend
+  #20949 -- REJECT-CLOSED-ABANDONED: cuBLAS BF16/FP32 warmup; fork boot prewarm is Triton-side (entry 211); fix: warm up cuBLAS and cuBLASLt for BF16/FP32 to fix local-path loading
+  #20963 -- REJECT-NVFP4/modelopt-adjacent; closed-unmerged; recipe not ours; [Nvidia]1/N Modelopt Quantization Refactorization
+  #21053 -- REJECT-NVFP4/modelopt-adjacent; closed-unmerged; recipe not ours; [Nvidia] 2/N Support W4A16 AWQ scheme from ModelOpt
+  #21183 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); fix(test): correct UE8M0 scale comparison in per_token_group_quant_8bit test
+  #21368 -- REJECT-CI/TEST/DOCS-ONLY; [Test] Add unit tests for srt/speculative module
+  #21558 -- REJECT-SUPERSEDED: FlashInfer GDN decode evolved (fork gdn_flashinfer SM100/120 state-pool path); Fix FlashInfer GDN decode kernel on Blackwell (SM100)
+  #21612 -- REJECT-NVFP4/modelopt-adjacent; closed-unmerged; recipe not ours; fix: fix sharded state for ModelOptModelLoader
+  #21617 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); feat(kv-cache): Add TurboQuant KV cache quantization (WIP)
+  #21718 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); feat(sgl-kernel): add sm89 build target for Ada/Ampere GPUs
+  #21836 -- REJECT-GDN-adjacent (body mention or sibling family); closed-unmerged; no fork gap proven; [Bugfix] Fix non-contiguous a/b tensors in GDN when num_v_heads == num_k_heads
+  #21933 -- REJECT-CI/TEST/DOCS-ONLY; [CI] nvfp4 in nightly
+  #22172 -- REJECT-CLOSED-ABANDONED: seglen eviction policy not adopted upstream or in fork; seglen cache eviction policy for mamba radix cache
+  #22366 -- REJECT-CFG/ROUTER-NOT-RUN; [Gateway] WebSocket Responses API — 14% faster multi-turn chains, 2.6x first-content, up t
+  #22451 -- REJECT-CI/TEST/DOCS-ONLY; [Test] Add unit tests for model_loader/utils.py and weight_utils.py
+  #22538 -- REJECT-SPEC-FAMILY: Ngram 7/N dynamic drafts; [Spec][Ngram] 7/N: Dynamically select draft token counts from SAMs and Trie
+  #22569 -- REJECT-SPEC-FAMILY: Ngram benchmark corpora; [Spec][Ngram]: Add output-as-corpus and distractor corporas to benchmark dynamic spec toke
+  #22588 -- REJECT-MODEL-FAMILY: draft quant cfg bugfix (generic era code; superseded); 【bugfix】fix draft quant cfg
+  #22612 -- REJECT-GDN-adjacent (body mention or sibling family); closed-unmerged; no fork gap proven; [Observability] Add gpu_cache_usage_perc Prometheus metric for vLLM compatibility
+  #22618 -- REJECT-NOT-OUR-RECIPE: compressed-tensors NVFP4 guard; our NVFP4 arm is modelopt_mixed; [Bugfix] Fix Qwen3.5 linear_attn quantization guard for compressed-tensors NVFP4 checkpoin
+  #22641 -- REJECT-BACKEND-NOT-RUN: HiCache 3FS hybrid support (we run file L3); Add HybridModel support to HiCacheHF3FS storage backend
+  #22686 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); [SM100] Fuse bias addition into fp8_blockwise_scaled_mm epilogue
+  #22737 -- REJECT-SPEC-FAMILY: Ngram per-request Trie; [Spec][Ngram] 8/N: Add support for Per-request Trie mode
+  #22792 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); nsa indexer: use aiter indexer_k_quant_and_cache
+  #22807 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); fix: respect enable_memory_saver in SWA KV pool
+  #22839 -- REJECT-NVFP4/modelopt-adjacent; closed-unmerged; recipe not ours; fix(config): Add from_dict() for Qwen3VL config classes
+  #22895 -- REJECT-SPEC-FAMILY: eagle_topk None handling; fork defaults sane; fix: handle None speculative_eagle_topk when speculative_num_steps is…
+  #22927 -- REJECT-NEVER-REACHABLE: live NVFP4 arm shows no e4m3-overflow NaN; clamp absent but no trigger; keep as NaN-incident fallback; fix(sm120): NVFP4 NaN from E4M3 scale overflow + 3D tensor shape crashes
+  #22928 -- REJECT-NEVER-REACHABLE: GEGLU act not in qwen4_exp MoE; FP4 clamp fallback note only; fix(sm120): MoE GEGLU activation support + FP4 block scale NaN clamp
+  #23043 -- REJECT-GDN-adjacent (body mention or sibling family); closed-unmerged; no fork gap proven; [HiCache] fix: add capability guard for HiCache storage v2
+  #23067 -- REJECT-NVFP4/modelopt-adjacent; closed-unmerged; recipe not ours; Fix: forward continue_final_message kwargs in Glm45Detector
+  #23075 -- REJECT-GDN-adjacent (body mention or sibling family); closed-unmerged; no fork gap proven; [Fix] Mixed chunk query_start_loc and mamba_cache_indices to the prefill-only prefix so th
+  #23135 -- REJECT-GDN-adjacent (body mention or sibling family); closed-unmerged; no fork gap proven; [KVCache] TurboQuant: fused Triton KV cache compression (3.88x, 93-105% decode throughput)
+  #23143 -- REJECT-CI/TEST/DOCS-ONLY; [Docker] Add opt-in DOCA rdma-core upgrade to fix NCCL alltoall/sendrecv on Mellanox HCAs
+  #23239 -- REJECT-MODEL-FAMILY: hiSparse draft page zone; [Feature] Support MTP/speculative decoding with hiSparse extra page draft zone
+  #23317 -- REJECT-ALREADY-LANDED: set_autotune_process_group wired in flashinfer_autotune runner; [Bug Fix] Sync FlashInfer autotune tactic selection across TP ranks
+  #23353 -- REJECT-ALREADY-LANDED: state_pool_indices/gather_pool_states clamp -1 pad slots (SM90-era PR); Fix FlashInfer GDN SM90 mamba state scatter corrupting pool on dummy requests
+  #23354 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); Add NVFP4 KV support for all arch 
+  #23448 -- REJECT-GDN-adjacent (body mention or sibling family); closed-unmerged; no fork gap proven; [bugfix]  Fix unnecessary recompilation in fla l2norm_fwd_kernel by removing constexpr fro
+  #23768 -- REJECT-OTHER-MODEL-FAMILY (keyword adjacency only); Fix DSv4 metadata chunking for mixed long prefill
+  #23920 -- REJECT-MODEL-FAMILY: dsv3 per_token_group_quant_v2 clamp;  [sgl-kernel] Clamp per_token_group_quant_8bit_v2 grid.y by num_tokens_per_expert
+  #23971 -- REJECT-NVFP4/modelopt-adjacent; closed-unmerged; recipe not ours; [KV cache] Auto-align KV buffers for ibv_reg_dmabuf_mr / ibv_reg_mr
+  #24134 -- REJECT-GDN-adjacent (body mention or sibling family); closed-unmerged; no fork gap proven; fix(l2norm): eliminate Triton JIT recompilation per ISL
+  #24193 -- REJECT-HiCache/PLE/spec-adjacent; closed-unmerged; no fork gap proven; Fix stale cache protected length on waiting rematch
+  #24198 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); fix: pass KV scales to paged attention in ragged+paged split path
+  #24345 -- REJECT-CFG/ROUTER-NOT-RUN; [Bench] Add grouped_topk router microbenchmark
+  #24380 -- REJECT-NEVER-REACHABLE: strip_thinking_cache not used; fix: support strip_thinking_cache on hybrid (Mamba) models
+  #24499 -- REJECT-HiCache/PLE/spec-adjacent; closed-unmerged; no fork gap proven; fix(server_args): reject outlines grammar backend with speculative decoding
+  #24531 -- REJECT-keyword-adjacent; closed-unmerged; no fork gap proven; [Perf] feat: (OffloaderV2, >5x thrpt↑) Support CUDA Graph and all weights offloading
+  #24773 -- REJECT-HiCache/PLE/spec-adjacent; closed-unmerged; no fork gap proven; fix: add explicit UTF-8 encoding when loading chat/completion templates
+  #24794 -- REJECT-GDN-adjacent (body mention or sibling family); closed-unmerged; no fork gap proven; fix(hicache): add model identity hash to storage page keys
+  #24929 -- REJECT-OTHER-MODEL-FAMILY (keyword adjacency only); fix(compressed-tensors): respect ignore list with ".linear" submodule suffix
+  #25528 -- REJECT-OTHER-MODEL-FAMILY (keyword adjacency only); lora: native loading for PEFT 0.18+ batched-MoE adapters; add LFM2 / LFM2-MoE LoRA
+  #25555 -- REJECT-NVFP4/modelopt-adjacent; closed-unmerged; recipe not ours; [MXFP4 KV Cache] MXFP4 KV Cache: support blockfp4-hadamard-quant
+  #25568 -- REJECT-OTHER-MODEL-FAMILY (keyword adjacency only); Fix PCG silently bypassed for EAGLE speculative decoding
+  #25659 -- REJECT-HW-NOT-RUN; Add IFMOE: a CUTLASS-based FP8 block-scale MoE backend for sglang on Hopper
+  #25696 -- REJECT-ALREADY-LANDED: RTX PRO 6000 named fused-MoE configs present in tree;  perf(sm120): add FP8 W8A8 Block GEMM autotune configs + EAGLE benchmark for RTX PRO 6000
+  #25900 -- REJECT-MODEL-FAMILY: JoyAI-LLM Flash NextN; [Model] Add debug logging and error tracking for async weight loading
+  #26086 -- REJECT-GDN-adjacent (body mention or sibling family); closed-unmerged; no fork gap proven; [Feature] Add KDA/Mamba cache warmup for hybrid models
+  #26217 -- REJECT-SPEC-FAMILY: spec-V1 hidden slicing (stacked series abandoned); [Fix] Generalize spec-V1 hidden_states slicing to all V1 algorithms (stacked on #26150)
+  #26304 -- REJECT-MULTIMODAL: VLM ShmPointer serialization race; no mm traffic in prod; Fix ShmPointerMMData re-pickle shared memory race
+  #26306 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); [Fix] Fix per-tensor FP8 MoE weight scale format on Blackwell (SM100) with DeepGEMM
+  #26420 -- REJECT-SPEC-FAMILY: ngram spec-metrics plumbing; Add support for spec-decoding request-level metrics for OpenAI endpoints
+  #26441 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); Clarify Blackwell quantization backend defaults
+  #26448 -- REJECT-SUPERSEDED by fork timeout-prefetch design (admission gate semantics differ); fix(hicache): decouple mamba-clamped pages from KV prefetch admission gate
+  #26462 -- REJECT-OTHER-MODEL-FAMILY (keyword adjacency only); perf: avoid eagle draft seq_lens sync
+  #26568 -- REJECT-GDN-adjacent (body mention or sibling family); closed-unmerged; no fork gap proven; perf: Faster engine startup via async HiCache preallocation
+  #26593 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); perf: extend --prefill-only-disable-kv-cache to multi-item scoring
+  #26772 -- REJECT-GDN-adjacent (body mention or sibling family); closed-unmerged; no fork gap proven; fix(model_runner): fail-fast on parameters left uninitialized by checkpoint (fixes #26745)
+  #26962 -- REJECT-NVFP4/modelopt-adjacent; closed-unmerged; recipe not ours; feat(lora): opt-in fp32 split-K for the LoRA-A shrink GEMM
+  #27047 -- REJECT-OTHER-MODEL-FAMILY (keyword adjacency only); [GDN] Conv1d Tree Traversal Optimization for EAGLE Speculative Decoding
+  #27076 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); fix: degrade MXFP8 to BF16 F.linear on small batches to fix decode pe…
+  #27220 -- REJECT-SUPERSEDED: radix-mamba TTFT path reworked via checkpoint-grid design; Opt: Eliminate TTFT regression for hybrid mamba models with radix cache
+  #27369 -- REJECT-NVFP4/modelopt-adjacent; closed-unmerged; recipe not ours; fix(triton): handle asymmetric KV dims in MLA grouped decode attention
+  #27514 -- REJECT-NEVER-REACHABLE: conv_state dtype != activation dtype; prod uniform bf16; Fix causal_conv1d Triton compile error when conv_states dtype != activation dtype
+  #27601 -- REJECT-STALE: era before current gdn_flashinfer; superseded by API evolution; fix: [Bug] flashinfer gdn kernel not working
+  #27628 -- REJECT-SPEC-FAMILY: hybrid suffix MTP v2; Hybrid suffix mtp v2
+  #27701 -- REJECT-GDN-adjacent (body mention or sibling family); closed-unmerged; no fork gap proven; feat: add kv_cache_usage_perc prometheus metric
+  #27792 -- REJECT-NEVER-REACHABLE: fp16 dtype-join edge; prod dtype bf16; [mamba/causal_conv1d] Fix fp16 dtype type-join in Triton kernels
+  #27813 -- REJECT-OTHER-MODEL-FAMILY (keyword adjacency only); LoRA support for LFM2 and LFM2-MoE
+  #27932 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); feat(mxfp4): implement Mxfp4MoEMethod.get_triton_quant_info for MoE LoRA
+  #27942 -- REJECT-SPEC-FAMILY: EAGLE tree topk>1 trtllm_mha; [Spec] Support topk > 1 (EAGLE tree) in the trtllm_mha attention backend
+  #27962 -- REJECT-NEVER-REACHABLE: triton context_attention_fwd prefill; QSA backend owns our attention; fix(attention): sm120 shared-memory-safe block size in context_attention_fwd
+  #27963 -- REJECT-CI/TEST/DOCS-ONLY; test: cover diffkv (qk192/v128) + attention-sink triton attention kernels
+  #28027 -- REJECT-MODEL-FAMILY: SharedMLA L2 pool (MLA models); feat(hicache): shared L2 KV cache pool for MLA models (SharedMLA)
+  #28038 -- REJECT-ALREADY-LANDED: _get_cuda_shared_memory_per_block_optin clamp in fused_moe_triton_config; Clamp default fused-MoE Triton configs to the device shared memory limit (SM120/SM121)
+  #28063 -- REJECT-GATE-OFF: deterministic-inference alignment; not enabled in prod; fix: align deterministic Triton GDN prefill chunks across scheduler paths
+  #28099 -- REJECT-ALREADY-LANDED in spirit: modelopt_mixed derived from checkpoint content in configs/model_config; [Bugfix] Detect ModelOpt MIXED_PRECISION checkpoints by content, not architecture
+  #28125 -- REJECT-NEVER-REACHABLE: torch fp8_blockwise_scaled_grouped_mm not a runner in our MoE arms; feat(moe): add SM120/SM121 dispatch for fp8_blockwise_scaled_grouped_mm
+  #28137 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); [Kernel] Add SM120/SM121 dispatch for int8_scaled_mm
+  #28155 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); [sm120] Add expert-grouped GEMM for MXFP4 MoE prefill
+  #28187 -- REJECT-HW-NOT-RUN; [Kernel] Add int8 W8A8 SM90 swap-AB dispatch for small-M (decode)
+  #28189 -- REJECT-SUPERSEDED by landed RTX PRO 6000 config entries; PR head closed stale; Add tuned fp8_w8a8 block-wise GEMM configs for RTX PRO 6000 Blackwell Max-Q (SM120)
+  #28257 -- REJECT-RL-PATH: draft weights on update_weights_from_distributed; [Fix] Update speculative draft weights on update_weights_from_distributed
+  #28326 -- REJECT-ALREADY-LANDED: gemm1_alpha/gemm1_clamp_limit forwarding present in flashinfer_cutlass runner; [Fix] Forward clamped SwiGLU params in NVFP4 flashinfer-cutlass MoE
+  #28395 -- REJECT-OTHER-MODEL-FAMILY (keyword adjacency only); [Spec][LoRA] Support single-adapter LoRA with NEXTN/EAGLE speculative decoding
+  #28413 -- REJECT-SUPERSEDED by fork track-buffer rework (schedule_batch None/-1 handling; ping-pong buffers); Fix scheduler crash on None mamba_next_track_idx for finished reqs in speculative verify
+  #28463 -- REJECT-MODEL-FAMILY+CP: DSA Blackwell prefill context parallel; [WIP][DSA] Blackwell (sm100) prefill context-parallel — round-robin global RoPE positions
+  #28876 -- REJECT-STALE: 2-word 'memory optimize' with no adoption; memory optimize
+  #28939 -- REJECT-GDN-adjacent (body mention or sibling family); closed-unmerged; no fork gap proven; Optimize fused mamba state scatter kernel
+  #29003 -- REJECT-SPEC-FAMILY: EAGLE TP verify sync; Sync EAGLE verify results across TP ranks
+  #29037 -- REJECT-GDN-adjacent (body mention or sibling family); closed-unmerged; no fork gap proven; fix: scale mamba host pool proportionally when --hicache-size is set
+  #29132 -- REJECT-MODEL-FAMILY: cuLA/seg_la Lightning-Attention backend; feat(seg_la): add [v,k] state layout option via linear_backend="seg_la_vk"
+  #29190 -- REJECT-SUPERSEDED: b12x opt-in already ledger-documented (entry 225); upstream PR closed; For SM120, the MoE NVFP4 kernel of B12X is added to SGLang
+  #29285 -- REJECT-HiCache/PLE/spec-adjacent; closed-unmerged; no fork gap proven; [Spec] Unify draft runner accessor naming and remove dispatch band-aids
+  #29323 -- REJECT-CLOSED-ABANDONED: weight completeness verification move; loader reworked since; [Refactor] Move weight completeness verification into the loader
+  #29401 -- REJECT-NVFP4/modelopt-adjacent; closed-unmerged; recipe not ours; [JIT Kernel]Fix vectorization load in nvfp4 quant
+  #29449 -- REJECT-SUPERSEDED by fork track-buffer rework; freed-req rows now -1-sentineled in backend; Fix spec-decode crash and mamba-state corruption from freed reqs in TARGET_VERIFY
+  #29490 -- REJECT-HW-NOT-RUN; [MLX] Minimal Apple Silicon server startup for hybrid GDN models
+  #29513 -- REJECT-OTHER-MODEL-FAMILY (keyword adjacency only); [feat] Sana-WM Triton Optimizations
+  #29689 -- REJECT-GDN-adjacent (body mention or sibling family); closed-unmerged; no fork gap proven; Gdn stash elim option a
+  #29706 -- REJECT-SPEC-FAMILY: EAGLE tree topk>1 on trtllm_mha/cutedsl_mla; [attn backend] Enable EAGLE tree drafting (topk>1) verify+draft on trtllm_mla / cutedsl_ml
+  #29722 -- REJECT-HW-NOT-RUN; [BugFix]  Speed up weight loading on NVIDIA Grace via temporary pinned H2D copy
+  #29737 -- REJECT-MODEL-FAMILY: same cuLA KVBuffer; [Spec Decode] Add cuLA KVBuffer backend for Lightning Attention
+  #29902 -- REJECT-CI/TEST/DOCS-ONLY; test(sgl-kernel): gate ue8m0 and flashmla prefill tests on supported architectures
+  #29907 -- REJECT-SPEC-FAMILY: DDTree speculative; Add DDTree speculative decoding
+  #29971 -- REJECT-NOT-NEEDED: paged experts for >VRAM MoE; model fits 4x SM120; [Feature] Paged Experts: serve MoE models larger than VRAM
+  #30092 -- REJECT-SUPERSEDED by fork qwen4 override arg-group + loader; NEXTN draft boots in prod; fix(config): read num_nextn_predict_layers from the outer hf_config as fallback
+  #30295 -- REJECT-CLOSED-ABANDONED: chunked-prefill slot accounting fix; fork scheduler diverged; watch for batch-pin symptom; [Fix] Avoid chunked-prefill slot double-count that pins the running batch below `max_runni
+  #30337 -- REJECT-NVFP4/modelopt-adjacent; closed-unmerged; recipe not ours; fuse fragment ops to reduce host-bubble
+  #30364 -- REJECT-SUPERSEDED by design: fork DISABLES symm-mem sans multicast, routes to PCIe IPC allreduce; Fall back to two-shot all-reduce in TorchSymmMemCommunicator when multicast is unavailable
+  #30369 -- REJECT-GDN-adjacent (body mention or sibling family); closed-unmerged; no fork gap proven; Skip mamba middle chunks
+  #30403 -- REJECT-GDN-adjacent (body mention or sibling family); closed-unmerged; no fork gap proven; [Perf] Do not specialize l2norm_fwd_kernel on the token count
+  #30552 -- REJECT-SUPERSEDED by fork entry: modelopt_mixed flashinfer_cutlass publication fixed for SM120/SM110 at root; [NVIDIA] Extend modelopt_fp4-only MoE heuristics to NVFP4-expert modelopt_mixed
+  #30686 -- REJECT-NEVER-REACHABLE: on-the-fly FP8 quant path; we serve pre-quantized checkpoints only; [Fix] Exclude GDN in_proj_ba (a/b gate) from on-the-fly FP8 quantization
+  #30753 -- REJECT-GDN-adjacent (body mention or sibling family); closed-unmerged; no fork gap proven; [KDA] Fuse o_proj + MLP AllReduce with the next RMSNorm via   LayerCommunicator
+  #30796 -- REJECT-GDN-adjacent (body mention or sibling family); closed-unmerged; no fork gap proven; feat(hicache): retain hinted prompt KV in Mooncake L3
+  #30882 -- REJECT-ALREADY-LANDED via checkpoint_grid design (schedule_batch mamba v2 track entry); [HiCache]fix: hybrid-mamba final snapshot is unmatchable for chunk-aligned prompts
+  #30888 -- REJECT-CLOSED-ABANDONED upstream; no prod padding incident recorded in fork; [Bugfix] Support gated ModelOpt NVFP4 MoE intermediate padding
+  #30891 -- REJECT-HiCache/PLE/spec-adjacent; closed-unmerged; no fork gap proven; Report draft and prefill CUDA graph memory in /server_info
+  #30901 -- REJECT-CI/TEST/DOCS-ONLY;  [Test] Add unit tests for srt/managers/scheduler_components/pool_stats_observer
+  #30934 -- REJECT-NVFP4/modelopt-adjacent; closed-unmerged; recipe not ours; Add ModelOpt W4A16 NVFP4 support
+  #30972 -- REJECT-NVFP4/modelopt-adjacent; closed-unmerged; recipe not ours; fix: Add support for using MXFP8 datatype in flashinfer A2A communicator
+  #30979 -- REJECT-MODEL-FAMILY: DSA q_lora_rank None fix; A fix for  DSA models without q_lora_rank
+  #31079 -- REJECT-CLOSED-ABANDONED: perf-only logits gather; fork logits_processor autotune-aware design diverged; Reduce tensor-parallel logits communication with a rank-0 gather
+  #31091 -- REJECT-NOT-OUR-CONFIG: non-pow2 v/k head ratios; fork qkvzba split serves our ratio in prod; Support any exact v/k head ratio in the fused GDN qkvzba split
+  #31198 -- REJECT-NVFP4/modelopt-adjacent; closed-unmerged; recipe not ours; [CUDA graph] trtllm_mla: stale prefill fallback recorded wrong attention into spec-verify 
+  #31282 -- REJECT-NOT-OUR-RECIPE: MXFP8+NVFP4 mixed experts; our arms are modelopt_mixed / plain FP8; Support mixed MXFP8 and NVFP4 modelopt checkpoints
+  #31330 -- REJECT-NVFP4/modelopt-adjacent; closed-unmerged; recipe not ours; Support FP32 NVFP4 global scale in Marlin
+  #31366 -- REJECT-TEST-GATE: dsv3 test skip for consumer Blackwell; CI-only; [sgl-kernel][test] Skip dsv3_fused_a_gemm test on consumer Blackwell (sm120/sm121)
+  #31399 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); [Fix] Correct DeepGEMM benchmark time units
+  #31420 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); VSA flex/flashv4
+  #31555 -- REJECT-NVFP4/modelopt-adjacent; closed-unmerged; recipe not ours; [Feat] Add W4A16Sparse24 dense-dequant fallback for compressed-tensors int4
+  #31556 -- REJECT-CI/TEST/DOCS-ONLY; [Docker] Bump DEEPEP_COMMIT past hidden-dim-3072 support (pre-EPv2 tip)
+  #31767 -- REJECT-GDN-adjacent (body mention or sibling family); closed-unmerged; no fork gap proven; [Session] Finalize queued streaming-session turns on abort
+  #31789 -- REJECT-CI/TEST/DOCS-ONLY; [Test] add kernel io-backend end-to-end test for mamba HiCache
+  #31855 -- REJECT-NVFP4/modelopt-adjacent; closed-unmerged; recipe not ours; [Quant] Serve ModelOpt MIXED_PRECISION checkpoints with block-FP8 (FP8_PB) attention + sha
+  #31882 -- REJECT-NVFP4/modelopt-adjacent; closed-unmerged; recipe not ours; [LoRA] Add clean BF16 SGL LoRA MoE execution slice
+  #32194 -- REJECT-MODEL-FAMILY: DSV4 draft metadata; [Spec][DSV4] perf: Skip unused draft metadata
+  #32330 -- REJECT-CLOSED-ABANDONED: trtllm-gen allreduce on SM12X never merged; PCIe IPC allreduce runs instead; fix: enable FlashInfer TRT-LLM all-reduce on SM12X
+  #32488 -- REJECT-NOT-RUN: RunAI streamer shard selection; [Model Loader] Select RunAI shards for MTP draft models
+  #32529 -- REJECT-NOT-RUN: two-batch-overlap in draft (SM100 feature); [WIP][Spec] Enable Two-Batch Overlap in Draft Models
+  #32606 -- REJECT-GDN-adjacent (body mention or sibling family); closed-unmerged; no fork gap proven; fix: don't replay prefill CUDA graph when mamba tracking is unwired
+  #32645 -- REJECT-ALREADY-LANDED: triton_gdn_fused_proj fused split+conv1d kernels present in tree; [Qwen3.5] Fuse GDN decode split and causal conv
+  #32706 -- REJECT-ALREADY-LANDED: qwen3_5_gdn_prefill_projection_views = the projection-slice path; [Qwen3.5] Slice GDN qkvz projection instead of split/reshape/cat in decode
+  #32741 -- REJECT-MODEL-FAMILY: DSV4 Hopper MXFP4 KV; [Feature] MXFP4 KV Cache Decode for DSV4 on Hopper
+  #32786 -- REJECT-SUPERSEDED: pool wiring reworked (kv_cache_configurator passes replayssm cache_len); [Bugfix] Accept GDN ReplaySSM arg in unified Mamba pool
+  #32800 -- REJECT-ALREADY-LANDED: 32-byte alignment clone plumbing present (_FLASHINFER_GDN_ALIGNMENT=32); [GDN] Align FlashInfer BF16-state gate inputs
+  #32815 -- REJECT-MODEL-FAMILY: deepseek_v4 wo_a fp8 gate (not our model); also deep_gemm-gated; Use supported FP8 attention output GEMM on SM120 instead of forcing it off
+  #32821 -- REJECT-GDN-adjacent (body mention or sibling family); closed-unmerged; no fork gap proven; [feat] Runtime attach/detach of HiCache storage backend for UnifiedRa…
+  #32851 -- REJECT-NOT-RUN: DCP peer-memory; [DCP] Optimize shared Output, Query, and Indexer/Top-K via peer memory
+  #32919 -- REJECT-GDN-adjacent (body mention or sibling family); closed-unmerged; no fork gap proven; Fuse GDN decode projection unpack with Conv1D
+  #32961 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); [RFC] Attune: automated pre-flight attention-backend tuner (`sglang tune`) — #13363 TODO-4
+  #33062 -- REJECT-ALREADY-LANDED: pure-view split logic landed within triton_gdn_fused_proj design; [qwen3.5] perf: Skip the GDN qkvzba split kernel on single-token forwards
+  #33092 -- REJECT-GDN-adjacent (body mention or sibling family); closed-unmerged; no fork gap proven; Bump FlashInfer to 0.6.16.post4
+  #33104 -- REJECT-NEVER-REACHABLE: trtllm-gen MoE kernels; our NVFP4 MoE target is flashinfer_cutlass; [NVIDiA][MoE][FP4] Enable NVFP4 shared-expert fusion for FlashInfer TRTLLM-gen kernels
+  #33216 -- REJECT-CLOSED-ABANDONED: CUTLASS fp8_scaled_mm JIT port + SM120 M-tiles; fork fp8 GEMMs run flashinfer/triton; kernel: port CUTLASS fp8_scaled_mm to JIT and expand SM120 M tiles
+  #33278 -- REJECT-HW-NOT-RUN; Support MXFP8 dense Marlin W8A16 on SM80/SM90
+  #33288 -- REJECT-MODEL-FAMILY: dsv4 C4 indexer chunking; [dsv4] Bound C4 indexer logits peak memory via varlen routing   query-axis chunking
+  #33554 -- REJECT-OTHER-MODEL-FAMILY (keyword adjacency only); Add new spec-dec support and quant recipe for Nano v3
+  #33647 -- REJECT-KDA-FAMILY: CAKE backends for KDA; we run GDN; [KDA] Add FlashInfer CAKE prefill and decode backends
+  #33732 -- REJECT-SUPERSEDED: fork SM120 QSA backend selection rebuilt (explicit gates in qwen_sparse_attn_backend); Stop discarding an explicitly set indexer choice on SM120
+  #33907 -- REJECT-MODEL-FAMILY: SWA page free for GLM/DSA hybrid; no SWA layers in our config; [Perf] Free out-of-window SWA pages without a device sync
+  #33999 -- REJECT-CI/TEST/DOCS-ONLY; test: cover allocation sizing
+  #34018 -- REJECT-MODEL-FAMILY: deepseek_v4 wo_a sm12x; deep_gemm FORBIDDEN for us anyway; [SM12x] Re-enable the FP8 wo_a GEMM on sm120/sm121
+  #34071 -- REJECT-CI/TEST/DOCS-ONLY; [CI] Key scheduled CUDA suites by runner_config instead of hand-written jobs
+  #34072 -- REJECT-NVFP4/modelopt-adjacent; closed-unmerged; recipe not ours; feat(moe): add opt-in FlashInfer AlphaMoE W8A8 and NVFP4 backends
+  #34101 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); Disable automatic piecewise prefill for trtllm mla
+  #34196 -- REJECT-CI/TEST/DOCS-ONLY; chore: update CI test est_time values
+  #34221 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); kernel: migrate fp8_gemm to jit kernels
+  #34270 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); [Review vehicle] config: the runner-side instance reads finish converging (not for merge)
+  #34282 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); Revert small-M CuTe DSL routing for MXFP8
+  #34307 -- REJECT-ARCH-GATED: SM90/Hopper defaults + bf16 opt-in; not SM120; [GDN] Fused qkvzba split for non-pow2 v-head ratios, default FlashInfer GDN prefill on SM9
+  #34311 -- REJECT-HW-NOT-RUN; [Spec] Read the draft checkpoint config with the target's resolution inputs
+  #34402 -- REJECT-HW-NOT-RUN; Add distributed exact input logprobs
+  #34441 -- REJECT-SUPERSEDED by fork unified-cache rework (mamba_num eviction plumbing in unified_radix_cache); fix(unified-memory): evict the full sub-pool when mamba starves it of shared bytes
+  #34456 -- REJECT-NVFP4/modelopt-adjacent; closed-unmerged; recipe not ours; Support deferred MoE finalize for MXFP4 and FP8 block-scale
+  #34576 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); Fix: remove hardcoded CUDA device placement in model files (#34552)
+  #34585 -- REJECT-SUPERSEDED by #37500 (model support landed; same author reland); support qwen 3.8
+  #34625 -- REJECT-NOT-RUN: symmetric DP metadata; [Scheduler] Remove GPU rendezvous from symmetric DP metadata sync
+  #34666 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); Revert "[BCG][5/N] MLA Fully Support"
+  #34757 -- REJECT-NVFP4/modelopt-adjacent; closed-unmerged; recipe not ours; [DSA] Optimize TRTLLM prefill RoPE/FP8 quantization
+  #34760 -- REJECT-CFG/ROUTER-NOT-RUN; Fix Mamba state donation misalignment in unified radix cache under DCP
+  #34803 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); [LoRA] Add the sgl_lora MoE execution engine with JSON config resolution
+  #34821 -- REJECT-ALREADY-LANDED: triton causal_conv1d_update fallback for intermediate_* present in gdn_backend; [GDN] fix: use triton causal_conv1d_update for target_verify path
+  #34878 -- REJECT-MODEL-FAMILY: DSv4-Flash b12x MXFP4 experts; our b12x is the entry-225 NVFP4 W4A16 port; [SM12x] b12x MXFP4 MoE: align with vLLM's pin, share the arena, run W4A8
+  #34911 -- REJECT-NVFP4/modelopt-adjacent; closed-unmerged; recipe not ours; [Unit Test] Add unit tests for kv_cache_dtype resolution
+  #34975 -- REJECT-SUPERSEDED by fork tree-core rework (rust adapter; loadback dup-tracking in unified_tree_core); fix(unified-cache): allow multiple concurrent load-back pins per node
+  #35063 -- REJECT-CI/TEST/DOCS-ONLY; chore: update CI test est_time values
+  #35078 -- REJECT-keyword-adjacent; closed-unmerged; no fork gap proven; MXFP4 (E2M1+E8M0) KV cache for Ampere sm86: quantization + fused decode kernels [WIP]
+  #35086 -- REJECT-ALREADY-LANDED via checkpoint vs cache chunk split (mamba_checkpoint_grid; NPU flavor skipped); fix(mamba): separate state and checkpoint chunk sizes
+  #35098 -- REJECT-HW-NOT-RUN; [Perf][DSV4][MegaMoE] Overlap front-end via direct TopK output
+  #35102 -- REJECT-SPEC-FAMILY: Ngram external corpora (NGRAM not run; arg-group REJECTS ngram+replayssm); [Spec][Ngram] feat: support dynamic external ngram corpora
+  #35103 -- REJECT-OTHER-MODEL-FAMILY (keyword adjacency only); [SM12x] Block the DSv4 KV page-mark kernel launch geometry
+  #35104 -- REJECT-OTHER-MODEL-FAMILY (keyword adjacency only); [SM12x] Drop the 64-head TP pad on the DSv4 MLA prefill path
+  #35112 -- REJECT-CI/TEST/DOCS-ONLY; docs(cookbook): selection-aware verification badge
+  #35163 -- REJECT-MODEL-FAMILY: rsf topk-weight shared-expert folding (gpt-oss style); qwen4 recipe unaffected; [Fix] shared expert under-weighted when rsf is pre-folded in topk weights
+  #35264 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); [GDN] Validate FlashInfer Cake CP prefill on Blackwell
+  #35276 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); feat: add dense CuTe DSL NVFP4 W4A16 mode
+  #35322 -- REJECT-HW-NOT-RUN; [Fix] flashinfer_mla: use flashinfer native fp8 MLA on SM90 instead of per-layer full-pool
+  #35328 -- REJECT-CLOSED-ABANDONED: GDN Cake decode/verify routing never merged; no cake symbol in fork; [GDN] Route promoted decode and verify rows through Cake
+  #35400 -- REJECT-CLOSED-ABANDONED: GDN Cake Qwen-TP4 routing never merged; GDN prefill stays triton-eager for us; [GDN] Route Qwen TP4 decode and verify rows through Cake
+  #35422 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); perf: optimize small-M NVFP4 MoE on SM120 (v0.5.15)
+  #35444 -- REJECT-CLOSED-ABANDONED: strict Cake/SSD prefill backends; same family as 35328/35400; feat(mamba): add strict FlashInfer SSD and Cake prefill backends
+  #35552 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); [GDN] Validate FlashInfer Cake CP prefill on Blackwell
+  #35577 -- REJECT-keyword-adjacent; closed-unmerged; no fork gap proven; feat: add Mooncake GPU-direct SpecForge capture
+  #35583 -- REJECT-CLOSED-ABANDONED: draft-config override plumbing; fork uses arg_groups model overrides; feat(spec): allow independent draft model config overrides
+  #35586 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); fix(spec): build mRoPE positions for ragged verify
+  #35656 -- REJECT-CI/TEST/DOCS-ONLY; [Docs] Note the asymmetric-K/V `fa4` default in the Blackwell MHA selection guide
+  #35687 -- REJECT-keyword-adjacent; closed-unmerged; no fork gap proven; [Unified Cache]: Add optional external-cache linker mode to Unified Radix Cache
+  #35759 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); [DSA] Bound the indexer MQA-logits chunk: read free memory live, and cap the chunk absolut
+  #35824 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); [Quant] SM120: opt-in NVFP4 (W4A4) serving for ModelOpt FP8 column-parallel projections
+  #35874 -- REJECT-HW-NOT-RUN; [FlashInfer] perf: Fuse FP4 MoE input quantization and shared-expert SwiGLU
+  #35899 -- REJECT-OTHER-MODEL-FAMILY (keyword adjacency only); [SM12x] attention: b12x compressed-MLA branch for DSv4-Flash
+  #35936 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); [Fix] Prevent zombie requests after client disconnect: abort pending requests before dropp
+  #36007 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); [MegaMoE] Respect padded MXFP8 scale row strides in pre-dispatch
+  #36041 -- REJECT-keyword-adjacent; closed-unmerged; no fork gap proven; [Performance] Honor explicit workload caps when sizing hybrid cache
+  #36042 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); feat(weight-cache): discover daemons by GPU and config
+  #36045 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); fix: make FlashInfer NVFP4 speculative decoding graph-safe
+  #36050 -- REJECT-CLOSED-ABANDONED: spec multi-req extend warm; not in fork; no prod symptom; [Spec] Warm multi-request extend attention before serving
+  #36065 -- REJECT-keyword-adjacent; closed-unmerged; no fork gap proven; perf: split mixed GDN prefill and decode kernels
+  #36122 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); [CUDA] Add dense and MoE GGUF MMQ kernels for eight I-quant types
+  #36135 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); [Fix] Snapshot SWA mappings before deferred frees
+  #36418 -- REJECT-keyword-adjacent; closed-unmerged; no fork gap proven; Fix zombie requests after streaming disconnect
+  #36467 -- REJECT-MODEL-FAMILY: DSV4/R3 dp-capture; Fix the R3 dp-capture layout corruption and the DSV4 fusion auto-enable deadlock
+  #36473 -- REJECT-GDN-adjacent (body mention or sibling family); closed-unmerged; no fork gap proven; Return prefill batch to waiting queue when real KV alloc misses (#34676)
+  #36506 -- REJECT-SPEC-FAMILY: NGRAM capacity validation; [Bugfix] Validate NGRAM capacity > max_trie_depth at startup (#36495)
+  #36538 -- REJECT-GDN-adjacent (body mention or sibling family); closed-unmerged; no fork gap proven; Fix HiCache startup with bare DSA MTP draft pools
+  #36564 -- REJECT-HW-NOT-RUN; fix(attention): defer Hopper FA3 for unresolved EAGLE topk
+  #36566 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); fix(qsa): allow trtllm sparse decode on SM120/SM121
+  #36619 -- REJECT-HiCache/PLE/spec-adjacent; closed-unmerged; no fork gap proven; config: every handler declares its cuda-graph decisions
+  #36634 -- REJECT-SPEC-FAMILY: multi-layer EAGLE validation (not run); [Spec] Reject unsupported multi-layer EAGLE configurations
+  #36662 -- REJECT-ALREADY-LANDED: residue NVFP4 kernels present in kernels/jit csrc; feat(qwen3.8): support residue NVFP4 with independent FP8 MTP
+  #36870 -- REJECT-MODEL-FAMILY: glm5.2 quark shared expert; Fix/quark shared expert glm52 mtp layer
+  #37174 -- REJECT-CI/TEST/DOCS-ONLY; chore: update CI test est_time values
+  #37347 -- REJECT-CI/TEST/DOCS-ONLY; [Docs] Use --speculative-draft-window-size in speculative decoding
+  #37899 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); [KDA] SM120 dense BF16 decode GEMM for M<=16 with automatic CuTe DSL dispatch
+  #38131 -- REJECT-OTHER-MODEL-FAMILY (keyword adjacency only); lfm2: enable overlap scheduler with no_buffer mamba radix strategy
+  #38137 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); perf(triton-backend): route SWA decode metadata prep into the whole-decode graph
+  #38364 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); speculative: share embed/lm_head before the KV pool is sized
+  #38365 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); modelopt_fp4: skip the SiLU+FP4 fusion when the runner is marlin
+  #38366 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); speculative: share the target's embedding module with the draft
+  #38370 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); tilelang: make the DSA v1 head tile a parameter
+  #38568 -- REJECT-CFG/ROUTER-NOT-RUN; [Kernel] Wait for the PDL dependency before loading router bias (Triton + radix)
+  #38569 -- REJECT-SUPERSEDED: qwen4-main-squashed line squashed to main via #37500; fork loads the NVFP4 ckpt in prod; [Qwen4] Load nvidia/Qwen3.8-Flash-Next-NVFP4 (ModelOpt MIXED_PRECISION)
+  #38648 -- REJECT-NVFP4/modelopt-adjacent; closed-unmerged; recipe not ours; [Bug] Keep experimental_sgl_trtllm MoE-LoRA reachable for unquantized models
+  #38649 -- REJECT-NVFP4/modelopt-adjacent; closed-unmerged; recipe not ours; [LoRA] Run the BF16 trtllm MoE-LoRA path on stock FlashInfer
+  #38670 -- REJECT-CLOSED-ABANDONED: loader closure GC-pinning fix; fork qwen4 loader diverged, no prod symptom; [Fix] qwen4_exp: break loader closure self-reference pinning params_dict until cyclic GC
+  #38836 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); [Unified Memory] fix lazy Mamba buffer lifecycle
+  #39156 -- REJECT-GDN-adjacent (body mention or sibling family); closed-unmerged; no fork gap proven; fix: restore DSA indexes with hybrid HiCache
+  #39160 -- REJECT-OTHER-MODEL-FAMILY (keyword adjacency only); [Bugfix] Fix FlashInfer EAGLE verification with sliding-window attention
+  #39275 -- REJECT-NVFP4/modelopt-adjacent; closed-unmerged; recipe not ours; [DONT MERGE] Test bumping sgl-deep-gemm to 0.2.0rc0
+  #39319 -- REJECT-NVFP4/modelopt-adjacent; closed-unmerged; recipe not ours; [Bugfix] Preserve BF16 batch invariance with DeepGEMM 0.2
+  #39591 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); [Attention] Honor custom masks beyond causal query tiles in Triton extend
+  #39593 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); [Attention] Honor custom masks beyond causal query tiles in Triton extend
+  #39851 -- REJECT-ALREADY-LANDED: hicache mamba-ratio knob present (mamba_ratio 7 hits in tree); [HiCache] Add --hicache-mamba-ratio to size the host Mamba state cache independently
+  #39868 -- REJECT-OTHER-MODEL-FAMILY (keyword adjacency only); [DSV4.1][SM120] Tune block-FP8 decode for RTX PRO 6000
+  #39961 -- REJECT-OTHER-MODEL-FAMILY (keyword adjacency only); perf(dsv4.1): select FlashInfer CUTLASS MXFP8 on SM120
+  #39974 -- REJECT-DOCS: cookbook HiCache L2 knob; [Cookbook] Qwen3.8-Flash-Next: add the HiCache L2 knob
+  #40859 -- REJECT-SUPERSEDED by fork linker/host-memory design (stack L3825; file L3 + selective write-through); [HiCache] Unify the linker mode entry under --hicache-host-memory-mode
+  #40992 -- REJECT-keyword-adjacent; closed-unmerged; no fork gap proven; [Feature] Add /v1/decisions for typed decisions on candidate scoring
+  #42039 -- REJECT-NVFP4/modelopt-adjacent; closed-unmerged; recipe not ours; Fixed incorrect host memory counting
+  #42321 -- REJECT-NVFP4/modelopt-adjacent; closed-unmerged; recipe not ours; [LoRA 9/17] MoE runner, serving attachment and graph integration
+  #42322 -- REJECT-HW-NOT-RUN; [LoRA 11/17] CuTeDSL BF16 providers on SM90 and SM100
+  #42323 -- REJECT-NVFP4/modelopt-adjacent; closed-unmerged; recipe not ours; [LoRA 13/17] CuTeDSL block-FP8 MoE providers
+  #42324 -- REJECT-NVFP4/modelopt-adjacent; closed-unmerged; recipe not ours; [LoRA 14/17] Marlin NVFP4 MoE provider and weight integration
+  #42338 -- REJECT-NVFP4/modelopt-adjacent; closed-unmerged; recipe not ours; [LoRA 7/17] MoE execution-plan and routing contracts
+  #42746 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); [Fix] trtllm_mha: Use a separate workspace for prefill fmha_v2 backend
+  #43122 -- REJECT-ALREADY-LANDED: floor_chunked_tokens + init_mamba_truncation_align present in fork; [Mamba] fix: Keep chunked prefill cuts on the mamba chunk grid
+  #43169 -- REJECT-HiCache/PLE/spec-adjacent; closed-unmerged; no fork gap proven; [unified-memory] Stop allocation eviction on the joint FULL/SWA fit
+  #43512 -- REJECT-CLOSED-ABANDONED: forward-count throttling; fork uses timeout prefetch; [Scheduler] Throttle waiting-prefix refresh by forward count, not wall time
+  #44594 -- REJECT-SM120-adjacent; closed-unmerged; no live-path evidence (title-level eval); [Perf] [NVIDIA] gemm: Tune SM120 FP8 GEMV config for small N/K
+  #44631 -- REJECT-CI/TEST/DOCS-ONLY; [CI] tests: Load NVFP4 test scales through the parameter's weight loader
+  #45003 -- REJECT-keyword-adjacent; closed-unmerged; no fork gap proven; [Perf] mooncake: Reduce KV transfer descriptor construction overhead
+
+NEW-INTERESTING:
+* #36043 [Kernel] Add Qwen3.8 NVFP4 skinny GEMM for SM120 -- CLOSED-UNMERGED, absent from
+  the fork tree, aimed EXACTLY at our cell: dense NVFP4 W4A4 GEMM for M<=16 decode on
+  sm_120a "RTX PRO 6000 Blackwell, 188 SMs", opt-in env SGLANG_ENABLE_QWEN38_FP4_SKINNY_GEMM,
+  files kernels/jit/csrc/gemm/nvfp4/fp4_skinny_sm120.cu + kernels/ops/gemm/nvfp4_skinny_sm120.py +
+  modelopt_quant dispatch (all verified ABSENT here: no symbol hits anywhere in the fork).
+  Relevance: LIVE path -- the NVFP4 modelopt_mixed arm's dense projections run at bs<=48 decode
+  graphs; a skinny M<=16 kernel is a pure PERF opportunity (no correctness claim).
+  Why it never landed is unknown from the PR alone (no reviewer gate cited in body); porting it
+  means owning a JIT kernel. RECOMMEND: benchmark-vs-flashinfer-cutlass-fp4 at our M-distribution
+  before any port decision; if perf case dies, EXCLUDE with that note.  Merge #4 + apply-b..apply-i evaluation (2026-10-14/15) -- verdicts,
   nothing applied beyond the numbered entries:
   CONFIRMED-IN (already on the tree, no action): #43556 (arrived via
       entry-165 #42566 -- sm==120 + grouped_moe=True requant threading
@@ -11351,6 +12687,26 @@ WATCH LIST (re-evaluate before next sync)
     CONFIRMED: **#45520 STILL OPEN**, head moved to e5523f52cd (updated
       11-09; entries 302/303's reconcile record stays AUTHORITATIVE; re-
       apply rule HOLSTERED for merge #7); #39978 CONFIRMED abandoned 10-13.
+  * MERGE-6 ERA CLOSE 2026-11-10 (entries 324-329 era watch lines):
+      #36043 Qwen3.8 NVFP4 skinny GEMM SM120 -- **BENCH-GATED WATCH**: the
+        backfill audit's ONE NEW-INTERESTING (closed-unmerged, absent-tree-
+        verified, aimed at our EXACT W4A4 M<=16 decode cell). BENCHMARK-
+        BEFORE-PORT vs flashinfer-cutlass-fp4 at our M-distribution ->
+        S-36043-BENCH; if the perf case dies, EXCLUDE with that note (entry 329).
+      #42790 / #40916 -- **ARRIVED-VIA-MERGE6, NOTED AT ERA CLOSE** (the 11-10
+        REFRESH line above is the watch; the merge DID bring them; no action).
+      #43703 -- **REVERT TRAP STANDING** (cross-ref entry 323): original
+        19cee50c29 + revert 78a9fa1bba (#49118) BOTH in-tree = NET-ZERO --
+        DO NOT re-port the "missing" feature.
+      #45520 -- **STILL-OPEN RE-CONFIRMED AT ERA CLOSE**: ZERO "(#45520)" refs
+        in the +950 window (gh-verified) and B5 C3 VERIFIED THE ENTRY-230
+        FAIL-SAFE LAYER INTACT post-merge (standard.py warn-once :48-50 +
+        published-auto guards :160-187); re-apply rule stays HOLSTERED for
+        MERGE #7.
+      get_tokenizer_worker_class / entrypoints wiring -- REPORT-ONLY carry from
+        the BOOTFIX family scan (uncertain-adjacent, outside the managers init
+        zone): one glance BEFORE touching any tokenizer-worker boot path (324).
+
 
 ==============================================================================
 CAVEATS
