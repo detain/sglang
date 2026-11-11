@@ -356,7 +356,6 @@ POSITIONAL_FIELD_ORDER = (
     "enable_linear_replayssm",
     "linear_replayssm_cache_len",
     "enable_linear_replayssm_spec",
-    "enable_linear_lossless_verify",
     "enable_hierarchical_cache",
     "hicache_host_memory_mode",
     "hicache_ratio",
@@ -364,13 +363,11 @@ POSITIONAL_FIELD_ORDER = (
     "hicache_write_policy",
     "hicache_io_backend",
     "hicache_mem_layout",
-    "hicache_async_ready_sync",
     "hicache_storage_backend",
     "hicache_storage_prefetch_policy",
     "hicache_storage_backend_extra_config",
     "hicache_storage_prefetch_retry_poll_interval",
     "hicache_storage_prefetch_retry_max_attempts",
-    "hicache_storage_prefetch_host_capacity_wait_ms",
     "enable_unified_cache_external_linker",
     "unified_cache_external_linker_backend",
     "enable_hisparse",
@@ -572,5 +569,14 @@ POSITIONAL_FIELD_ORDER = (
     "paged_experts_enable_disk",
     "disable_normalize_embedding",
     "log_schedule_decisions",
+    # Fork built-ins (merge-#6 B6 re-pin): fields the fork re-planted INTO the
+    # tuple's middle shifted upstream's explicit tail slots (532-536 pins +
+    # the legacy slice in test_server_args.py). Promoted to true tail slots
+    # per this file's own append rule, same order among themselves; nothing
+    # positional ever addressed them before their upstream neighbours, so
+    # only the pinned tail block shifts back.
+    "enable_linear_lossless_verify",
+    "hicache_async_ready_sync",
+    "hicache_storage_prefetch_host_capacity_wait_ms",
 )
 # fmt: on

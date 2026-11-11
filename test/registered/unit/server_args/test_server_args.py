@@ -152,19 +152,20 @@ class TestServerArgsPositionalOrder(CustomTestCase):
             (534, "paged_experts_num_resident"),
             (535, "enable_nvidia_megakernel"),
             (536, "enable_megamoe_for_layernorm_sp"),
-            # TODO(merge6) zone=b6 entry=315 -- fork region dropped by merge6 take-upstream resolution (B6 field-order re-pin); snapshot /tmp/opencode/merge6-dossier/replant/test__registered__unit__server_args__test_server_args.py.ours-dropped.txt
+            # Merge-#6 B6 re-anchor: the three fork fields the window had
+            # inserted mid-tuple are promoted to explicit tail slots
+            # (field_order.py append rule), so upstream's pinned block sits at
+            # its native indices again; slots 95-97 verified unmoved.
         ):
             with self.subTest(index=index):
                 self.assertEqual(fields[index].name, name)
         defaults = ServerArgs(model_path="dummy")
         # Surviving legacy inputs retain their slots after an intentional removal.
         positional = [getattr(defaults, field.name) for field in fields[:533]]
-        # TODO(merge6) zone=b6 entry=315 -- fork region dropped by merge6 take-upstream resolution (B6 re-pin); snapshot /tmp/opencode/merge6-dossier/replant/test__registered__unit__server_args__test_server_args.py.ours-dropped.txt
         positional[95] = True
         positional[96] = False
         positional[97] = "cpu"
         positional[532] = 123.0
-        # TODO(merge6) zone=b6 entry=315 -- fork region dropped by merge6 take-upstream resolution (B6 re-pin); snapshot /tmp/opencode/merge6-dossier/replant/test__registered__unit__server_args__test_server_args.py.ours-dropped.txt
 
         args = ServerArgs(*positional)
 
