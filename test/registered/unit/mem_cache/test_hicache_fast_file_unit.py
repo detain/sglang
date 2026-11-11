@@ -23,6 +23,7 @@ from sglang.srt.environ import envs
 from sglang.srt.mem_cache.hicache_storage import (
     HiCacheFile,
     HiCacheStorageConfig,
+    PoolHitPolicy,
     PoolName,
     PoolTransfer,
 )
@@ -1111,6 +1112,75 @@ class TestMetadataCacheIntegration(FastFileTestBase):
             mock_exists.assert_called_once()
 
 
+# Re-homed (merge-#6 B2 DUAL-IMPL fold): the fork's sidecar-fold suite for
+# the batch_exists_v2 shared-stop-point contract (HiCacheFile's implementation
+# survives merged; upstream's native file never exercised the fold).
+class TestBatchExistsV2(FastFileTestBase):
+    def test_each_sidecar_is_evaluated_against_the_full_kv_prefix(self):
+        b = self.make_backend(read_workers=2)
+        keys = [f"k{i}" for i in range(4)]
+        for key in keys:
+            self.assertTrue(b.set(key, _t(8)))
+        for key in keys[:2]:
+            self.assertTrue(b.set(f"{key}.{PoolName.SWA}", _t(8)))
+        self.assertTrue(b.set(f"{keys[3]}.{PoolName.DRAFT}", _t(8)))
+
+        result = b.batch_exists_v2(
+            keys,
+            [
+                PoolTransfer(
+                    name=PoolName.SWA, keys=keys, hit_policy=PoolHitPolicy.ALL_PAGES
+                ),
+                PoolTransfer(
+                    name=PoolName.DRAFT,
+                    keys=[keys[-1]],
+                    hit_policy=PoolHitPolicy.TRAILING_PAGES,
+                ),
+            ],
+        )
+
+        # Each pool's own verdict is still measured against the full KV prefix,
+        # but the folded length has to be a stop point *every* pool can serve:
+        # DRAFT's only sidecar is on page 4 while SWA covers only pages 1-2, so
+        # no prefix is restorable here (2 would end on a missing DRAFT window
+        # and forfeit the whole fetch). See PoolTransferResult.restorable_prefix_pages
+        # and MooncakeStore.batch_exists_v2, which fold the same way.
+        self.assertEqual(result.kv_hit_pages, 0)
+        self.assertEqual(result.restorable_prefix_pages, [])
+        self.assertEqual(
+            result.extra_pool_hit_pages,
+            {PoolName.KV: 4, PoolName.SWA: 2, PoolName.DRAFT: 4},
+        )
+
+    def test_folded_prefix_requires_a_shared_stop_point(self):
+        b = self.make_backend(read_workers=2)
+        keys = [f"k{i}" for i in range(4)]
+        for key in keys:
+            self.assertTrue(b.set(key, _t(8)))
+        for key in keys[:2]:
+            self.assertTrue(b.set(f"{key}.{PoolName.SWA}", _t(8)))
+        # DRAFT also covers page 2, the deepest prefix SWA can serve.
+        self.assertTrue(b.set(f"{keys[1]}.{PoolName.DRAFT}", _t(8)))
+        result = b.batch_exists_v2(
+            keys,
+            [
+                PoolTransfer(
+                    name=PoolName.SWA, keys=keys, hit_policy=PoolHitPolicy.ALL_PAGES
+                ),
+                PoolTransfer(
+                    name=PoolName.DRAFT,
+                    keys=[keys[1]],
+                    hit_policy=PoolHitPolicy.TRAILING_PAGES,
+                ),
+            ],
+        )
+        self.assertEqual(result.restorable_prefix_pages, [2])
+        self.assertEqual(result.kv_hit_pages, 2)
+        self.assertEqual(
+            result.extra_pool_hit_pages,
+            {PoolName.KV: 4, PoolName.SWA: 2, PoolName.DRAFT: 2},
+        )
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
-# TODO(merge6) zone=b2 entry=314 -- fork region dropped by merge6 take-upstream resolution (DUAL IMPL: fork fast-file suite vs upstream native); snapshot /tmp/opencode/merge6-dossier/replant/test__registered__unit__mem_cache__test_hicache_fast_file_unit.py.ours-dropped.txt
