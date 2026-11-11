@@ -8,7 +8,7 @@ from unittest.mock import patch
 import torch
 
 from sglang.srt.managers.schedule_batch import Req
-from sglang.srt.mem_cache.prefill_budget import PrefillBudget
+from sglang.srt.mem_cache.prefill_budget import ChainPrefillBudget, PrefillBudget
 from sglang.srt.managers.schedule_policy import AddReqResult, PrefillAdder
 from sglang.srt.managers.scheduler import Scheduler
 from sglang.srt.mem_cache.allocator.hisparse import (
@@ -22,8 +22,6 @@ from sglang.srt.mem_cache.allocator.token import TokenToKVPoolAllocator
 from sglang.srt.mem_cache.capacity import create_prefill_budget
 from sglang.srt.mem_cache.common import evict_from_tree_cache
 from sglang.srt.mem_cache.kv.alloc.demand import KVDemand, WindowRetirement
-
-# TODO(merge6) zone=b2 entry=314 -- fork region dropped by merge6 take-upstream resolution (B2); snapshot /tmp/opencode/merge6-dossier/replant/test__registered__unit__mem_cache__test_prefill_memory_budget.py.ours-dropped.txt
 from sglang.srt.mem_cache.radix_cache import RadixCache
 from sglang.srt.runtime_context import get_parallel
 from sglang.srt.sampling.sampling_params import SamplingParams
@@ -737,6 +735,30 @@ class TestFixedPrefillMemoryBudget(unittest.TestCase):
         budget = create_prefill_budget(allocator, _cache())
         self.assertEqual(budget.remaining_total, 12)
         self.assertEqual(budget.remaining_window_tokens, 64)
+
+    def test_tri_chain_gets_the_fixed_admission_chain_budget(self):
+        """merge-#6 B2 re-home of the fork's tri-pool fixed-admission pin.
+
+        Two of the fork's pins retired with the code it probed: the
+        two-pool `can_reserve` it fenced off is gone from the tree, and
+        `rules.window == "split"` became the `retirement` object every
+        ChainPrefillBudget computes. The live contract -- the unified
+        chain allocator is priced by ChainPrefillBudget, which admits
+        whole requests over real capacity -- is pinned here.
+        """
+        from sglang.srt.runtime_context import reset_context
+        from sglang.test.unified_allocator_fixtures import (
+            build_tri_cache,
+            setup_allocator_context,
+        )
+
+        setup_allocator_context()
+        self.addCleanup(reset_context)
+        _, allocator, cache = build_tri_cache(state_cache=False)
+        budget = create_prefill_budget(allocator, cache)
+        self.assertIs(type(budget), ChainPrefillBudget)
+        self.assertTrue(budget.admits_whole_requests)
+        self.assertTrue(budget.has_capacity())
 
     def test_tri_pool_eviction_does_not_reenter_common(self):
         from array import array

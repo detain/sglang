@@ -55,12 +55,20 @@ def _hit_query_controller(*, entry_map=(PoolName.KV,), **fields):
     rank whose host pools are ``entry_map``."""
     controller = SimpleNamespace(
         prefetch_hits_sync_groups=[],
+        storage_sync_failed=False,
         mem_pool_host=SimpleNamespace(entry_map=dict.fromkeys(entry_map)),
         _host_pool_schemas=[],
         **fields,
     )
     controller._host_pool_schema = MethodType(
         HybridCacheController._host_pool_schema, controller
+    )
+    # merge-#6 B2 re-home: the fork stated this binding at every construction
+    # site; the take-upstream resolution dropped the kwargs, and the new
+    # named-window site never got it (the merge battery's named-window F).
+    # One binding at the helper now covers every site.
+    controller._storage_sync_all_reduce = MethodType(
+        HybridCacheController._storage_sync_all_reduce, controller
     )
     return controller
 
@@ -79,11 +87,7 @@ class TestBufferModeSidecar(unittest.TestCase):
                 controller = _hit_query_controller(
                     page_size=2,
                     storage_backend=SimpleNamespace(batch_exists=lambda *_: 2),
-                    # TODO(merge6) zone=b2 entry=314 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (delete_vs_edit)); snapshot /tmp/opencode/merge6-dossier/replant/test__registered__unit__mem_cache__test_buffer_mode_sidecar.py.ours-dropped.txt
                     _all_reduce=reduce,
-                )
-                controller._storage_sync_all_reduce = (
-                    HybridCacheController._storage_sync_all_reduce.__get__(controller)
                 )
                 operation = PrefetchOperation(
                     CacheRequestHandle("cancelled", 0), list(range(4))
@@ -177,13 +181,7 @@ class TestBufferModeSidecar(unittest.TestCase):
                     controller = _hit_query_controller(
                         storage_backend=backend,
                         page_size=2,
-                        # TODO(merge6) zone=b2 entry=314 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (delete_vs_edit)); snapshot /tmp/opencode/merge6-dossier/replant/test__registered__unit__mem_cache__test_buffer_mode_sidecar.py.ours-dropped.txt
                         _all_reduce=capture,
-                    )
-                    controller._storage_sync_all_reduce = (
-                        HybridCacheController._storage_sync_all_reduce.__get__(
-                            controller
-                        )
                     )
                     _, hit_tokens = HybridCacheController._storage_hit_query(
                         controller, operation
@@ -263,11 +261,7 @@ class TestBufferModeSidecar(unittest.TestCase):
         controller = _hit_query_controller(
             storage_backend=None,
             page_size=2,
-            # TODO(merge6) zone=b2 entry=314 -- fork region dropped by merge6 take-upstream resolution (default take-upstream (delete_vs_edit)); snapshot /tmp/opencode/merge6-dossier/replant/test__registered__unit__mem_cache__test_buffer_mode_sidecar.py.ours-dropped.txt
             _all_reduce=lambda values, *_: None,
-        )
-        controller._storage_sync_all_reduce = (
-            HybridCacheController._storage_sync_all_reduce.__get__(controller)
         )
         _, hit_tokens = HybridCacheController._storage_hit_query(controller, operation)
         operation.storage_hit_count = HybridCacheController._sync_prefetch_hit_query(

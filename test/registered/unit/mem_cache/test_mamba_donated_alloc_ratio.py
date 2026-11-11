@@ -6,7 +6,6 @@ matched-prefix mamba (protected) plus its own COW slot, and then allocates a
 donated slot. With N distinct-prefix requests that peak is N own + N locked +
 1 donated. An effective ratio of 2 (pool = 2N) leaves no evictable victim and
 the optional donation is skipped; ratio 3 (pool = 3N) has headroom. Once decode's
-# TODO(merge6) zone=b2 entry=314 -- fork region dropped by merge6 take-upstream resolution (B2); snapshot /tmp/opencode/merge6-dossier/replant/test__registered__unit__mem_cache__test_mamba_donated_alloc_ratio.py.ours-dropped.txt
 skip_mamba leaves the matched prefix evictable, even ratio 2 recovers via
 eviction -- which is why the peak, not the decode steady state, sets the floor.
 
@@ -86,7 +85,17 @@ class _RatioCache:
             ),
         )
         self.token_to_kv_pool_allocator = SimpleNamespace(
-            state_slots=self.allocator, storage=None
+            state_slots=self.allocator,
+            # The merged checkpoint-quantization read and the tracking-slot
+            # take (alloc_tracking_slots) price through allocator.state;
+            # static pools have no ckpt pool.
+            state=SimpleNamespace(
+                slots=SimpleNamespace(
+                    schedulable_available_size=self.allocator.available_size
+                ),
+                ckpt_pool=None,
+            ),
+            storage=None,
         )
         self.component_evictable_size_ = {ComponentType.MAMBA: 0}
         self.component_protected_size_ = {ComponentType.MAMBA: 0}
@@ -178,17 +187,25 @@ class TestMambaRatioEnvGate(CustomTestCase):
                 return KVCacheConfigurator._calculate_mamba_ratio(fake)
 
     def test_lazy_in_place_tracking_does_not_donate_the_old_checkpoint(self):
+        """merge-#6 B2 re-home onto #45472's API: the boundary prealloc now
+        consumes a caller-built track mask and takes tracking slots through
+        alloc_tracking_slots (batch-level tree eviction included). The pin is
+        unchanged: with the pool pinned, the crossing gets no slot (mask
+        cleared / spec position -1), the checkpoint is skipped, and the
+        in-flight ping-pong pair is never donated."""
         from sglang.srt.managers.schedule_batch import ScheduleBatch
         from sglang.srt.mem_cache.base_prefix_cache import InsertParams
 
         for speculative in (False, True):
             with self.subTest(speculative=speculative):
                 component, cache, _ = _build_peak(2 * N, lock_prefixes=True)
-                component._try_alloc_mamba_slot = lambda *_: self.fail(
-                    "Cannot donate an in-flight checkpoint"
-                )
                 cache.enable_mamba_extra_buffer = True
+                cache.supports_mamba = lambda: True
+                cache.req_to_token_pool.donate_mamba_ping_pong_slot = lambda *_: (
+                    self.fail("Cannot donate an in-flight checkpoint")
+                )
                 req = SimpleNamespace(
+                    rid="r0",
                     kv=SimpleNamespace(
                         mamba_ping_pong_track_buffer=torch.tensor([0, -1]),
                         # #45472 host mirror of the buffer (-1 entries empty).
@@ -202,20 +219,44 @@ class TestMambaRatioEnvGate(CustomTestCase):
                     reqs=[req],
                     req_to_token_pool=cache.req_to_token_pool,
                     # Post-merge mamba_lazy_* builds the storage from both
-                    # pools (schedule_batch.py:3661).
+                    # pools (schedule_batch.py), and the tracking take evicts
+                    # through the batch's tree cache once on shortfall.
                     token_to_kv_pool_allocator=cache.token_to_kv_pool_allocator,
+                    tree_cache=cache,
                     seq_lens_cpu=torch.tensor([256]),
+                )
+                batch._alloc_tracking_slots = MethodType(
+                    ScheduleBatch._alloc_tracking_slots, batch
                 )
                 if speculative:
                     ScheduleBatch.mamba_lazy_spec_prepare(batch, 128, 8)
+                    self.assertEqual(batch.mamba_lazy_spec_track_positions_cpu, [-1])
                 else:
-                    ScheduleBatch.mamba_lazy_prealloc_at_boundary(batch, 128)
+                    mask = ScheduleBatch.mamba_lazy_prealloc_at_boundary(
+                        batch, torch.tensor([True])
+                    )
+                    self.assertEqual(mask.tolist(), [False])
+                # The pinned pair is untouched: no donation, no advance.
+                self.assertEqual(req.kv.mamba_ping_pong_track_buffer.tolist(), [0, -1])
+                self.assertEqual(req.kv.mamba_next_track_idx, 0)
                 params = InsertParams()
-                self.assertEqual(
-                    component.prepare_for_caching_req(req, params, 255, False), 0
-                )
+
+                with patch(
+                    "sglang.srt.mem_cache.unified_cache.components.mamba.get_exec",
+                    return_value=SimpleNamespace(
+                        mamba=SimpleNamespace(enable_mamba_extra_buffer_lazy=False)
+                    ),
+                ):
+                    self.assertEqual(
+                        component.prepare_for_caching_req(req, params, 255, False), 0
+                    )
+
                 self.assertIsNone(params.mamba_value)
-                self.assertEqual(cache.alloc_evict_params, [])
+                # One tree eviction attempt from the batch take, one from the
+                # component's own slot try; both find every slot pinned.
+                self.assertEqual(
+                    cache.alloc_evict_params, [KVDemand(state_slots=1)] * 2
+                )
 
     def test_flag_off_restores_original_ratios(self):
         def r(**kwargs):
@@ -466,7 +507,45 @@ class TestMambaDonatedAllocRatio(CustomTestCase):
                 self.assertEqual(cache.allocator.free_ids, [])
                 self.assertEqual(cache.alloc_evict_params, [KVDemand(state_slots=1)])
 
-    # TODO(merge6) zone=b2 entry=314 -- fork region dropped by merge6 take-upstream resolution (B2); snapshot /tmp/opencode/merge6-dossier/replant/test__registered__unit__mem_cache__test_mamba_donated_alloc_ratio.py.ours-dropped.txt
+    def test_exhausted_pool_skips_chunk_boundary_donation(self):
+        # Re-homed (merge-#6 B2) from the fork block the take-upstream
+        # resolution dropped: pinned pool through the chunked-prefill hook:
+        # the checkpoint is skipped (cache_len 0, nothing inserted) and the
+        # request keeps its ping-pong slots.
+        component, cache, owned = _build_peak(pool_size=2 * N, lock_prefixes=True)
+        cache.enable_mamba_extra_buffer = True
+        cache.req_to_token_pool.donate_mamba_ping_pong_slot = lambda *_: self.fail(
+            "donated without a replacement slot"
+        )
+        req = SimpleNamespace(
+            rid="r0",
+            lock=None,
+            kv=SimpleNamespace(mamba_pool_idx=owned[0], mamba_last_track_seqlen=64),
+        )
+        insert_params = InsertParams()
+        with (
+            patch.object(
+                MambaComponent,
+                "quantizes_checkpoints",
+                new_callable=PropertyMock,
+                return_value=False,
+            ),
+            patch(
+                "sglang.srt.mem_cache.unified_cache.components.mamba.get_exec",
+                return_value=SimpleNamespace(
+                    mamba=SimpleNamespace(enable_mamba_extra_buffer_lazy=False)
+                ),
+            ),
+        ):
+            with self.assertLogs(level="WARNING") as logs:
+                cache_len = component.prepare_for_caching_req(
+                    req, insert_params, token_ids_len=128, is_finished=False
+                )
+        self.assertIn("Skipping Mamba checkpoint", logs.output[0])
+        self.assertEqual(cache_len, 0)
+        self.assertIsNone(insert_params.mamba_value)
+        self.assertEqual(cache.allocator.free_ids, [])
+        self.assertEqual(cache.alloc_evict_params, [KVDemand(state_slots=1)])
 
     def test_prefill_peak_ratio3_has_headroom(self):
         # pool = 3N: N free slots remain after own + locked prefix.

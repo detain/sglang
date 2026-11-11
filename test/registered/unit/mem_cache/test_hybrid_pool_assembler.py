@@ -35,7 +35,6 @@ from sglang.srt.mem_cache.hybrid_cache.hybrid_pool_assembler import (
     StackBuildResult,
     _check_device_pools_present,
     _KvStrategy,
-    # TODO(merge6) zone=b2 entry=314 -- fork region dropped by merge6 take-upstream resolution (B2); snapshot /tmp/opencode/merge6-dossier/replant/test__registered__unit__mem_cache__test_hybrid_pool_assembler.py.ours-dropped.txt
     _MambaStrategy,
     _MambaSwaStrategy,
     _SwaStrategy,
@@ -1394,10 +1393,18 @@ class TestHybridMambaDeclaredIndexer(CustomTestCase):
                         )
                         for _ in range(pool.layer_num)
                     ]
+                    # merge-#6 B2 re-home (#48421): the indexer exposes PAGED
+                    # index pages -- one page_size x 132B row per KV page; the
+                    # row-per-64-token stub was the pre-#48421 shape and the
+                    # packed-buffer validate (host_pool_config._prepare_sidecar)
+                    # rejects it.
                     pool.index_key_cache = SimpleNamespace(
                         buffer=[
                             torch.empty(
-                                (0 if skip else pool.size // (page_size // 64), 132),
+                                (
+                                    0 if skip else pool.size // page_size,
+                                    page_size * 132,
+                                ),
                                 dtype=torch.uint8,
                                 device="meta",
                             )
@@ -1518,6 +1525,16 @@ class TestHybridMambaDeclaredIndexer(CustomTestCase):
                 indexer = group.entry_map[PoolName.INDEXER].host_pool
                 combined_row = kv.size_per_token + indexer.size_per_token
                 total = kv.size * combined_row + assigned["mamba"] * 1e9
+                # merge-#6 B2 triage: the contiguity/stub residuals here are
+                # FIXED (page-form index buffers, _Pool.host_capacity_bytes).
+                # What still breaks this budget ceiling is a PRODUCTION
+                # CONTRACT CHANGE riding upstream in merge-#6:
+                # _kv_budget_index_bytes now deducts only KEY_ROWS sidecars
+                # and documents "DSA indexers sit on top" -- the paged index
+                # host bytes now ride ABOVE --hicache-size, voiding the
+                # entry-219 guarantee this test pins. NOT weakened and NOT
+                # production-fixed here: adopt-upstream-vs-replant is the
+                # orchestrator's call (reported as the 5 named F).
                 # Existing host allocation rounds up by at most one page.
                 self.assertLessEqual(total, 100 * 1e9 + page_size * combined_row)
                 self.assertGreater(total, 100 * 1e9 - page_size * combined_row)
@@ -2219,6 +2236,11 @@ class TestMambaSwaStackMatchesOtherStacks(CustomTestCase):
 class _Pool:
     def __init__(self, kv_bytes):
         self._kv_bytes = kv_bytes
+        # merge-#6 B2 re-home (#48421): _split_hicache_size prices device
+        # pools through the host_capacity_bytes attribute every real device
+        # pool carries (memory_pool.py); None means "no host cap, fall back
+        # to the device bytes" -- the read stays identical for this stub.
+        self.host_capacity_bytes = None
 
     def get_kv_size_bytes(self):
         return self._kv_bytes

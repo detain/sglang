@@ -897,8 +897,12 @@ class TestDcpStorage(unittest.TestCase):
             peer[local_pages[1 - rank]] = 1
 
             def reduce(tensor, op, groups, peer=peer, other=other):
+                # merge-#6 B2: the upstream schema-led 9-line fold stays
+                # un-adopted -- it pins #48421's collapsed-mask layout, which
+                # the fork's trailing-endpoint collective (entries 209/217/290,
+                # folded hit + per-pool verdicts + page mask) deliberately
+                # diverged from. The numel pin above is this layout's fold.
                 self.assertEqual(tensor.numel(), 1 + len(PoolName) + peer.numel())
-                # TODO(merge6) zone=b2 entry=314 -- upstream region dropped at fork-kept seam (fork-owned suite; upstream 9-line fold); snapshot /tmp/opencode/merge6-dossier/replant/test__registered__unit__mem_cache__test_hicache_file_lru_unit.py.theirs-dropped.txt
                 self.assertEqual(op, torch.distributed.ReduceOp.MIN)
                 # The folded hits MIN too: the cancelled rank votes 0 below.
                 tensor[0] = min(
