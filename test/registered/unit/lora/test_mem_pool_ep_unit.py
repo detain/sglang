@@ -748,10 +748,17 @@ class TestModuleLevelHelpers(unittest.TestCase):
             MoeRunnerBackend.FLASHINFER_CUTEDSL,
             MoeRunnerBackend.FLASHINFER_MEGAMOE,
             MoeRunnerBackend.HPC_OPS,
-            # TODO(merge6) zone=b2 entry=314 -- fork region dropped by merge6 take-upstream resolution (B2); snapshot /tmp/opencode/merge6-dossier/replant/test__registered__unit__lora__test_mem_pool_ep_unit.py.ours-dropped.txt
+            # Entry 247: the b12x route translates global ids through its own
+            # per-call expert_map, so the dispatcher must keep them global.
+            # The pre-merge battery's documented 1F was this arm missing here.
+            MoeRunnerBackend.FLASHINFER_B12X_W4A16,
         }
-        # MegaMoE keeps global ids in the dispatcher but has no LoRA runner.
-        lora_global_ids = dispatcher_global_ids - {MoeRunnerBackend.FLASHINFER_MEGAMOE}
+        # Neither megamoe (no LoRA runner) nor b12x (no LoRA path) is in the
+        # LoRA pool's global-id contract.
+        lora_global_ids = dispatcher_global_ids - {
+            MoeRunnerBackend.FLASHINFER_MEGAMOE,
+            MoeRunnerBackend.FLASHINFER_B12X_W4A16,
+        }
         for backend in MoeRunnerBackend:
             config = MoeRunnerConfig(
                 num_experts=8,
@@ -784,7 +791,6 @@ class TestModuleLevelHelpers(unittest.TestCase):
                     moe_ep_rank=1,
                     moe_dp_size=1,
                 ),
-                # TODO(merge6) zone=b2 entry=314 -- fork region dropped by merge6 take-upstream resolution (B2); snapshot /tmp/opencode/merge6-dossier/replant/test__registered__unit__lora__test_mem_pool_ep_unit.py.ours-dropped.txt
             ):
                 dispatcher = standard_dispatcher.StandardDispatcher(config)
                 self.assertEqual(

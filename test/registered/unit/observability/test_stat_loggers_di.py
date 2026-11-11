@@ -603,25 +603,16 @@ class TestHiCacheHostPoolStats(CustomTestCase):
 
     def test_sidecar_pool_publishes_no_placeholder_series(self):
         # A borrowed-host-index pool reads 0 used forever; it must stay out.
-        mamba_pool = SimpleNamespace(logical_size=138, available_size=lambda: 10)
+        # merge-#6 B2: the take-upstream reword dropped this test's real DI
+        # (entries + sidecar_pool_names, the B3-era spec seam the reporter
+        # consults at metrics_reporter.py's derived_pools) and left another
+        # test's scheduler scaffolding in its place -- restored here.
         reporter = self._reporter(
-            {PoolName.MAMBA: SimpleNamespace(host_pool=mamba_pool)}
-        )
-        reporter.scheduler.tree_cache.token_to_kv_pool_host = SimpleNamespace(
-            logical_size=1000, available_size=lambda: 1000
-        )
-        reporter.scheduler.disaggregation_mode = DisaggregationMode.NULL
-        reporter.scheduler.running_batch = SimpleNamespace(reqs=[])
-        reporter.scheduler.request_lists = lambda: {kind: [] for kind in ListKind}
-        reporter.scheduler.enable_fpm = False
-        reporter.scheduler.enable_priority_scheduling = False
-        reporter.scheduler.pool_stats_observer = SimpleNamespace(
-            get_pool_stats=lambda: SimpleNamespace(
-                update_scheduler_stats=lambda stats: None
-            ),
-            streaming_session_count=lambda: 0,
-            session_held_tokens=lambda: 0,
-            # TODO(merge6) zone=b2 entry=314 -- fork region dropped by merge6 take-upstream resolution (B3-era DI gate vs upstream reword); snapshot /tmp/opencode/merge6-dossier/replant/test__registered__unit__observability__test_stat_loggers_di.py.ours-dropped.txt
+            [
+                SimpleNamespace(name=PoolName.KV, host_pool=self._pool(900, 300)),
+                SimpleNamespace(name=PoolName.MAMBA, host_pool=self._pool(138, 10)),
+            ],
+            sidecar_pool_names=[PoolName.MAMBA],
         )
 
         reporter._log_hicache_stats()

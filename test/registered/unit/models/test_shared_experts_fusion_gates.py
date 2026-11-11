@@ -1177,6 +1177,79 @@ class TestA2ABackendGate(_FusionGateCase):
         self.assertTrue(can_fuse_shared_expert(self._config(), None))
 
 
-# TODO(merge6) zone=b2 entry=314 -- fork region dropped by merge6 take-upstream resolution (fork 71-line gate test dropped (B2)); snapshot /tmp/opencode/merge6-dossier/replant/test__registered__unit__models__test_shared_experts_fusion_gates.py.ours-dropped.txt
+# Re-homed (merge-#6 B2): the fork's 71-line gate block the take-upstream
+# resolution dropped. The ModelOpt BF16-body refusal is verified live at
+# modelopt_quant.py's ModelOptMixedPrecisionConfig.can_fuse_shared_expert.
+class TestModelOptMixedBody(_FusionGateCase):
+    """A MIXED_PRECISION checkpoint whose shared expert stays BF16 refuses
+    fusion through `can_fuse_shared_expert`, the function the block actually
+    consults. ModelOpt states the BF16 body in the exclusion list (the same
+    shape ModelOptFp4Config already checks); a fused slot is packed, so the
+    loader would otherwise remap BF16 weights into FP4 buffers."""
+
+    def _config(self):
+        return SimpleNamespace(
+            model_type="qwen4_exp_text",
+            shared_expert_intermediate_size=640,
+            moe_intermediate_size=640,
+        )
+
+    def _mixed(self, exclude_modules):
+        from sglang.srt.layers.quantization.modelopt_quant import (
+            ModelOptMixedPrecisionConfig,
+        )
+
+        return ModelOptMixedPrecisionConfig.from_config(
+            {
+                "quant_algo": "MIXED_PRECISION",
+                "kv_cache_quant_algo": None,
+                "group_size": 16,
+                "quantized_layers": {
+                    "model.language_model.layers.0.mlp.experts": {
+                        "quant_algo": "NVFP4",
+                        "group_size": 16,
+                    },
+                },
+                "exclude_modules": exclude_modules,
+            }
+        )
+
+    def _use_backend(self, name: str):
+        from sglang.srt.layers.moe.utils import MoeA2ABackend
+        from sglang.srt.runtime_context import get_flags
+
+        moe = get_flags().moe
+        previous = moe.a2a_backend
+        moe.a2a_backend = MoeA2ABackend(name)
+        self.addCleanup(setattr, moe, "a2a_backend", previous)
+
+    def test_a_bf16_mixed_body_refuses_fusion(self):
+        from sglang.srt.models.qwen2_moe import can_fuse_shared_expert
+
+        self._seed()
+        self._use_backend("none")
+        mixed = self._mixed(["model.language_model.layers.0.mlp.shared_expert*"])
+        self.assertFalse(can_fuse_shared_expert(self._config(), mixed))
+
+    def test_a_mixed_checkpoint_that_keeps_the_body_fp4_still_fuses(self):
+        from sglang.srt.models.qwen2_moe import can_fuse_shared_expert
+
+        self._seed()
+        self._use_backend("none")
+        mixed = self._mixed(["model.language_model.layers.0.mlp.shared_expert_gate"])
+        self.assertTrue(can_fuse_shared_expert(self._config(), mixed))
+
+
+class TestFamiliesWithoutAGate(_FusionGateCase):
+    def test_qwen2_moe_style_families_follow_the_intent(self):
+        """A family with no gate must not grow one by accident: the installer
+        falls back to the user's intent for it."""
+        from sglang.srt.models.qwen2_moe import Qwen2MoeForCausalLM
+
+        self.assertFalse(
+            hasattr(Qwen2MoeForCausalLM, "shared_experts_fusion_disable_reason")
+        )
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__]))
