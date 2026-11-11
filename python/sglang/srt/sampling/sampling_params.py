@@ -48,29 +48,20 @@ LOGIT_BIAS_ABS_MAX = 1e30
 MAX_STOP_COUNT = 32
 MAX_STOP_REGEX_LEN = 256
 MAX_STOP_REGEX_COUNT = 32
-# Parallel samples per request. Applied before fan-out so a huge n cannot
-# replicate the prompt and take the tokenizer/scheduler down. Beam search
-# does not use this cap.
+# Parallel samples per request -- the value the closed PR #42779 port used for
+# its static fan-out cap. MERGE-#6 B6 policy: upstream's merged #44047
+# (b2616cabbf) replaced that cap with the env-tunable
+# SGLANG_MAX_BATCH_REQS_PER_HTTP_REQ (default 4096, Rust-server parity; a
+# negative value disables it) at BOTH enforcement points -- before prompt
+# replication in managers/io_struct.py and inside SamplingParams.verify(). The
+# #42779 intent (no oversized n ever replicates the prompt) stays enforced
+# there; an operator restores the historical hard 128 exactly with
+# SGLANG_MAX_BATCH_REQS_PER_HTTP_REQ=128. The constant remains importable as
+# the bound the io_struct beam tests and the OpenAI-protocol side (its twin
+# OPENAI_MAX_N) reference.
 MAX_PARALLEL_SAMPLES = 128
 
 logger = logging.getLogger(__name__)
-
-
-def validate_sample_count(n: Any, beam_width: Optional[int] = None) -> None:
-    """Reject an n that would replicate the prompt or slice beam results.
-
-    Beam search (beam_width > 1) does not replicate the prompt, so n is not
-    capped at MAX_PARALLEL_SAMPLES. It is stored as num_return and used as a
-    slice, so 0 drops every sequence and a negative n drops from the end.
-    """
-    if beam_width is not None and beam_width > 1:
-        if type(n) is not int or n < 1:
-            raise ValueError(f"n must be an integer >= 1, got {n}.")
-        return
-    if type(n) is not int or not 1 <= n <= MAX_PARALLEL_SAMPLES:
-        raise ValueError(
-            f"n must be an integer in [1, {MAX_PARALLEL_SAMPLES}], got {n}."
-        )
 
 
 def validate_top_logprobs_num(value: Any, vocab_size: int) -> None:
@@ -309,8 +300,10 @@ class SamplingParams(msgspec.Struct, kw_only=True, array_like=True):
                 f"top_k must be -1 (disable) or in [1, vocab_size({vocab_size})], "
                 f"got {self.top_k}."
             )
-        # Same bound io_struct applies before prompt replication.
-        validate_sample_count(self.n, self.beam_width)
+        # The n bound is validate_n's (checked first, above): #44047's
+        # env-tunable cap replaced this fork's static #42779 belt here in
+        # merge-#6 B6 -- a second, tighter bound would contradict the very
+        # contract the same PR's verify() gate pins (see module header).
         if not -2.0 <= self.frequency_penalty <= 2.0:
             raise ValueError(
                 f"frequency_penalty must be in [-2, 2], got {self.frequency_penalty}."

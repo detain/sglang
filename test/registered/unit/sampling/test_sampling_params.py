@@ -262,8 +262,15 @@ class TestSamplingParamsVerify(CustomTestCase):
             self._make(n=0).verify(self.VOCAB_SIZE)
 
     def test_n_above_max_raises(self):
-        with self.assertRaisesRegex(ValueError, r"n must be an integer in \[1,"):
-            self._make(n=MAX_PARALLEL_SAMPLES + 1).verify(self.VOCAB_SIZE)
+        # Re-pinned (merge-#6 B6, policy in sampling_params.py's
+        # MAX_PARALLEL_SAMPLES header): #44047's env-tunable
+        # SGLANG_MAX_BATCH_REQS_PER_HTTP_REQ at its default subsumes the
+        # closed PR #42779's static verify-time cap; the pinned contract --
+        # an n above the ceiling 400s -- is unchanged, only the ceiling's
+        # source. Mirrors the same B4/B6 re-pins in test_io_struct.py.
+        with envs.SGLANG_MAX_BATCH_REQS_PER_HTTP_REQ.override(4096):
+            with self.assertRaisesRegex(ValueError, r"n must be an integer in \[1,"):
+                self._make(n=4096 + 1).verify(self.VOCAB_SIZE)
 
     def test_beam_n_may_exceed_max_parallel_samples(self):
         """Beam search does not fan out, so n is not capped at MAX_PARALLEL_SAMPLES."""
