@@ -300,22 +300,44 @@ class TestDropDivergedAutotuneCache(CustomTestCase):
             self.assertEqual(status, "ok", msg=value)
         return [list(kept) for kept in zip(*(value for _, value in results))]
 
+    # merge-#6 B2 re-home: the take-upstream adopted the nested-scenarios
+    # helper; these stack-owned gates (entry-304 era) were left in the old
+    # one-scenario-per-call shape and KeyErred (the b3 "gloo-teardown"
+    # hand-off). One scenario now travels as a one-element scenario list.
+
     def test_matching_caches_are_kept(self):
         entries = {"_metadata": {"cublas": "12.8"}, "op": 7}
-        self.assertEqual(self._run_gate([entries, entries]), [True, True])
+        self.assertEqual(self._run_gate([[entries, entries]]), [[True, True]])
 
     def test_caches_diverging_only_in_metadata_are_dropped(self):
         # Same desync, reached through the stamp instead of the tactics.
         self.assertEqual(
             self._run_gate(
                 [
-                    {"_metadata": {"cublas": "12.8"}, "op": 7},
-                    {"_metadata": {"cublas": "12.9"}, "op": 7},
+                    [
+                        {"_metadata": {"cublas": "12.8"}, "op": 7},
+                        {"_metadata": {"cublas": "12.9"}, "op": 7},
+                    ]
                 ]
             ),
-            [False, False],
-            # TODO(merge6) zone=b2 entry=314 -- upstream region dropped at fork-kept seam (fork autotune gate/sync suite (entry-304)); snapshot /tmp/opencode/merge6-dossier/replant/test__registered__unit__model_executor__runner__test_flashinfer_autotune_sync.py.theirs-dropped.txt
+            [[False, False]],
         )
+
+    def test_matching_caches_are_kept_and_diverged_ones_dropped_everywhere(self):
+        # merge-#6 B2: upstream's fold adopted, re-pinned to the fork-retained
+        # digest (flashinfer_autotune.py digests the LOAD DECISION -- stamp +
+        # env -- not the tactic entries, so the diverged scenario must differ
+        # in the stamp; same key/op-value differences are what EP disjoint
+        # shapes look like and are kept by design, see
+        # test_disjoint_shape_sets_with_matching_env_are_kept). One spawn
+        # carrying both scenarios still pins upstream's structural point: a
+        # kept-true rank in one scenario cannot shadow a diverged drop in the
+        # other -- a rank that kept a diverged cache would skip profiles its
+        # peer still runs.
+        matching = {"_metadata": {"cublas": "12.8"}, "op": 7}
+        diverged = {"_metadata": {"cublas": "12.9"}, "op": 7}
+        kept = self._run_gate([[matching, matching], [diverged, matching]])
+        self.assertEqual(kept, [[True, True], [False, False]])
 
     def test_disjoint_shape_sets_with_matching_env_are_kept(self):
         # EP shards experts across ranks, so each rank tunes a different set of
@@ -326,11 +348,13 @@ class TestDropDivergedAutotuneCache(CustomTestCase):
         self.assertEqual(
             self._run_gate(
                 [
-                    {**meta, "shape_(192, 2304, 320)": "tactic_a"},
-                    {**meta, "shape_(64, 2304, 320)": "tactic_b"},
+                    [
+                        {**meta, "shape_(192, 2304, 320)": "tactic_a"},
+                        {**meta, "shape_(64, 2304, 320)": "tactic_b"},
+                    ]
                 ]
             ),
-            [True, True],
+            [[True, True]],
         )
 
 

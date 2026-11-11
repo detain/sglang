@@ -174,8 +174,8 @@ class TestIsFiaNz(unittest.TestCase):
         # is_fia_nz is a cache-layout switch, not MLAPO-gated: the former
         # assertion against a missing SGLANG_NPU_USE_MLAPO was deliberately
         # dropped (see the is_fia_nz docstring) so FIA NZ works on the
-        # ordinary MLA path too.
-        # TODO(merge6) zone=b2 entry=314 -- upstream region dropped at fork-kept seam (fork stub keep; upstream 1-line fold); snapshot /tmp/opencode/merge6-dossier/replant/test__registered__unit__npu__attention__test_npu_mla_preprocess.py.theirs-dropped.txt
+        # ordinary MLA path too. merge-#6 B2: the dropped upstream one-liner
+        # is this body -- adopted in full.
         with patch.dict(os.environ):
             os.environ.pop("SGLANG_NPU_USE_MLAPO", None)
             os.environ["SGLANG_USE_FIA_NZ"] = "1"

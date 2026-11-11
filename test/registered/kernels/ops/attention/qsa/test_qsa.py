@@ -59,10 +59,8 @@ from sglang.srt.mem_cache.qsa_kv_pool import (
     QSARawKVSharding,
     QSATokenToKVPool,
 )
-from sglang.srt.model_executor.forward_batch_info import ForwardMode
+from sglang.srt.model_executor.forward_mode import ForwardMode
 from sglang.srt.server_args import ServerArgs
-
-# TODO(merge6) zone=b2 entry=314 -- upstream region dropped at fork-kept seam (fork-owned QSA suite); snapshot /tmp/opencode/merge6-dossier/replant/test__registered__kernels__ops__attention__qsa__test_qsa.py.theirs-dropped.txt
 from sglang.test.ci.ci_register import register_cuda_ci
 from sglang.test.mem_cache_utils import routed
 
@@ -1560,8 +1558,12 @@ def test_qsa_trtllm_sparse_decode_arch_gate(
     flashinfer_decode = ModuleType("flashinfer.decode")
     flashinfer_decode.trtllm_batch_decode_with_kv_cache = trtllm_decode_func
 
-    monkeypatch.setattr(qsa_backend_module, "is_sm100_supported", lambda: sm100)
-    monkeypatch.setattr(qsa_backend_module, "is_sm120", lambda: sm120)
+    # merge-#6 B2 mock-target retarget: the arch predicates moved to
+    # function-local imports from sglang.srt.utils (their module-level
+    # bindings in this backend are gone); patch the source, like the sibling
+    # sm121 test at the bottom of this file does.
+    monkeypatch.setattr("sglang.srt.utils.is_sm100_supported", lambda: sm100)
+    monkeypatch.setattr("sglang.srt.utils.is_sm120", lambda: sm120)
     monkeypatch.setitem(sys.modules, flashinfer_decode.__name__, flashinfer_decode)
 
     try:

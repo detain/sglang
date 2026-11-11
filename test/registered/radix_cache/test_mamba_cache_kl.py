@@ -75,8 +75,9 @@ class TestMambaLazyInplaceKL(MambaCacheKLMixin, DefaultServerBase):
     and a stale 192-token cache hit; with the fix KL=0 and the safe hit is 128 tokens.
     """
 
-    # TODO(merge6) zone=b2 entry=314 -- upstream region dropped at fork-kept seam (fork KL trio (entry-196/198 era)); snapshot /tmp/opencode/merge6-dossier/replant/test__registered__radix_cache__test_mamba_cache_kl.py.theirs-dropped.txt
-
+    # merge-#6 B2: the dropped upstream region (TestMambaLazyFullPoolKL) IS
+    # this class -- renamed and skip-gated in the entry-314 era; config and
+    # all three methods verified byte-identical to upstream's. Adopted.
     ignore_eos = True
     model = "Qwen/Qwen3.5-0.8B"
     server_env = {
