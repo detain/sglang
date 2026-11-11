@@ -415,7 +415,30 @@ class TestStreamOrderedMmFeaturePool(CustomTestCase):
         # the defining module never reaches the copy doing the reading.
         from sglang.srt.runtime_context import get_parallel
 
-        with get_parallel().override(tp_rank=6, attn_tp_rank=2):
+        # merge-#6 B2 isolation fix (b4 hand-off, entry-310-era "known
+        # order-dependent pair"): the override states the WHOLE topology it
+        # is laid out against, so the rank-bounds/factorization validator
+        # no longer reads whatever an earlier module in the batch happened
+        # to leave installed. The pin is unchanged: the consumer keys on the
+        # GLOBAL tp_rank (6), not the attn-subgroup rank (2) that aliases it.
+        with get_parallel().override(
+            tp_size=8,
+            tp_rank=6,
+            pp_size=1,
+            pp_rank=0,
+            attn_tp_size=4,
+            attn_tp_rank=2,
+            attn_dp_size=2,
+            attn_dp_rank=1,
+            attn_cp_size=1,
+            attn_cp_rank=0,
+            moe_ep_size=1,
+            moe_ep_rank=0,
+            moe_dp_size=1,
+            moe_tp_size=8,
+            qsa_cache_sharding_size=1,
+            qsa_cache_sharding_rank=0,
+        ):
             self.assertEqual(resolve_consumer_rank(8), 6)
 
     def test_attention_dp_uses_only_the_routed_scheduler_group(self):
@@ -425,13 +448,30 @@ class TestStreamOrderedMmFeaturePool(CustomTestCase):
         )
         from sglang.srt.runtime_context import get_parallel
 
+        # merge-#6 B2 isolation fix: self-contained 8-way DP layout (see the
+        # twin above); (attn_dp_rank * attn_cp_size + attn_cp_rank) *
+        # attn_tp_size + attn_tp_rank == tp_rank, so the validator's layout
+        # equation holds no matter what ran before this file.
         with get_parallel().override(
             tp_size=8,
             attn_dp_enabled=True,
             num_dp_ranks=2,
             tp_rank=6,
-            attn_tp_rank=0,
+            pp_size=1,
+            pp_rank=0,
+            attn_tp_size=4,
+            attn_tp_rank=2,
+            attn_dp_size=2,
+            attn_dp_rank=1,
+            attn_cp_size=1,
+            attn_cp_rank=0,
             attn_dcp_size=2,
+            moe_ep_size=1,
+            moe_ep_rank=0,
+            moe_dp_size=1,
+            moe_tp_size=8,
+            qsa_cache_sharding_size=1,
+            qsa_cache_sharding_rank=0,
         ):
             count = get_mm_feature_consumer_count()
             self.assertEqual(count, 4)
