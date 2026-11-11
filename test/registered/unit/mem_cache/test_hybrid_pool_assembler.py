@@ -1525,16 +1525,14 @@ class TestHybridMambaDeclaredIndexer(CustomTestCase):
                 indexer = group.entry_map[PoolName.INDEXER].host_pool
                 combined_row = kv.size_per_token + indexer.size_per_token
                 total = kv.size * combined_row + assigned["mamba"] * 1e9
-                # merge-#6 B2 triage: the contiguity/stub residuals here are
-                # FIXED (page-form index buffers, _Pool.host_capacity_bytes).
-                # What still breaks this budget ceiling is a PRODUCTION
-                # CONTRACT CHANGE riding upstream in merge-#6:
-                # _kv_budget_index_bytes now deducts only KEY_ROWS sidecars
-                # and documents "DSA indexers sit on top" -- the paged index
-                # host bytes now ride ABOVE --hicache-size, voiding the
-                # entry-219 guarantee this test pins. NOT weakened and NOT
-                # production-fixed here: adopt-upstream-vs-replant is the
-                # orchestrator's call (reported as the 5 named F).
+                # merge-#6 B6 UNION-RE-ANCHOR (entries 219/317): upstream's
+                # #47714 narrowing of _kv_budget_index_bytes to KEY_ROWS
+                # ("DSA indexers sit on top") put the paged index host bytes
+                # UNACCOUNTED above --hicache-size -- 106.9 GB against this
+                # 100 GB ceiling -- disproving any "accounted elsewhere"
+                # premise. The fork's wider reservation is restored as
+                # _reserve_declared_indexer_bytes alongside the #47714 block;
+                # the ceiling contract this test pins stands UNWEAKENED.
                 # Existing host allocation rounds up by at most one page.
                 self.assertLessEqual(total, 100 * 1e9 + page_size * combined_row)
                 self.assertGreater(total, 100 * 1e9 - page_size * combined_row)

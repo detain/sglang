@@ -1389,14 +1389,17 @@ def build_hybrid_mamba_stack(
                     draft_mamba_pools=params.mtp_draft_mamba_pools,
                 )
             )
+    # merge-#6 B3 (region@1377, entry-219 deviation) believed the arm below
+    # ADOPTED-UPSTREAM the fork's _mla_host_kv_fraction; merge-#6 B6 proved it
+    # only covers KEY_ROWS sidecars ("DSA indexers sit on top" -- #47714), and
+    # the explicit-budget tests show the paged DSA host bytes then sit on top
+    # of --hicache-size UNACCOUNTED (106.9 GB vs the 100 GB entry-219
+    # ceiling). Restored as its own reservation ABOVE the #47714 block; both
+    # run after the entry-219 knob re-plant, so each covers the proportional
+    # split and the knob (entry 317's placement law).
+    kv_host_size = _reserve_declared_indexer_bytes(config, kv_host_size)
     index_bytes = _kv_budget_index_bytes(config)
     if index_bytes and kv_host_size is not None:
-        # merge-#6 B3 (region@1377, entry-219 deviation): the fork's `if
-        # use_mla: kv_host_size *= _mla_host_kv_fraction(config)` arm is
-        # ADOPTED-UPSTREAM here -- _kv_budget_index_bytes generalizes the DSA/
-        # QSA index reservation to every declared sidecar, and it runs AFTER
-        # the knob re-plant above, so the reservation still covers both the
-        # proportional split and the knob.
         kv_bytes = sum(kv_pool.get_kv_size_bytes())
         kv_host_size *= kv_bytes / (kv_bytes + index_bytes)
     kv_host_pool = build_kv_host_pool(
@@ -1847,8 +1850,57 @@ def _build_qsa_indexer_host_pool(
     )
 
 
+def _reserve_declared_indexer_bytes(
+    config: HostPoolGroupConfig, kv_host_size: Optional[int]
+) -> Optional[int]:
+    """Carve the declared non-KEY_ROWS sidecars' host mirror out of the KV
+    host slice, keeping the entry-219 budget promise.
+
+    merge-#6 B6 UNION-RE-ANCHOR of the fork's _mla_host_kv_fraction (entries
+    219/317, PR #44462) onto #47714's sidecar structure. Upstream narrowed
+    the reservation to KEY_ROWS and documented "DSA indexers sit on top"; the
+    explicit-budget test proves that premise is UNACCOUNTED bytes above
+    --hicache-size in this architecture (106.9 GB against the 100 GB ceiling),
+    so the wider fork accounting is restored alongside, not instead of, the
+    #47714 rewrite. The per-token rate mirrors EXACTLY what
+    _build_sidecar_host_pool allocates: DSAIndexerPoolHost charges
+    kernel_page_bytes // page_size bytes per anchor host token per packed
+    buffer (packed buffers = owned live layers plus the packed drafts, and
+    size_per_token == that sum), while the anchor row mirrors
+    build_kv_host_pool's MLA host row (per-rank layer share plus drafts).
+    KEY_ROWS sidecars are skipped here because _kv_budget_index_bytes reserves
+    those, so the two reservations cannot double-count -- the entry-317
+    mutual-exclusion proof restated on the new structure.
+    """
+    if kv_host_size is None:
+        return None
+    sidecar_row_bytes = 0
+    for sidecar in config.sidecars:
+        info = sidecar.buffer_info
+        if info.key_layout is IndexKeyLayout.KEY_ROWS or not info.buffers:
+            continue
+        sidecar_row_bytes += len(info.buffers) * (
+            info.kernel_page_bytes // info.page_size
+        )
+    if not sidecar_row_bytes:
+        return kv_host_size
+    pool = config.root
+    kv_layers = pool.layer_num
+    if pool.layer_shard_enabled:
+        kv_layers = (kv_layers + pool.layer_shard_size - 1) // pool.layer_shard_size
+    kv_row_bytes = (
+        pool.kv_cache_dim
+        * pool.store_dtype.itemsize
+        * (kv_layers + len(config.packed_draft_device_pools))
+    )
+    return kv_host_size * kv_row_bytes / (kv_row_bytes + sidecar_row_bytes)
+
+
 def _kv_budget_index_bytes(config: HostPoolGroupConfig) -> int:
-    # Compressed key rows share the KV host budget. DSA indexers sit on top of it.
+    # Compressed key rows share the KV host budget. PAGED DSA indexers do NOT
+    # sit on top after merge-#6 B6 -- see _reserve_declared_indexer_bytes,
+    # which owns their reservation; this #47714 block stays KEY_ROWS-only so
+    # the two never charge the same sidecar twice.
     return sum(
         buffer.nbytes
         for sidecar in config.sidecars
